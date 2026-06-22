@@ -1,0 +1,8 @@
+name: "bili-toolbox"
+profiles:
+- name: "release"
+  git_url: "https://github.com/WafuChtholly/bili-toolbox.git"
+  main_script: "app.py"
+  requires_python: "3.13"
+  requirements: "requirements.txt"
+  pip_args: "-i https://mirrors.aliyun.com/pypi/simple"

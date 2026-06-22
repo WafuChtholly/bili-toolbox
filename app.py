@@ -827,7 +827,7 @@ def _run_player_task(task_id: str, bv_list: list[str], rounds: int, stop_event: 
         _append_log(task_id, "[SYSTEM] 检查 Playwright Chromium ...")
         import subprocess as _sp
         check = _sp.run(
-            [str(ROOT / "python" / "python.exe"), "-c",
+            [sys.executable, "-c",
              "import os; import playwright; d=os.path.dirname(playwright.__file__); "
              "browsers=os.path.join(d,'.local-browsers'); "
              "exit(0 if os.path.isdir(browsers) and any('chromium' in x for x in os.listdir(browsers)) else 1)"],
@@ -836,7 +836,7 @@ def _run_player_task(task_id: str, bv_list: list[str], rounds: int, stop_event: 
         if check.returncode != 0:
             _append_log(task_id, "[SYSTEM] Chromium 未安装，正在自动安装（约 150MB）...")
             install = _sp.run(
-                [str(ROOT / "python" / "python.exe"), "-m", "playwright", "install", "chromium"],
+                [sys.executable, "-m", "playwright", "install", "chromium"],
                 capture_output=True, timeout=600,
             )
             if install.returncode != 0:
@@ -1124,8 +1124,6 @@ def redpocket_start():
         return jsonify({"success": False, "message": "已在运行中"})
 
     python_candidates = [
-        os.path.join(REDPOCKET_DIR, "python", "python.exe"),
-        os.path.join(REDPOCKET_DIR, "venv", "Scripts", "python.exe"),
         sys.executable,
     ]
     python_exe = None

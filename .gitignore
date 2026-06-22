@@ -2,6 +2,9 @@ venv/
 python/
 .qoder/
 data/
+logs/
+cache/
+pyappify_dist/
 __pycache__/
 *.pyc
 *.pyo
