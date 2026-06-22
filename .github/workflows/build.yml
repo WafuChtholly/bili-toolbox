@@ -26,3 +26,4 @@ jobs:
           files: |
             pyappify_dist/*China*
             pyappify_dist/*Global*
+            pyappify_dist/*online*
