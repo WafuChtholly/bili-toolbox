@@ -1,0 +1,24 @@
+# B站工具箱 — 统一 WebUI 依赖
+# 整合：bili-auto / bili-booster / bili-redpocket
+
+# --- 统一 WebUI (app.py) ---
+flask>=3.0
+psutil>=5.9
+httpx>=0.25
+qrcode[pil]>=7.0
+pyyaml>=6.0
+
+# --- bili-auto 自动互动 ---
+bilibili-api-python>=16.0
+bilibili-cli>=0.6
+aiohttp>=3.9
+
+# --- bili-booster 播放量提升 ---
+requests>=2.31
+fake-useragent>=1.5
+
+# --- bili-player 浏览器模拟 ---
+playwright>=1.40
+
+# --- bili-redpocket 红包助手 ---
+loguru>=0.7

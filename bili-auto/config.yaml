@@ -1,0 +1,35 @@
+actions:
+  coin: false
+  comment: true
+  cover_comment: false
+  favorite: false
+  like: false
+  play_once: true
+  share: true
+  triple: true
+blacklist: []
+comment_text:
+  prefix: 第{idx}时间赶来支持up
+  suffix: '[米塔 第二弹_米拉思考][米塔 第二弹_米拉思考][米塔 第二弹_米拉思考]'
+history_actions:
+  coin: false
+  comment: false
+  cover_comment: false
+  favorite: false
+  like: false
+  play_once: false
+  share: false
+  triple: true
+list_mode: whitelist
+rival_reply:
+  witty: true
+  witty_ratio: 50
+  zalan: true
+  zalan_ratio: 50
+  zalan_self_name: 喵喵
+schedule:
+  enabled: true
+  interval_minutes: 30
+whitelist:
+- '440555'
+- '437415'

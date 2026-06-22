@@ -1,0 +1,2579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>B站工具箱</title>
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+:root {
+  color-scheme: dark;
+  --pink: #fb7299;
+  --pink-hover: #fc8bab;
+  --red: #dc3545;
+  --bg-deep: #0a0a0b;
+  --bg-mid: #111113;
+  --bg-card: #1a1a1d;
+  --card-bg: rgba(255,255,255,0.02);
+  --card-border: rgba(255,255,255,0.06);
+  --card-border-hover: rgba(255,255,255,0.12);
+  --input-bg: rgba(255,255,255,0.04);
+  --input-border: rgba(255,255,255,0.08);
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --placeholder: #52525b;
+  --success: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --info: #3b82f6;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================================
+   RESET & GLOBAL
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-deep);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--pink); color: #fff; }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+code { background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; font-size: 12.5px; color: var(--pink); }
+hr { border: none; border-top: 1px solid var(--card-border); margin: 16px 0; }
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+.topbar {
+  background: rgba(10,10,11,0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  height: 56px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.topbar h1 {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 32px;
+  white-space: nowrap;
+  letter-spacing: 0.5px;
+}
+.topbar h1 span {
+  opacity: 0.5;
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 10px;
+  letter-spacing: 1px;
+}
+
+/* --- Tab Nav --- */
+.tabs {
+  display: flex;
+  gap: 0;
+  height: 56px;
+}
+.tab-btn {
+  background: none;
+  color: var(--text-secondary);
+  border: none;
+  padding: 0 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition);
+  position: relative;
+  height: 56px;
+  display: flex;
+  align-items: center;
+}
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active { color: var(--pink); font-weight: 600; }
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--pink);
+  border-radius: 1px 1px 0 0;
+  transition: var(--transition);
+}
+.tab-dropdown { position: relative; }
+.tab-dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 160px;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  padding: 6px 0;
+}
+.tab-dropdown:hover .tab-dropdown-menu,
+.tab-dropdown.open .tab-dropdown-menu { display: block; }
+.tab-dropdown-item {
+  padding: 10px 20px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+  white-space: nowrap;
+}
+.tab-dropdown-item:hover { background: var(--bg-secondary); color: var(--text-primary); }
+.tab-dropdown-item.active { color: var(--pink); font-weight: 600; }
+.tab-dropdown > .tab-btn.active { color: var(--pink); font-weight: 600; }
+
+/* --- Sub-Tab Nav (inside auto panel) --- */
+.sub-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--card-border);
+  margin-bottom: 16px;
+}
+.sub-tab-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--transition);
+  position: relative;
+}
+.sub-tab-btn:hover { color: var(--text-primary); }
+.sub-tab-btn.active { color: var(--pink); font-weight: 600; }
+.sub-tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  background: var(--pink);
+  border-radius: 1px 1px 0 0;
+}
+
+/* ============================================================
+   MAIN CONTENT
+   ============================================================ */
+.main {
+  max-width: 960px;
+  margin: 24px auto;
+  padding: 0 20px 60px;
+}
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ============================================================
+   CARDS
+   ============================================================ */
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  overflow: hidden;
+  transition: border-color var(--transition);
+  animation: fadeInUp 0.4s ease both;
+}
+.card:nth-child(2) { animation-delay: 0.08s; }
+.card:nth-child(3) { animation-delay: 0.16s; }
+.card:nth-child(4) { animation-delay: 0.24s; }
+.card:nth-child(5) { animation-delay: 0.32s; }
+.card:hover {
+  border-color: var(--card-border-hover);
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Card Head */
+.card-head {
+  padding: 14px 22px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 3px solid var(--pink);
+  border-bottom: 1px solid var(--card-border);
+  background: rgba(255,255,255,0.02);
+}
+.card-head.blue  { border-left-color: var(--info); }
+.card-head.green { border-left-color: var(--success); }
+
+.card-body { padding: 22px; }
+
+/* ============================================================
+   FORMS
+   ============================================================ */
+.form-group { margin-bottom: 18px; }
+.form-label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.form-input {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  transition: all var(--transition);
+}
+select.form-input {
+  cursor: pointer;
+  appearance: auto;
+}
+select.form-input option {
+  background: #111113;
+  color: var(--text-primary);
+  padding: 8px 12px;
+}
+.form-input::placeholder { color: var(--placeholder); }
+.form-input:focus {
+  outline: none;
+  border-color: var(--pink);
+  box-shadow: 0 0 0 3px rgba(251,114,153,0.1);
+}
+textarea.form-input { min-height: 80px; resize: vertical; }
+
+.checkbox-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.checkbox-item {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--text-secondary); cursor: pointer; font-size: 14px;
+}
+.checkbox-item input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--pink);
+}
+.schedule-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.inline-field { display: flex; align-items: center; gap: 8px; }
+.inline-input { width: 80px; text-align: center; }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Primary */
+.btn-pink {
+  background: var(--pink);
+  color: #fff;
+  width: 100%;
+}
+.btn-pink:hover:not(:disabled) { background: var(--pink-hover); }
+.btn-pink:active:not(:disabled) { transform: scale(0.98); }
+
+/* Stop button */
+.btn-stop {
+  background: rgba(220, 53, 69, 0.15);
+  color: var(--red);
+  font-weight: 600;
+  padding: 10px 24px;
+  border: 1px solid rgba(220, 53, 69, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+}
+.btn-stop:hover:not(:disabled) { background: rgba(220, 53, 69, 0.25); border-color: rgba(220, 53, 69, 0.5); }
+.btn-stop:active:not(:disabled) { transform: scale(0.98); }
+.btn-row { display: flex; gap: 8px; }
+
+/* Outline */
+.btn-outline {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.btn-outline:hover:not(:disabled) {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.2);
+}
+
+/* Active outline button */
+.btn-active {
+  border-width: 2px;
+  font-weight: 600;
+}
+
+/* Danger */
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover:not(:disabled) { background: #dc2626; }
+.btn-danger:active:not(:disabled) { transform: scale(0.98); }
+
+/* Success */
+.btn-success {
+  background: var(--success);
+  color: #fff;
+}
+.btn-success:hover:not(:disabled) { background: #16a34a; }
+.btn-success:active:not(:disabled) { transform: scale(0.98); }
+
+.btn-sm { padding: 7px 14px; font-size: 13px; border-radius: 6px; }
+.btn-group { display: flex; gap: 10px; margin-top: 16px; }
+.btn-group .btn { flex: 1; }
+
+/* ============================================================
+   BADGES
+   ============================================================ */
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+}
+.badge-secondary { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+.badge-info    { background: rgba(59,130,246,0.15); color: var(--info); }
+.badge-success { background: rgba(34,197,94,0.15);  color: var(--success); }
+.badge-danger  { background: rgba(239,68,68,0.15);  color: var(--danger); }
+.badge-warn    { background: rgba(245,158,11,0.15); color: var(--warn); }
+
+/* ============================================================
+   LOG BOX (Terminal)
+   ============================================================ */
+.log-box {
+  max-height: 360px;
+  overflow-y: auto;
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: #09090b;
+  color: #d4d4d4;
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  position: relative;
+}
+.log-box::-webkit-scrollbar { width: 5px; }
+.log-box::-webkit-scrollbar-track { background: transparent; }
+.log-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+
+/* ============================================================
+   STATUS
+   ============================================================ */
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.dot-off { background: #52525b; box-shadow: none; }
+.dot-run { background: var(--success); box-shadow: 0 0 6px rgba(34,197,94,0.4); animation: pulse 1.5s infinite; }
+.dot-err { background: var(--danger); box-shadow: 0 0 6px rgba(239,68,68,0.4); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.4; }
+}
+
+/* ============================================================
+   ROOM CARDS
+   ============================================================ */
+.room-card {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 10px;
+  transition: all var(--transition);
+}
+.room-card:hover {
+  border-color: rgba(255,255,255,0.08);
+  border-left-color: var(--info);
+  background: rgba(255,255,255,0.03);
+}
+.room-card .room-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.room-card .room-title {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.room-card .room-meta {
+  color: var(--text-tertiary);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* ============================================================
+   QR CODE
+   ============================================================ */
+.qr-wrap {
+  text-align: center;
+  padding: 20px;
+}
+.qr-wrap img {
+  max-width: 200px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--card-border);
+}
+.qr-status {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ============================================================
+   BV LIST (dynamic add/remove rows)
+   ============================================================ */
+.bv-list { display: flex; flex-direction: column; gap: 6px; }
+.bv-row { display: flex; gap: 6px; align-items: center; }
+.bv-row .form-input { flex: 1; }
+.bv-del {
+  width: 32px; height: 32px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+.bv-del:hover { background: rgba(239,68,68,0.15); color: var(--danger); border-color: rgba(239,68,68,0.3); }
+
+/* ============================================================
+   VIDEO PICKER (投稿选择器)
+   ============================================================ */
+.video-pick-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.video-pick-item:hover {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.1);
+}
+.video-pick-item.selected {
+  background: rgba(251,114,153,0.08);
+  border-color: rgba(251,114,153,0.3);
+}
+.video-pick-item input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--pink); flex-shrink: 0;
+}
+.video-pick-thumb {
+  width: 80px; height: 45px; object-fit: cover; border-radius: 4px; flex-shrink: 0;
+  background: rgba(255,255,255,0.05);
+}
+.video-pick-info { flex: 1; min-width: 0; }
+.video-pick-title {
+  font-size: 13px; font-weight: 500; color: var(--text-primary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.video-pick-meta {
+  font-size: 12px; color: var(--text-tertiary); margin-top: 2px;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 768px) {
+  .topbar { padding: 0 16px; }
+  .topbar h1 { font-size: 16px; margin-right: 20px; }
+  .tab-btn { padding: 0 14px; font-size: 13px; }
+  .main { padding: 0 14px 40px; margin: 18px auto; }
+  .card-body { padding: 16px; }
+}
+
+@media (max-width: 480px) {
+  .topbar { padding: 0 12px; }
+  .topbar h1 span { display: none; }
+  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { height: 0; }
+  .tab-btn { padding: 0 12px; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
+  .main { padding: 0 10px 36px; margin: 14px auto; }
+  .card-body { padding: 14px; }
+  .card-head { padding: 12px 16px; font-size: 14px; }
+}
+
+/* ============================================================
+   BOOSTER RESULT PANEL
+   ============================================================ */
+.bst-result-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  overflow: hidden;
+  animation: fadeInUp 0.3s ease both;
+}
+
+.bst-result-head {
+  padding: 14px 22px;
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 3px solid var(--success);
+  border-bottom: 1px solid var(--card-border);
+  background: rgba(255,255,255,0.02);
+}
+.bst-result-body { padding: 16px 22px; }
+.bst-rp-round-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(59,130,246,0.12);
+  color: var(--info);
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  margin-bottom: 14px;
+}
+.bst-rp-overview {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.bst-rp-stat {
+  flex: 1;
+  min-width: 100px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+.bst-rp-stat-val {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+.bst-rp-stat-val.green { color: var(--success); }
+.bst-rp-stat-val.pink { color: var(--pink); }
+.bst-rp-stat-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 4px;
+}
+.bst-rp-video-list { display: flex; flex-direction: column; gap: 8px; }
+.bst-rp-video-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 8px;
+}
+.bst-rp-video-row.reached {
+  border-color: rgba(34,197,94,0.25);
+  background: rgba(34,197,94,0.04);
+}
+.bst-rp-video-bvid {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  color: var(--pink);
+  min-width: 130px;
+}
+.bst-rp-video-views {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.bst-rp-video-growth {
+  font-size: 12px;
+  color: var(--success);
+  white-space: nowrap;
+}
+.bst-rp-video-clicks {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.bst-rp-video-status {
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+</style>
+</head>
+<body>
+
+<!-- ====== 顶栏 ====== -->
+<div class="topbar">
+  <h1>B站工具箱<span>BILIBILI TOOLBOX</span></h1>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('auto')">自动互动</button>
+    <div class="tab-dropdown" id="boost-dropdown">
+      <button class="tab-btn" onclick="toggleBoostMenu()">播放量提升 ▾</button>
+      <div class="tab-dropdown-menu" id="boost-menu">
+        <div class="tab-dropdown-item" onclick="switchTab('booster')">代理池接口（高速限200）</div>
+        <div class="tab-dropdown-item" onclick="switchTab('player')">浏览器模拟（慢速时速30）</div>
+      </div>
+    </div>
+    <button class="tab-btn" onclick="switchTab('redpocket')">红包助手</button>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- ============================================================ -->
+<!--  TAB 1: 自动互动                                              -->
+<!-- ============================================================ -->
+<div id="panel-auto" class="panel active">
+  <!-- 登录卡片 -->
+  <div class="card">
+    <div class="card-head pink">账号登录（扫码）</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span id="auto-login-info" style="color:var(--text-secondary)">未登录</span>
+        <button class="btn btn-outline btn-sm" onclick="autoShowQR()">刷新登录</button>
+      </div>
+      <div id="auto-qr-box" class="qr-wrap" style="display:none">
+        <img id="auto-qr-img" src="" alt="QR">
+        <div id="auto-qr-status" class="qr-status">等待扫码…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sub-tab navigation -->
+  <div class="sub-tabs">
+    <button class="sub-tab-btn active" onclick="switchAutoSubTab('dynamic')">📡 动态互动</button>
+    <button class="sub-tab-btn" onclick="switchAutoSubTab('history')">📜 历史投稿互动</button>
+  </div>
+
+  <!-- ==================== 动态互动子标签 ==================== -->
+  <div id="auto-subtab-dynamic" class="sub-tab-panel">
+  <div class="card">
+    <div class="card-head pink">B站自动互动 — 互关检测 / 三连 / 点赞 / 投币 / 收藏 / 评论</div>
+    <div class="card-body">
+      <p style="color:var(--text-secondary);margin-bottom:16px">
+        扫码登录账号后，自动获取关注动态，筛选互关用户视频并执行选定操作。
+      </p>
+
+      <!-- 执行动作配置 -->
+      <div class="form-group">
+        <label class="form-label">执行动作</label>
+        <div class="checkbox-row">
+          <label class="checkbox-item" title="三连与点赞/投币/收藏互斥"><input type="checkbox" id="auto-act-triple" checked onchange="toggleTripleMode()"> 三连</label>
+          <span id="auto-sub-actions" style="display:none;gap:12px;align-items:center">
+            <label class="checkbox-item"><input type="checkbox" id="auto-act-like" onchange="onSubActionChange()"> 点赞</label>
+            <label class="checkbox-item"><input type="checkbox" id="auto-act-coin" onchange="onSubActionChange()"> 投币</label>
+            <label class="checkbox-item"><input type="checkbox" id="auto-act-favorite" onchange="onSubActionChange()"> 收藏</label>
+          </span>
+          <label class="checkbox-item"><input type="checkbox" id="auto-act-comment" checked> 评论</label>
+          <label class="checkbox-item"><input type="checkbox" id="auto-act-share" checked> 分享</label>
+          <label class="checkbox-item"><input type="checkbox" id="auto-act-cover" checked> 封面评论</label>
+          <label class="checkbox-item"><input type="checkbox" id="auto-act-play"> 播放一次</label>
+        </div>
+        <p style="color:var(--text-secondary);font-size:12px;margin-top:6px">三连与点赞/投币/收藏互斥。播放一次：互动完成后用 Playwright 浏览器随机播放一个已互动视频</p>
+      </div>
+
+      <!-- 评论子选项 -->
+      <div class="form-group" id="auto-rival-group">
+        <label class="form-label">评论子选项（嘲讽回复 / 栅栏语录）</label>
+        <div class="schedule-row">
+          <label class="checkbox-item"><input type="checkbox" id="auto-rival-witty" checked> 嘲讽评论</label>
+          <div class="inline-field">
+            <span style="color:var(--text-secondary)">概率</span>
+            <input class="form-input inline-input" id="auto-rival-witty-ratio" type="number" value="50" min="0" max="100" style="width:80px">
+            <span style="color:var(--text-secondary)">%</span>
+          </div>
+          <label class="checkbox-item"><input type="checkbox" id="auto-rival-zalan" checked> 栅栏语录</label>
+          <div class="inline-field">
+            <span style="color:var(--text-secondary)">概率</span>
+            <input class="form-input inline-input" id="auto-rival-zalan-ratio" type="number" value="50" min="0" max="100" style="width:80px">
+            <span style="color:var(--text-secondary)">%</span>
+          </div>
+        </div>
+        <div class="inline-field" style="margin-top:8px">
+          <span style="color:var(--text-secondary)">栅栏自称替换词</span>
+          <input class="form-input inline-input" id="auto-rival-zalan-self-name" type="text" value="喵喵" placeholder="喵喵" style="width:120px">
+          <span style="color:var(--text-secondary);font-size:12px">（语录中的"喵喵"将替换为此词）</span>
+        </div>
+        <div style="margin-top:10px">
+          <button class="btn btn-outline" type="button" onclick="toggleReplyTextsPanel()" id="auto-reply-texts-btn" style="font-size:13px;padding:6px 14px">📜 语录配置 ▼</button>
+          <span id="auto-reply-texts-status" style="color:var(--text-secondary);font-size:12px;margin-left:8px">使用内置默认语录</span>
+        </div>
+        <div id="auto-reply-texts-panel" style="display:none;margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--bg-card)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-weight:600;font-size:14px">自定义语录库</span>
+            <button class="btn btn-outline" type="button" onclick="resetReplyTexts()" style="font-size:12px;padding:4px 10px">↺ 重置为内置默认</button>
+          </div>
+          <p style="color:var(--text-secondary);font-size:12px;margin-bottom:12px;line-height:1.7">
+            触发嘲讽/栅栏回复时，系统会从下面三类语录中<b>各随机选一条</b>拼接成完整回复：<br>
+            <b>前缀</b>（可选开头）+ <b>正文</b>（核心内容）+ <b>后缀</b>（可选结尾）<br>
+            每行一条，标记为 <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px">(空)</code> 的行表示“不添加”，用于控制有时不加前缀/后缀的概率，删除即可减少不添加的概率。
+          </p>
+          <details style="margin-bottom:10px" open>
+            <summary style="cursor:pointer;font-size:13px;font-weight:500">🗡️ 嘲讽评论 — 前缀（<span id="witty-opens-count">0</span> 条）<span style="color:var(--text-secondary);font-weight:400;margin-left:6px">回复最前面的可选词，如“哈哈 ”“好家伙 ”</span></summary>
+            <textarea class="form-input" id="auto-witty-opens" rows="4" style="margin-top:6px;font-size:12px"></textarea>
+          </details>
+          <details style="margin-bottom:10px" open>
+            <summary style="cursor:pointer;font-size:13px;font-weight:500">🗡️ 嘲讽评论 — 正文（<span id="witty-bodies-count">0</span> 条）<span style="color:var(--text-secondary);font-weight:400;margin-left:6px">回复的核心内容，必选一条</span></summary>
+            <textarea class="form-input" id="auto-witty-bodies" rows="5" style="margin-top:6px;font-size:12px"></textarea>
+          </details>
+          <details style="margin-bottom:10px" open>
+            <summary style="cursor:pointer;font-size:13px;font-weight:500">🗡️ 嘲讽评论 — 后缀（<span id="witty-closes-count">0</span> 条）<span style="color:var(--text-secondary);font-weight:400;margin-left:6px">回复最后可选的尾巴，如“（笑”“（doge”</span></summary>
+            <textarea class="form-input" id="auto-witty-closes" rows="4" style="margin-top:6px;font-size:12px"></textarea>
+          </details>
+          <hr style="border:none;border-top:1px solid var(--border);margin:14px 0">
+          <p style="color:var(--text-secondary);font-size:12px;margin-bottom:10px;line-height:1.7">
+            💜 <b>栅栏语录</b>专用占位符：<br>
+            <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px">xx</code> → 自动替换为<b>被回复人的昵称</b>（即评论区里随机选中的那位的名字），如“xx姐姐”会变成“小明姐姐”<br>
+            <code style="background:#f0f0f0;padding:1px 4px;border-radius:3px">喵喵</code> → 自动替换为上方配置的<b>自称词</b>（默认就是“喵喵”）
+          </p>
+          <details style="margin-bottom:10px" open>
+            <summary style="cursor:pointer;font-size:13px;font-weight:500">💜 栅栏语录 — 前缀（<span id="zalan-opens-count">0</span> 条）<span style="color:var(--text-secondary);font-weight:400;margin-left:6px">回复最前面的可选词，如“姐姐晚上好～”</span></summary>
+            <textarea class="form-input" id="auto-zalan-opens" rows="4" style="margin-top:6px;font-size:12px"></textarea>
+          </details>
+          <details style="margin-bottom:10px" open>
+            <summary style="cursor:pointer;font-size:13px;font-weight:500">💜 栅栏语录 — 正文（<span id="zalan-bodies-count">0</span> 条）<span style="color:var(--text-secondary);font-weight:400;margin-left:6px">回复的核心内容，必选一条</span></summary>
+            <textarea class="form-input" id="auto-zalan-bodies" rows="5" style="margin-top:6px;font-size:12px"></textarea>
+          </details>
+          <details style="margin-bottom:10px" open>
+            <summary style="cursor:pointer;font-size:13px;font-weight:500">💜 栅栏语录 — 后缀（<span id="zalan-closes-count">0</span> 条）<span style="color:var(--text-secondary);font-weight:400;margin-left:6px">回复最后可选的尾巴，如“～”“（狗头”</span></summary>
+            <textarea class="form-input" id="auto-zalan-closes" rows="4" style="margin-top:6px;font-size:12px"></textarea>
+          </details>
+          <button class="btn btn-outline" type="button" onclick="saveReplyTexts()" style="font-size:13px;padding:6px 16px">💾 保存语录</button>
+        </div>
+      </div>
+
+      <!-- 评论语句 -->
+      <div class="form-group">
+        <label class="form-label">评论语句（{idx} 会被替换为序号）</label>
+        <input class="form-input" id="auto-comment-prefix" type="text" value="" placeholder="第{idx}时间赶来支持up" style="margin-bottom:8px">
+        <input class="form-input" id="auto-comment-suffix" type="text" value="" placeholder="[米塔 第二弹_米拉思考][米塔 第二弹_米拉思考][米塔 第二弹_米拉思考]">
+      </div>
+
+<!-- 黑白名单模式切换 -->
+      <div class="form-group">
+        <label class="form-label">🚦 名单模式（二选一）</label>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button type="button" id="btn-mode-blacklist" class="btn btn-outline" onclick="switchListMode('blacklist')" style="flex:1;font-size:13px;padding:8px 0">🚫 黑名单模式（跳过指定用户）</button>
+          <button type="button" id="btn-mode-whitelist" class="btn btn-outline" onclick="switchListMode('whitelist')" style="flex:1;font-size:13px;padding:8px 0">✅ 白名单模式（只对指定用户执行）</button>
+        </div>
+        <p id="list-mode-hint" style="font-size:12px;color:var(--text-secondary);margin-bottom:10px"></p>
+
+        <!-- 黑名单面板 -->
+        <div id="panel-blacklist">
+          <label class="form-label" style="font-size:12px;color:var(--text-secondary)">黑名单 UID（每行一个，跳过这些用户的动态）</label>
+          <textarea class="form-input" id="auto-blacklist" rows="3" placeholder="12345678&#10;87654321"></textarea>
+        </div>
+
+        <!-- 白名单面板 -->
+        <div id="panel-whitelist" style="display:none">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label class="form-label" style="font-size:12px;color:var(--text-secondary);margin:0">白名单 UID（仅对这些用户执行互动）</label>
+            <button type="button" class="btn btn-outline" id="btn-fetch-following" onclick="fetchFollowingList()" style="font-size:12px;padding:4px 10px">📡 拉取我的关注列表</button>
+          </div>
+          <textarea class="form-input" id="auto-whitelist" rows="3" placeholder="12345678&#10;87654321" style="margin-bottom:8px"></textarea>
+          <p id="whitelist-status" style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px"></p>
+          <!-- 关注列表勾选区 -->
+          <div id="following-list-container" style="display:none">
+            <label class="form-label" style="font-size:12px;color:var(--text-secondary)">👥 我的关注列表（点击勾选添加到白名单）</label>
+            <input type="text" id="following-search" class="form-input" placeholder="🔍 搜索用户名或 UID..." style="margin-bottom:8px;font-size:12px" oninput="filterFollowingList()">
+            <div id="following-list-box" style="max-height:260px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 定时任务 -->
+      <div class="form-group">
+        <label class="form-label">定时任务</label>
+        <div class="schedule-row">
+          <label class="checkbox-item"><input type="checkbox" id="auto-schedule-enabled"> 启用定时任务</label>
+          <div class="inline-field">
+            <span style="color:var(--text-secondary)">间隔</span>
+            <input class="form-input inline-input" id="auto-schedule-interval" type="number" value="30" min="1" style="width:80px">
+            <span style="color:var(--text-secondary)">分钟</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-bar" id="auto-status-bar">
+        <span class="status-dot dot-off" id="auto-dot"></span>
+        <span id="auto-status-text" style="color:var(--text-secondary)">就绪</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-pink" id="auto-run-btn" onclick="autoRun()">▶ 立即执行一次</button>
+        <button class="btn btn-stop" id="auto-stop-btn" onclick="autoStop()" style="display:none">⏹ 停止</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn btn-pink" id="auto-schedule-btn" onclick="autoScheduleToggle()">🕐 启动定时任务</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head blue">执行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="auto-log">等待运行...</div>
+    </div>
+  </div>
+  </div><!-- end auto-subtab-dynamic -->
+
+  <!-- ==================== 历史投稿互动子标签 ==================== -->
+  <div id="auto-subtab-history" class="sub-tab-panel" style="display:none">
+  <div class="card">
+    <div class="card-head pink">历史投稿互动 — 指定用户 + 时间区间内投稿互动</div>
+    <div class="card-body">
+      <p style="color:var(--text-secondary);margin-bottom:16px">
+        选择目标用户并设定时间范围，自动拉取该用户在时间区间内的投稿并逐个执行互动动作。
+      </p>
+
+      <!-- 执行动作配置（历史投稿独立配置） -->
+      <div class="form-group">
+        <label class="form-label">🎯 执行动作（历史投稿独立配置，与动态互动的动作配置互不影响）</label>
+        <div class="checkbox-row">
+          <label class="checkbox-item" title="三连与点赞/投币/收藏互斥"><input type="checkbox" id="hist-act-triple" checked onchange="histToggleTriple()"> 三连</label>
+          <span id="hist-sub-actions" style="display:none;gap:12px;align-items:center">
+            <label class="checkbox-item"><input type="checkbox" id="hist-act-like" onchange="histOnSubActionChange()"> 点赞</label>
+            <label class="checkbox-item"><input type="checkbox" id="hist-act-coin" onchange="histOnSubActionChange()"> 投币</label>
+            <label class="checkbox-item"><input type="checkbox" id="hist-act-favorite" onchange="histOnSubActionChange()"> 收藏</label>
+          </span>
+          <label class="checkbox-item"><input type="checkbox" id="hist-act-comment" checked> 评论</label>
+          <label class="checkbox-item"><input type="checkbox" id="hist-act-share" checked> 分享</label>
+          <label class="checkbox-item"><input type="checkbox" id="hist-act-cover" checked> 封面评论</label>
+          <label class="checkbox-item"><input type="checkbox" id="hist-act-play"> 播放一次</label>
+        </div>
+        <p style="color:var(--text-secondary);font-size:12px;margin-top:6px">三连与点赞/投币/收藏互斥。此处的动作配置仅对历史投稿互动生效，动态互动的动作配置在上方单独设置。</p>
+      </div>
+
+      <!-- 目标用户选择 -->
+      <div class="form-group">
+        <label class="form-label">👤 目标用户（支持多选）</label>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button type="button" class="btn btn-outline" onclick="histFetchFollowing()" id="hist-btn-following" style="font-size:12px;padding:4px 12px">📡 拉取我的关注列表</button>
+          <span style="font-size:12px;color:var(--text-tertiary);align-self:center">或手动输入 UID ↓</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <input class="form-input" id="hist-uid-input" type="text" placeholder="输入 UID，多个用逗号分隔，如 12345,67890" style="flex:1">
+          <button type="button" class="btn btn-outline" onclick="histAddUid()" style="font-size:12px;padding:4px 12px">➕ 添加</button>
+        </div>
+        <!-- 已选用户标签 -->
+        <div id="hist-selected-tags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+        <p id="hist-following-status" style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px"></p>
+        <!-- 关注列表勾选区 -->
+        <div id="hist-following-container" style="display:none">
+          <label class="form-label" style="font-size:12px;color:var(--text-secondary)">👥 我的关注列表（点击勾选添加到目标用户）</label>
+          <input type="text" id="hist-following-search" class="form-input" placeholder="🔍 搜索用户名或 UID..." style="margin-bottom:8px;font-size:12px" oninput="histFilterFollowing()">
+          <div id="hist-following-box" style="max-height:260px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
+        </div>
+      </div>
+
+      <!-- 时间范围 -->
+      <div class="form-group">
+        <label class="form-label">📅 时间范围</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button type="button" class="btn btn-outline hist-days-btn" onclick="histSetDays(7)" style="font-size:12px;padding:6px 12px">7 天</button>
+          <button type="button" class="btn btn-outline hist-days-btn" onclick="histSetDays(15)" style="font-size:12px;padding:6px 12px">15 天</button>
+          <button type="button" class="btn btn-outline hist-days-btn btn-active" onclick="histSetDays(30)" style="font-size:12px;padding:6px 12px;border-color:var(--pink);color:var(--pink)">30 天</button>
+          <button type="button" class="btn btn-outline hist-days-btn" onclick="histSetDays(90)" style="font-size:12px;padding:6px 12px">90 天</button>
+          <div class="inline-field">
+            <input class="form-input inline-input" id="hist-days-input" type="number" value="30" min="1" max="365" style="width:80px">
+            <span style="color:var(--text-secondary)">天</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 预览按钮 -->
+      <div class="form-group">
+        <button type="button" class="btn btn-outline" onclick="histPreview()" id="hist-preview-btn" style="font-size:13px;padding:6px 16px">🔍 预览视频列表</button>
+        <span id="hist-preview-status" style="font-size:12px;color:var(--text-tertiary);margin-left:10px"></span>
+      </div>
+
+      <!-- 视频列表展示区 -->
+      <div id="hist-preview-list" style="display:none;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label class="form-label" style="margin:0;font-size:13px">📝 待处理视频列表</label>
+          <span id="hist-video-count" style="font-size:12px;color:var(--text-secondary)"></span>
+        </div>
+        <div id="hist-video-list-box" style="max-height:360px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
+      </div>
+
+      <div class="status-bar" id="hist-status-bar">
+        <span class="status-dot dot-off" id="hist-dot"></span>
+        <span id="hist-status-text" style="color:var(--text-secondary)">就绪</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-pink" id="hist-run-btn" onclick="histRun()">▶ 开始互动</button>
+        <button class="btn btn-stop" id="hist-stop-btn" onclick="histStop()" style="display:none">⏹ 停止</button>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head blue">执行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="hist-log">等待运行...</div>
+    </div>
+  </div>
+  </div><!-- end auto-subtab-history -->
+</div>
+
+<!-- ============================================================ -->
+<!--  TAB 2: 播放量提升                                             -->
+<!-- ============================================================ -->
+<div id="panel-booster" class="panel">
+  <!-- 账号状态卡片 -->
+  <div class="card">
+    <div class="card-head pink">账号状态</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span id="bst-login-info" style="color:var(--text-secondary)">加载中...</span>
+        <button class="btn btn-outline btn-sm" onclick="bstFetchMyVideos(this)">📦 获取我的投稿</button>
+      </div>
+      <div id="bst-my-videos" style="display:none;margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="color:var(--text-secondary);font-size:13px">最近投稿（点击勾选，再点击下方按钮添加）</span>
+          <button class="btn btn-outline btn-sm" onclick="bstAddSelected()">✅ 添加选中到下方</button>
+        </div>
+        <div id="bst-video-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head pink">B站播放量提升 — 代理池自动刷量</div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="form-label">BV号</label>
+        <div id="booster-bv-list" class="bv-list">
+          <div class="bv-row"><input class="form-input" placeholder="BV1fz421o8J7" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="bvAdd('booster-bv-list')">+ 添加视频</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">目标播放数</label>
+        <input class="form-input" id="booster-target" type="number" placeholder="1000">
+      </div>
+      <div class="status-bar" id="bst-status-bar">
+        <span class="status-dot dot-off" id="bst-dot"></span>
+        <span id="bst-status-text" style="color:var(--text-secondary)">就绪</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-pink" id="bst-run-btn" onclick="boosterRun()">▶ 开始提升</button>
+        <button class="btn btn-stop" id="bst-stop-btn" onclick="boosterStop()" style="display:none">⏹ 停止</button>
+      </div>
+    </div>
+  </div>
+  <!-- 实时变化结果面板 -->
+  <div class="bst-result-panel" id="bst-result-panel">
+    <div class="bst-result-head">📊 实时变化结果</div>
+    <div class="bst-result-body">
+      <div id="bst-rp-round-tag"></div>
+      <div class="bst-rp-overview" id="bst-rp-overview">
+        <div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">等待任务启动...</div>
+      </div>
+      <div class="bst-rp-video-list" id="bst-rp-videos"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head blue">执行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="booster-log">等待运行...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  TAB 2-B: 浏览器播放 (Playwright)                              -->
+<!-- ============================================================ -->
+<div id="panel-player" class="panel">
+  <!-- 登录卡片 -->
+  <div class="card">
+    <div class="card-head pink">账号登录（扫码）</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span id="pl-login-info" style="color:var(--text-secondary)">未登录</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="plFetchMyVideos(this)">📦 获取主账号投稿</button>
+          <button class="btn btn-outline btn-sm" onclick="plShowQR()">刷新播放登录</button>
+        </div>
+      </div>
+      <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">播放登录用于 Playwright 模拟播放（更有效），投稿获取复用「自动互动」主账号凭证</p>
+      <div class="qr-wrap" id="pl-qr-area" style="display:none">
+        <img id="pl-qr-img" src="" alt="QR">
+        <div class="qr-status" id="pl-qr-status">请用B站 App 扫描</div>
+      </div>
+      <div id="pl-my-videos" style="display:none;margin-top:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="color:var(--text-secondary);font-size:13px">最近投稿（点击勾选，再点击下方按钮添加）</span>
+          <button class="btn btn-outline btn-sm" onclick="plAddSelected()">✅ 添加选中到下方</button>
+        </div>
+        <div id="pl-video-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head green">浏览器播放 (Playwright)</div>
+    <div class="card-body">
+      <p style="color:var(--text-secondary);margin-bottom:16px;font-size:13px">
+        使用 Playwright 浏览器模拟真实用户播放行为，登录后播放量更有效
+      </p>
+      <div class="form-group">
+        <label class="form-label">视频 BV 号</label>
+        <div id="player-bv-list" class="bv-list">
+          <div class="bv-row"><input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>
+        </div>
+        <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="bvAdd('player-bv-list')">+ 添加视频</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">每个视频播放轮数</label>
+        <input class="form-input" id="player-rounds" type="number" value="1" min="1">
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px">
+        <button class="btn btn-success" id="player-run-btn" onclick="playerRun()">▶ 启动播放</button>
+        <button class="btn btn-danger" id="player-stop-btn" onclick="playerStop()" disabled>⏹ 停止</button>
+      </div>
+    </div>
+  </div>
+  <!-- 实时变化结果面板 -->
+  <div class="bst-result-panel" id="pl-result-panel">
+    <div class="bst-result-head">📊 实时播放结果</div>
+    <div class="bst-result-body">
+      <div id="pl-rp-round-tag"></div>
+      <div class="bst-rp-overview" id="pl-rp-overview">
+        <div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">等待任务启动...</div>
+      </div>
+      <div class="bst-rp-video-list" id="pl-rp-videos"></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head blue">执行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="player-log">等待运行...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<!--  TAB 3: 红包助手                                              -->
+<!-- ============================================================ -->
+<div id="panel-redpocket" class="panel">
+
+  <!-- 登录卡片 -->
+  <div class="card">
+    <div class="card-head pink">账号登录（扫码）</div>
+    <div class="card-body">
+      <div class="status-bar">
+        <span id="rp-login-info" style="color:var(--text-secondary)">未登录</span>
+        <button class="btn btn-outline btn-sm" onclick="rpShowQR()">刷新登录</button>
+      </div>
+      <div class="qr-wrap" id="rp-qr-area" style="display:none">
+        <img id="rp-qr-img" src="" alt="QR">
+        <div class="qr-status" id="rp-qr-status">请用B站 App 扫描</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 监听房间管理 -->
+  <div class="card">
+    <div class="card-head blue">监听房间管理</div>
+    <div class="card-body">
+      <div id="rp-rooms"></div>
+      <hr>
+      <p style="font-weight:600;margin-bottom:10px">添加房间</p>
+      <div class="checkbox-row" style="margin-bottom:12px">
+        <button type="button" class="btn btn-outline btn-sm" onclick="fillRoomId(27263119)">🚂 星穹铁道</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="fillRoomId(27354807)">🌊 鸣潮</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="fillRoomId(1890951177)">🌀 异环</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="fillRoomId(5555734)">🚢 明日方舟</button>
+        <button type="button" class="btn btn-outline btn-sm" onclick="fillRoomId(1921300321)">🏁 终末地</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">房间号</label>
+        <input class="form-input" id="rp-add-room" placeholder="27354807">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label class="form-label">红包 ID</label>
+          <select class="form-input" id="rp-add-rpid">
+            <option value="188">188 - 20电池 / 15个礼物</option>
+            <option value="189" selected>189 - 100电池 / 44个礼物</option>
+            <option value="190">190 - 520电池 / 142个礼物</option>
+            <option value="191">191 - 1000电池 / 388个礼物</option>
+            <option value="192">192 - 5000电池 / 842个礼物</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">时长</label>
+          <select class="form-input" id="rp-add-dur">
+            <option value="300">5分钟</option>
+            <option value="600" selected>10分钟</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">数量</label>
+          <input class="form-input" id="rp-add-count" type="number" value="1">
+        </div>
+        <div class="form-group">
+          <label class="form-label">弹幕消息</label>
+          <input class="form-input" id="rp-add-danmu" value="老板大气！点点红包抽礼物">
+        </div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="rpAddRoom()" style="width:100%">+ 添加房间</button>
+    </div>
+  </div>
+
+  <!-- 启动/停止 -->
+  <div class="card">
+    <div class="card-head green">运行控制</div>
+    <div class="card-body">
+      <div class="status-bar">
+        <span class="status-dot dot-off" id="rp-dot"></span>
+        <span id="rp-run-status" style="color:var(--text-secondary)">未运行</span>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-success" id="rp-start-btn" onclick="rpStart()">▶ 启动</button>
+        <button class="btn btn-danger" id="rp-stop-btn" onclick="rpStop()" disabled>⏹ 停止</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="card">
+    <div class="card-head blue">运行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="rp-log">等待启动...</div>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑房间弹窗 -->
+<div id="rp-edit-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:1000;justify-content:center;align-items:center">
+  <div style="background:var(--bg-card);border:1px solid var(--card-border);border-radius:12px;padding:24px;width:90%;max-width:420px">
+    <h3 style="margin:0 0 16px;color:var(--text-primary)">编辑房间</h3>
+    <input type="hidden" id="rp-edit-idx">
+    <div class="form-group"><label class="form-label">房间号</label><input class="form-input" id="rp-edit-room" type="number"></div>
+    <div class="form-group"><label class="form-label">红包 ID</label>
+      <select class="form-input" id="rp-edit-rpid">
+        <option value="188">188 - 20电池 / 15个礼物</option>
+        <option value="189">189 - 100电池 / 44个礼物</option>
+        <option value="190">190 - 520电池 / 142个礼物</option>
+        <option value="191">191 - 1000电池 / 388个礼物</option>
+        <option value="192">192 - 5000电池 / 842个礼物</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">时长</label>
+      <select class="form-input" id="rp-edit-dur">
+        <option value="300">5分钟</option>
+        <option value="600">10分钟</option>
+      </select>
+    </div>
+    <div class="form-group"><label class="form-label">数量</label><input class="form-input" id="rp-edit-count" type="number" value="1"></div>
+    <div class="form-group"><label class="form-label">弹幕消息</label><input class="form-input" id="rp-edit-danmu"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-outline" onclick="document.getElementById('rp-edit-modal').style.display='none'">取消</button>
+      <button class="btn btn-success" onclick="rpSaveEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main -->
+
+<script>
+/* ===== 下拉菜单 ===== */
+function toggleBoostMenu(){
+  document.getElementById('boost-dropdown').classList.toggle('open');
+}
+// 点击页面其他区域关闭下拉菜单
+document.addEventListener('click', function(e){
+  if(!e.target.closest('#boost-dropdown')){
+    document.getElementById('boost-dropdown').classList.remove('open');
+  }
+});
+
+/* ===== Tab 切换 ===== */
+function switchTab(name){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.tab-dropdown-item').forEach(i=>i.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  // 处理下拉菜单内的子项高亮
+  const ddItem = document.querySelector(`.tab-dropdown-item[onclick="switchTab('${name}')"]`);
+  if(ddItem){
+    ddItem.classList.add('active');
+    document.querySelector('#boost-dropdown > .tab-btn').classList.add('active');
+  }else{
+    const btn = document.querySelector(`.tab-btn[onclick="switchTab('${name}')"]`);
+    if(btn) btn.classList.add('active');
+  }
+  if(name==='booster'){bstLoadLoginStatus()}
+  if(name==='redpocket'){rpLoadRooms();rpCheckStatus()}
+  if(name==='player'){plLoadConfig()}
+  if(name==='auto'){autoLoadConfig()}
+}
+
+/* ===== BV 动态列表 ===== */
+function bvAdd(listId){
+  const list=document.getElementById(listId);
+  const row=document.createElement('div');
+  row.className='bv-row';
+  row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+  list.appendChild(row);
+  row.querySelector('input').focus();
+}
+function bvRemove(btn){
+  const list=btn.closest('.bv-list');
+  btn.closest('.bv-row').remove();
+  // 至少保留一行
+  if(!list.querySelector('.bv-row')){
+    const row=document.createElement('div');
+    row.className='bv-row';
+    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+    list.appendChild(row);
+  }
+}
+function bvGetList(listId){
+  const inputs=document.getElementById(listId).querySelectorAll('input');
+  return Array.from(inputs).map(i=>i.value.trim()).filter(s=>s);
+}
+
+/* ===== 通用：轮询日志 ===== */
+let pollTimers={};
+function startPoll(url,interval,updateFn){
+  if(pollTimers[url])clearInterval(pollTimers[url]);
+  pollTimers[url]=setInterval(()=>{
+    fetch(url).then(r=>r.json()).then(updateFn).catch(()=>{});
+  },interval);
+}
+function stopPoll(url){
+  if(pollTimers[url]){clearInterval(pollTimers[url]);delete pollTimers[url];}
+}
+
+/* ============================================================
+   TAB 1: 自动互动
+   ============================================================ */
+let autoTaskId=null;
+let schedulePolling=null;
+
+/* --- Auto 登录 --- */
+let autoPollTimer=null;
+function autoLoadConfig(){
+  fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+    if(d.login_uid){
+      document.getElementById('auto-login-info').innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+    }
+  });
+}
+function autoShowQR(){
+  const box=document.getElementById('auto-qr-box');
+  box.style.display='block';
+  document.getElementById('auto-qr-status').textContent='生成中...';
+  fetch('/api/auto/login/qrcode').then(r=>r.json()).then(d=>{
+    if(d.success){
+      document.getElementById('auto-qr-img').src=d.qr_image;
+      document.getElementById('auto-qr-status').textContent='请用 B站 App 扫描二维码';
+      autoStartPoll(d.qrcode_key);
+    }else{
+      document.getElementById('auto-qr-status').textContent='生成失败: '+d.message;
+    }
+  });
+}
+function autoStartPoll(key){
+  if(autoPollTimer)clearInterval(autoPollTimer);
+  autoPollTimer=setInterval(()=>{
+    fetch(`/api/auto/login/poll/${key}`).then(r=>r.json()).then(d=>{
+      const st=document.getElementById('auto-qr-status');
+      if(d.success){
+        st.textContent='登录成功！';st.style.color='var(--success)';
+        clearInterval(autoPollTimer);
+        document.getElementById('auto-qr-box').style.display='none';
+        document.getElementById('auto-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+      }else if(d.status==='waiting'){
+        st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
+      }else if(d.status==='confirming'){
+        st.textContent='已确认，处理中...';st.style.color='var(--warn)';
+      }else{
+        st.textContent=d.message||'未知错误';st.style.color='var(--danger)';
+        if(d.message&&d.message.includes('过期'))clearInterval(autoPollTimer);
+      }
+    });
+  },2000);
+}
+
+function loadAutoConfig(){
+  fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
+    const a=cfg.actions||{};
+    const triple=a.triple!==false;
+    document.getElementById('auto-act-triple').checked=triple;
+    document.getElementById('auto-act-like').checked=!!a.like;
+    document.getElementById('auto-act-coin').checked=!!a.coin;
+    document.getElementById('auto-act-favorite').checked=!!a.favorite;
+    toggleTripleMode(triple);
+    document.getElementById('auto-act-comment').checked=a.comment!==false;
+    document.getElementById('auto-act-share').checked=a.share!==false;
+    document.getElementById('auto-act-cover').checked=a.cover_comment!==false;
+    document.getElementById('auto-act-play').checked=!!a.play_once;
+    const rr=cfg.rival_reply||{};
+    document.getElementById('auto-rival-witty').checked=rr.witty!==false;
+    document.getElementById('auto-rival-zalan').checked=rr.zalan!==false;
+    document.getElementById('auto-rival-witty-ratio').value=rr.witty_ratio!=null?rr.witty_ratio:50;
+    document.getElementById('auto-rival-zalan-ratio').value=rr.zalan_ratio!=null?rr.zalan_ratio:50;
+    document.getElementById('auto-rival-zalan-self-name').value=rr.zalan_self_name||'喵喵';
+    const bl=cfg.blacklist||[];
+    document.getElementById('auto-blacklist').value=bl.join('\n');
+    const wl=cfg.whitelist||[];
+    document.getElementById('auto-whitelist').value=wl.join('\n');
+    switchListMode(cfg.list_mode||'blacklist');
+    const ct=cfg.comment_text||{};
+    document.getElementById('auto-comment-prefix').value=ct.prefix||'';
+    document.getElementById('auto-comment-suffix').value=ct.suffix||'';
+    const s=cfg.schedule||{};
+    document.getElementById('auto-schedule-enabled').checked=!!s.enabled;
+    document.getElementById('auto-schedule-interval').value=s.interval_minutes||30;
+    loadReplyTexts();
+  });
+}
+
+function saveAutoConfig(){
+  const tripleChecked=document.getElementById('auto-act-triple').checked;
+  // 读取当前配置，只更新动态互动相关字段，保留 history_actions 等其他配置
+  return fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
+    cfg.actions={
+      triple:tripleChecked,
+      like:tripleChecked?false:document.getElementById('auto-act-like').checked,
+      coin:tripleChecked?false:document.getElementById('auto-act-coin').checked,
+      favorite:tripleChecked?false:document.getElementById('auto-act-favorite').checked,
+      comment:document.getElementById('auto-act-comment').checked,
+      share:document.getElementById('auto-act-share').checked,
+      cover_comment:document.getElementById('auto-act-cover').checked,
+      play_once:document.getElementById('auto-act-play').checked,
+    };
+    cfg.rival_reply={
+      witty:document.getElementById('auto-rival-witty').checked,
+      witty_ratio:parseInt(document.getElementById('auto-rival-witty-ratio').value)||0,
+      zalan:document.getElementById('auto-rival-zalan').checked,
+      zalan_ratio:parseInt(document.getElementById('auto-rival-zalan-ratio').value)||0,
+      zalan_self_name:document.getElementById('auto-rival-zalan-self-name').value||'喵喵',
+    };
+    cfg.comment_text={
+      prefix:document.getElementById('auto-comment-prefix').value,
+      suffix:document.getElementById('auto-comment-suffix').value,
+    };
+    cfg.blacklist=document.getElementById('auto-blacklist').value.split('\n').map(s=>s.trim()).filter(s=>s);
+    cfg.whitelist=document.getElementById('auto-whitelist').value.split('\n').map(s=>s.trim()).filter(s=>s);
+    cfg.list_mode=document.querySelector('#btn-mode-blacklist').classList.contains('btn-active')?'blacklist':'whitelist';
+    cfg.schedule={
+      enabled:document.getElementById('auto-schedule-enabled').checked,
+      interval_minutes:parseInt(document.getElementById('auto-schedule-interval').value)||30,
+    };
+    return fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+  }).then(r=>r.json()).then(d=>{
+    if(d.success)setText('auto-status-text','配置已保存');
+    return d;
+  });
+}
+
+/* 三连/点赞投币收藏互斥 */
+function toggleTripleMode(tripleState){
+  const triple=document.getElementById('auto-act-triple').checked;
+  const state=(tripleState!==undefined)?tripleState:triple;
+  const sub=document.getElementById('auto-sub-actions');
+  if(state){
+    sub.style.display='none';
+    document.getElementById('auto-act-like').checked=false;
+    document.getElementById('auto-act-coin').checked=false;
+    document.getElementById('auto-act-favorite').checked=false;
+  }else{
+    sub.style.display='inline-flex';
+  }
+}
+function onSubActionChange(){
+  // 勾选子动作时自动取消三连
+  const any=document.getElementById('auto-act-like').checked||document.getElementById('auto-act-coin').checked||document.getElementById('auto-act-favorite').checked;
+  if(any)document.getElementById('auto-act-triple').checked=false;
+}
+
+/* 黑白名单模式切换 */
+let _currentListMode='blacklist';
+function switchListMode(mode){
+  _currentListMode=mode;
+  const blBtn=document.getElementById('btn-mode-blacklist');
+  const wlBtn=document.getElementById('btn-mode-whitelist');
+  const blPanel=document.getElementById('panel-blacklist');
+  const wlPanel=document.getElementById('panel-whitelist');
+  const hint=document.getElementById('list-mode-hint');
+  if(mode==='whitelist'){
+    wlBtn.classList.add('btn-active');wlBtn.style.borderColor='var(--success)';wlBtn.style.color='var(--success)';
+    blBtn.classList.remove('btn-active');blBtn.style.borderColor='';blBtn.style.color='';
+    blPanel.style.display='none';wlPanel.style.display='block';
+    hint.textContent='✅ 白名单模式：只处理白名单中的用户，跳过其他所有人（包括互关检查）';
+  }else{
+    blBtn.classList.add('btn-active');blBtn.style.borderColor='var(--pink)';blBtn.style.color='var(--pink)';
+    wlBtn.classList.remove('btn-active');wlBtn.style.borderColor='';wlBtn.style.color='';
+    wlPanel.style.display='none';blPanel.style.display='block';
+    hint.textContent='🚫 黑名单模式：跳过黑名单用户，其他互关用户正常处理';
+  }
+}
+
+/* 拉取关注列表 */
+let _followingCache=[];  // 全量关注列表
+function fetchFollowingList(){
+  const btn=document.getElementById('btn-fetch-following');
+  const status=document.getElementById('whitelist-status');
+  btn.disabled=true;btn.textContent='拉取中...';
+  status.textContent='正在拉取关注列表，请稍候...';
+  fetch('/api/auto/following-list').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
+    if(!d.success){status.textContent='❌ '+( d.message||'拉取失败');return;}
+    _followingCache=d.followings||[];
+    status.textContent='✅ 共拉取 '+_followingCache.length+' 个关注用户';
+    const container=document.getElementById('following-list-container');
+    container.style.display='block';
+    renderFollowingList(_followingCache);
+  }).catch(e=>{
+    btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
+    status.textContent='❌ 网络错误: '+e;
+  });
+}
+
+function renderFollowingList(list){
+  const box=document.getElementById('following-list-box');
+  // 获取当前白名单中的 UID
+  const wlText=document.getElementById('auto-whitelist').value;
+  const wlSet=new Set(wlText.split('\n').map(s=>s.trim()).filter(s=>s));
+  if(!list.length){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">无关注用户</p>';return;}
+  box.innerHTML=list.map(u=>{
+    const checked=wlSet.has(String(u.uid))?'checked':'';
+    const face=u.face?`<img src="${u.face}" referrerpolicy="no-referrer" style="width:28px;height:28px;border-radius:50%;margin-right:8px;object-fit:cover">`:'';
+    return `<label class="following-item" style="display:flex;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer;gap:6px" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">
+      <input type="checkbox" data-uid="${u.uid}" ${checked} onchange="toggleFollowingUid(this)">
+      ${face}
+      <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.name}</span>
+      <span style="font-size:11px;color:var(--text-tertiary)">UID ${u.uid}</span>
+    </label>`;
+  }).join('');
+}
+
+function filterFollowingList(){
+  const q=document.getElementById('following-search').value.trim().toLowerCase();
+  if(!q){renderFollowingList(_followingCache);return;}
+  const filtered=_followingCache.filter(u=>String(u.uid).includes(q)||(u.name||'').toLowerCase().includes(q));
+  renderFollowingList(filtered);
+}
+
+function toggleFollowingUid(cb){
+  const uid=String(cb.dataset.uid);
+  const wlText=document.getElementById('auto-whitelist').value;
+  let uids=wlText.split('\n').map(s=>s.trim()).filter(s=>s);
+  if(cb.checked){
+    if(!uids.includes(uid))uids.push(uid);
+  }else{
+    uids=uids.filter(u=>u!==uid);
+  }
+  document.getElementById('auto-whitelist').value=uids.join('\n');
+}
+
+/* 语录配置 */
+function toggleReplyTextsPanel(){
+  const panel=document.getElementById('auto-reply-texts-panel');
+  const btn=document.getElementById('auto-reply-texts-btn');
+  if(panel.style.display==='none'){
+    panel.style.display='block';
+    btn.textContent='📜 语录配置 ▲';
+  }else{
+    panel.style.display='none';
+    btn.textContent='📜 语录配置 ▼';
+  }
+}
+
+const EMPTY_MARKER='(空)';
+function loadReplyTexts(){
+  fetch('/api/auto/reply-texts').then(r=>r.json()).then(d=>{
+    const toLines=arr=>(arr||[]).map(s=>s===''?EMPTY_MARKER:s).join('\n');
+    document.getElementById('auto-witty-opens').value=toLines(d.witty_opens);
+    document.getElementById('auto-witty-bodies').value=toLines(d.witty_bodies);
+    document.getElementById('auto-witty-closes').value=toLines(d.witty_closes);
+    document.getElementById('auto-zalan-opens').value=toLines(d.zalan_opens);
+    document.getElementById('auto-zalan-bodies').value=toLines(d.zalan_bodies);
+    document.getElementById('auto-zalan-closes').value=toLines(d.zalan_closes);
+    updateReplyCounts(d);
+    document.getElementById('auto-reply-texts-status').textContent=d.has_custom?'✅ 使用自定义语录':'使用内置默认语录';
+  });
+}
+
+function updateReplyCounts(d){
+  const c=(k)=>{const v=d[k]||[];const el=document.getElementById(k.replace(/_/g,'-')+'-count');if(el)el.textContent=v.length;};
+  c('witty_opens');c('witty_bodies');c('witty_closes');
+  c('zalan_opens');c('zalan_bodies');c('zalan_closes');
+}
+
+function saveReplyTexts(){
+  const toArr=s=>s.split('\n').map(l=>l.trim()).filter(l=>l!=='').map(l=>l===EMPTY_MARKER?'':l);
+  const body={
+    witty_opens:toArr(document.getElementById('auto-witty-opens').value),
+    witty_bodies:toArr(document.getElementById('auto-witty-bodies').value),
+    witty_closes:toArr(document.getElementById('auto-witty-closes').value),
+    zalan_opens:toArr(document.getElementById('auto-zalan-opens').value),
+    zalan_bodies:toArr(document.getElementById('auto-zalan-bodies').value),
+    zalan_closes:toArr(document.getElementById('auto-zalan-closes').value),
+  };
+  fetch('/api/auto/reply-texts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){
+        document.getElementById('auto-reply-texts-status').textContent='✅ 语录已保存';
+        loadReplyTexts();
+      }
+    });
+}
+
+function resetReplyTexts(){
+  if(!confirm('确定要重置为内置默认语录吗？自定义内容将丢失。'))return;
+  fetch('/api/auto/reply-texts/reset',{method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){
+        document.getElementById('auto-reply-texts-status').textContent='使用内置默认语录';
+        loadReplyTexts();
+      }
+    });
+}
+
+function autoRun(){
+  const btn=document.getElementById('auto-run-btn');
+  const stopBtn=document.getElementById('auto-stop-btn');
+  btn.disabled=true;btn.textContent='运行中...';
+  stopBtn.style.display='inline-block';stopBtn.disabled=false;
+  setDot('auto-dot','run');setText('auto-status-text','运行中');
+  document.getElementById('auto-log').textContent='启动中...';
+
+  // 先自动保存配置，再启动任务
+  saveAutoConfig().then(()=>{
+    return fetch('/api/auto/run',{method:'POST'});
+  }).then(r=>r.json()).then(d=>{
+    autoTaskId=d.task_id;
+    startPoll(`/api/auto/status/${autoTaskId}`,2000,autoUpdate);
+  });
+}
+function autoStop(){
+  fetch('/api/auto/stop',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task_id:autoTaskId})});
+}
+function autoUpdate(d){
+  const log=document.getElementById('auto-log');
+  if(d.output)log.textContent=d.output;
+  log.scrollTop=log.scrollHeight;
+  const done=d.status==='completed'||d.status==='error';
+  if(d.status==='completed'){
+    setDot('auto-dot','off');setText('auto-status-text','已完成');
+  }else if(d.status==='error'){
+    setDot('auto-dot','err');setText('auto-status-text','出错');
+  }
+  if(done){
+    document.getElementById('auto-run-btn').disabled=false;
+    document.getElementById('auto-run-btn').textContent='▶ 立即执行';
+    document.getElementById('auto-stop-btn').style.display='none';
+    stopPoll(`/api/auto/status/${autoTaskId}`);
+  }
+}
+
+function updateScheduleBtn(running){
+  const btn=document.getElementById('auto-schedule-btn');
+  if(running){btn.textContent='⏹ 停止定时任务';btn.className='btn btn-stop';}
+  else{btn.textContent='🕐 启动定时任务';btn.className='btn btn-pink';}
+}
+
+function autoScheduleToggle(){
+  fetch('/api/auto/schedule/status').then(r=>r.json()).then(s=>{
+    if(s.running){
+      fetch('/api/auto/schedule/stop',{method:'POST'}).then(()=>updateScheduleBtn(false));
+    }else{
+      // 启动定时任务前自动保存配置
+      saveAutoConfig().then(()=>{
+        return fetch('/api/auto/schedule/start',{method:'POST'});
+      }).then(()=>{
+        updateScheduleBtn(true);
+        startSchedulePoll();
+      });
+    }
+  });
+}
+
+function startSchedulePoll(){
+  if(schedulePolling)return;
+  schedulePolling=setInterval(()=>{
+    fetch('/api/auto/schedule/status').then(r=>r.json()).then(s=>{
+      updateScheduleBtn(s.running);
+      if(s.log){
+        const log=document.getElementById('auto-log');
+        log.textContent=s.log;
+        log.scrollTop=log.scrollHeight;
+      }
+      if(!s.running){clearInterval(schedulePolling);schedulePolling=null;}
+    });
+  },5000);
+}
+
+// 页面加载时拉取配置 + 检查定时任务状态
+document.addEventListener('DOMContentLoaded',()=>{
+  loadAutoConfig();
+  fetch('/api/auto/schedule/status').then(r=>r.json()).then(s=>{
+    updateScheduleBtn(s.running);
+    if(s.running)startSchedulePoll();
+  });
+});
+
+/* ============================================================
+   子标签切换 + 历史投稿互动
+   ============================================================ */
+
+/* --- 子标签切换 --- */
+function switchAutoSubTab(tab){
+  const tabs=['dynamic','history'];
+  tabs.forEach(t=>{
+    const panel=document.getElementById('auto-subtab-'+t);
+    const btn=document.querySelector(`.sub-tab-btn[onclick*="${t}"]`);
+    if(t===tab){
+      panel.style.display='block';
+      btn.classList.add('active');
+    }else{
+      panel.style.display='none';
+      btn.classList.remove('active');
+    }
+  });
+}
+
+/* --- 历史投稿互动逻辑 --- */
+let histSelectedUids=new Set();  // 已选 UID
+let histFollowingCache=[];       // 关注列表缓存
+let histTaskId=null;
+
+function histAddUid(){
+  const input=document.getElementById('hist-uid-input');
+  const val=input.value.trim();
+  if(!val)return;
+  val.split(/[,，\s]+/).forEach(s=>{
+    s=s.trim();
+    if(s && /^\d+$/.test(s)) histSelectedUids.add(s);
+  });
+  input.value='';
+  histRenderTags();
+}
+
+function histRemoveUid(uid){
+  histSelectedUids.delete(String(uid));
+  histRenderTags();
+  // 同步关注列表勾选状态
+  const cb=document.querySelector(`#hist-following-box input[data-uid="${uid}"]`);
+  if(cb) cb.checked=false;
+}
+
+function histRenderTags(){
+  const container=document.getElementById('hist-selected-tags');
+  if(!histSelectedUids.size){
+    container.innerHTML='<span style="font-size:12px;color:var(--text-tertiary)">尚未选择目标用户</span>';
+    return;
+  }
+  container.innerHTML=Array.from(histSelectedUids).map(uid=>
+    `<span style="display:inline-flex;align-items:center;gap:4px;background:rgba(251,114,153,0.15);border:1px solid rgba(251,114,153,0.3);border-radius:16px;padding:4px 10px;font-size:12px">
+      UID ${uid}
+      <span onclick="histRemoveUid('${uid}')" style="cursor:pointer;color:var(--text-tertiary);font-size:14px;line-height:1">&times;</span>
+    </span>`
+  ).join('');
+}
+
+function histFetchFollowing(){
+  const btn=document.getElementById('hist-btn-following');
+  const status=document.getElementById('hist-following-status');
+  btn.disabled=true;btn.textContent='拉取中...';
+  status.textContent='正在拉取关注列表，请稍候...';
+  fetch('/api/auto/following-list').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
+    if(!d.success){status.textContent='❌ '+(d.message||'拉取失败');return;}
+    histFollowingCache=d.followings||[];
+    status.textContent='✅ 共拉取 '+histFollowingCache.length+' 个关注用户';
+    document.getElementById('hist-following-container').style.display='block';
+    histRenderFollowing(histFollowingCache);
+  }).catch(e=>{
+    btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
+    status.textContent='❌ 网络错误: '+e;
+  });
+}
+
+function histRenderFollowing(list){
+  const box=document.getElementById('hist-following-box');
+  if(!list.length){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">无关注用户</p>';return;}
+  box.innerHTML=list.map(u=>{
+    const checked=histSelectedUids.has(String(u.uid))?'checked':'';
+    const face=u.face?`<img src="${u.face}" referrerpolicy="no-referrer" style="width:28px;height:28px;border-radius:50%;margin-right:8px;object-fit:cover">`:'';
+    return `<label style="display:flex;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer;gap:6px" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">
+      <input type="checkbox" data-uid="${u.uid}" ${checked} onchange="histToggleUid(this)">
+      ${face}
+      <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.name}</span>
+      <span style="font-size:11px;color:var(--text-tertiary)">UID ${u.uid}</span>
+    </label>`;
+  }).join('');
+}
+
+function histFilterFollowing(){
+  const q=document.getElementById('hist-following-search').value.trim().toLowerCase();
+  if(!q){histRenderFollowing(histFollowingCache);return;}
+  const filtered=histFollowingCache.filter(u=>String(u.uid).includes(q)||(u.name||'').toLowerCase().includes(q));
+  histRenderFollowing(filtered);
+}
+
+function histToggleUid(cb){
+  const uid=String(cb.dataset.uid);
+  if(cb.checked){
+    histSelectedUids.add(uid);
+  }else{
+    histSelectedUids.delete(uid);
+  }
+  histRenderTags();
+}
+
+function histSetDays(days){
+  document.getElementById('hist-days-input').value=days;
+  document.querySelectorAll('.hist-days-btn').forEach(btn=>{
+    btn.classList.remove('btn-active');
+    btn.style.borderColor='';
+    btn.style.color='';
+  });
+  event.target.classList.add('btn-active');
+  event.target.style.borderColor='var(--pink)';
+  event.target.style.color='var(--pink)';
+}
+
+function histGetUids(){
+  // 合并已选标签 + 输入框中的 UID
+  const input=document.getElementById('hist-uid-input').value.trim();
+  if(input){
+    input.split(/[,，\s]+/).forEach(s=>{
+      s=s.trim();
+      if(s && /^\d+$/.test(s)) histSelectedUids.add(s);
+    });
+    document.getElementById('hist-uid-input').value='';
+    histRenderTags();
+  }
+  return Array.from(histSelectedUids).map(Number);
+}
+
+function histPreview(){
+  const uids=histGetUids();
+  if(!uids.length){alert('请先选择目标用户');return;}
+  const days=parseInt(document.getElementById('hist-days-input').value)||30;
+  const btn=document.getElementById('hist-preview-btn');
+  const status=document.getElementById('hist-preview-status');
+  btn.disabled=true;btn.textContent='加载中...';
+  status.textContent='正在拉取投稿...';
+  fetch(`/api/auto/history/preview?uids=${uids.join(',')}&days=${days}`)
+    .then(r=>r.json()).then(d=>{
+      btn.disabled=false;btn.textContent='🔍 预览视频列表';
+      if(!d.success){status.textContent='❌ '+(d.message||'拉取失败');return;}
+      status.textContent=`✅ 共 ${d.total} 个视频`;
+      histRenderPreview(d.videos);
+    }).catch(e=>{
+      btn.disabled=false;btn.textContent='🔍 预览视频列表';
+      status.textContent='❌ 网络错误: '+e;
+    });
+}
+
+function histRenderPreview(videos){
+  const container=document.getElementById('hist-preview-list');
+  const box=document.getElementById('hist-video-list-box');
+  const count=document.getElementById('hist-video-count');
+  container.style.display='block';
+  if(!videos.length){
+    box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">无符合条件的视频</p>';
+    count.textContent='';
+    return;
+  }
+  // 按用户分组
+  const groups={};
+  videos.forEach(v=>{
+    const key=v.author_name||('UID:'+v.author_uid);
+    if(!groups[key])groups[key]=[];
+    groups[key].push(v);
+  });
+  let html='';
+  for(const [author,vids] of Object.entries(groups)){
+    html+=`<div style="margin-bottom:10px">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px;color:var(--pink)">${author} (${vids.length} 个视频)</div>`;
+    vids.forEach(v=>{
+      const date=new Date(v.created*1000);
+      const dateStr=date.toLocaleDateString('zh-CN')+' '+date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+      const interactedMark=v.interacted?'<span style="color:var(--success);font-size:11px">✓已互动</span>':'';
+      html+=`<div style="display:flex;align-items:center;padding:5px 8px;border-radius:4px;font-size:12px;gap:8px" onmouseenter="this.style.background='rgba(255,255,255,0.03)'" onmouseleave="this.style.background='transparent'">
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${v.title}">${v.title}</span>
+        <span style="color:var(--text-tertiary);font-size:11px;white-space:nowrap">${dateStr}</span>
+        ${interactedMark}
+      </div>`;
+    });
+    html+='</div>';
+  }
+  box.innerHTML=html;
+  const newCount=videos.filter(v=>!v.interacted).length;
+  count.textContent=`共 ${videos.length} 个，其中 ${newCount} 个未互动`;
+}
+
+function histRun(){
+  const uids=histGetUids();
+  if(!uids.length){alert('请先选择目标用户');return;}
+  const days=parseInt(document.getElementById('hist-days-input').value)||30;
+  const btn=document.getElementById('hist-run-btn');
+  const stopBtn=document.getElementById('hist-stop-btn');
+  btn.disabled=true;btn.textContent='运行中...';
+  stopBtn.style.display='inline-block';stopBtn.disabled=false;
+  setDot('hist-dot','run');setText('hist-status-text','运行中');
+  document.getElementById('hist-log').textContent='启动中...';
+  // 先保存动作配置，再启动任务
+  const tripleChecked=document.getElementById('hist-act-triple').checked;
+  const histActions={
+    triple:tripleChecked,
+    like:tripleChecked?false:document.getElementById('hist-act-like').checked,
+    coin:tripleChecked?false:document.getElementById('hist-act-coin').checked,
+    favorite:tripleChecked?false:document.getElementById('hist-act-favorite').checked,
+    comment:document.getElementById('hist-act-comment').checked,
+    share:document.getElementById('hist-act-share').checked,
+    cover_comment:document.getElementById('hist-act-cover').checked,
+    play_once:document.getElementById('hist-act-play').checked,
+  };
+  // 读取当前配置，更新 history_actions，保存，然后启动任务
+  fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
+    cfg.history_actions=histActions;
+    return fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+  }).then(()=>{
+    return fetch('/api/auto/history/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uids,days})});
+  }).then(r=>r.json()).then(d=>{
+    histTaskId=d.task_id;
+    startPoll(`/api/auto/history/status/${histTaskId}`,2000,histUpdate);
+  });
+}
+
+function histStop(){
+  fetch('/api/auto/history/stop',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task_id:histTaskId})});
+}
+
+function histUpdate(d){
+  const log=document.getElementById('hist-log');
+  if(d.output)log.textContent=d.output;
+  log.scrollTop=log.scrollHeight;
+  const done=d.status==='completed'||d.status==='error';
+  if(d.status==='completed'){
+    setDot('hist-dot','off');setText('hist-status-text','已完成');
+  }else if(d.status==='error'){
+    setDot('hist-dot','err');setText('hist-status-text','出错');
+  }
+  if(done){
+    document.getElementById('hist-run-btn').disabled=false;
+    document.getElementById('hist-run-btn').textContent='▶ 开始互动';
+    document.getElementById('hist-stop-btn').style.display='none';
+    stopPoll(`/api/auto/history/status/${histTaskId}`);
+  }
+}
+
+/* --- 历史投稿独立动作配置 --- */
+function histToggleTriple(){
+  const triple=document.getElementById('hist-act-triple').checked;
+  const sub=document.getElementById('hist-sub-actions');
+  if(triple){
+    sub.style.display='none';
+    document.getElementById('hist-act-like').checked=false;
+    document.getElementById('hist-act-coin').checked=false;
+    document.getElementById('hist-act-favorite').checked=false;
+  }else{
+    sub.style.display='inline-flex';
+  }
+}
+function histOnSubActionChange(){
+  const any=document.getElementById('hist-act-like').checked||document.getElementById('hist-act-coin').checked||document.getElementById('hist-act-favorite').checked;
+  if(any)document.getElementById('hist-act-triple').checked=false;
+}
+function histLoadActions(){
+  fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
+    const ha=cfg.history_actions||cfg.actions||{};
+    const triple=ha.triple!==false;
+    document.getElementById('hist-act-triple').checked=triple;
+    document.getElementById('hist-act-like').checked=!!ha.like;
+    document.getElementById('hist-act-coin').checked=!!ha.coin;
+    document.getElementById('hist-act-favorite').checked=!!ha.favorite;
+    histToggleTriple();
+    document.getElementById('hist-act-comment').checked=ha.comment!==false;
+    document.getElementById('hist-act-share').checked=ha.share!==false;
+    document.getElementById('hist-act-cover').checked=ha.cover_comment!==false;
+    document.getElementById('hist-act-play').checked=!!ha.play_once;
+  });
+}
+function histSaveActions(){
+  // 读取当前全局配置，只替换 history_actions 部分
+  fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
+    const tripleChecked=document.getElementById('hist-act-triple').checked;
+    cfg.history_actions={
+      triple:tripleChecked,
+      like:tripleChecked?false:document.getElementById('hist-act-like').checked,
+      coin:tripleChecked?false:document.getElementById('hist-act-coin').checked,
+      favorite:tripleChecked?false:document.getElementById('hist-act-favorite').checked,
+      comment:document.getElementById('hist-act-comment').checked,
+      share:document.getElementById('hist-act-share').checked,
+      cover_comment:document.getElementById('hist-act-cover').checked,
+      play_once:document.getElementById('hist-act-play').checked,
+    };
+    fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)})
+      .then(r=>r.json()).then(d=>{
+        if(d.success)setText('hist-status-text','动作配置已保存');
+      });
+  });
+}
+
+// 初始化历史投稿已选用户标签 + 加载动作配置
+histRenderTags();
+histLoadActions();
+
+/* ============================================================
+   TAB 2: 播放量提升
+   ============================================================ */
+let bstTaskId=null;
+
+function bstLoadLoginStatus(){
+  fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+    if(d.login_uid){
+      document.getElementById('bst-login-info').innerHTML='已登录 <b>UID: '+d.login_uid+'</b> （复用「自动互动」登录凭证）';
+    } else {
+      document.getElementById('bst-login-info').innerHTML='<span style="color:var(--warn)">未登录，请先在「自动互动」页面扫码登录</span>';
+    }
+  });
+}
+
+function bstFetchMyVideos(btnEl){
+  const btn=btnEl||event.target;
+  btn.disabled=true;btn.textContent='加载中...';
+  fetch('/api/booster/my-videos').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📦 获取我的投稿';
+    if(!d.success){alert(d.message||'获取失败');return;}
+    if(!d.videos||d.videos.length===0){alert('没有找到投稿视频');return;}
+    const box=document.getElementById('bst-video-list');
+    box.innerHTML='';
+    d.videos.forEach(v=>{
+      const date=new Date(v.created*1000);
+      const dateStr=date.getFullYear()+'-'+(date.getMonth()+1).toString().padStart(2,'0')+'-'+date.getDate().toString().padStart(2,'0')+' '+date.getHours().toString().padStart(2,'0')+':'+date.getMinutes().toString().padStart(2,'0');
+      const playText=v.play>=10000?(v.play/10000).toFixed(1)+'万':v.play;
+      const item=document.createElement('label');
+      item.className='video-pick-item';
+      item.innerHTML=`
+        <input type="checkbox" value="${v.bvid}" onchange="this.closest('.video-pick-item').classList.toggle('selected',this.checked)">
+        <img class="video-pick-thumb" src="${v.pic}@160w_90h.webp" loading="lazy" onerror="this.style.display='none'">
+        <div class="video-pick-info">
+          <div class="video-pick-title">${v.title}</div>
+          <div class="video-pick-meta">${v.bvid} · ${playText}播放 · ${dateStr} · ⏱${v.length||''}</div>
+        </div>`;
+      box.appendChild(item);
+    });
+    document.getElementById('bst-my-videos').style.display='block';
+  }).catch(e=>{btn.disabled=false;btn.textContent='📦 获取我的投稿';alert('请求失败: '+e);});
+}
+
+function bstAddSelected(){
+  const checks=document.querySelectorAll('#bst-video-list input[type="checkbox"]:checked');
+  if(!checks.length){alert('请先勾选要提升的视频');return;}
+  const list=document.getElementById('booster-bv-list');
+  // 清除空的默认行
+  const rows=list.querySelectorAll('.bv-row');
+  rows.forEach(row=>{
+    const inp=row.querySelector('input');
+    if(inp&&!inp.value.trim())row.remove();
+  });
+  checks.forEach(cb=>{
+    const bvid=cb.value;
+    // 检查是否已存在
+    const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
+    if(existing)return;
+    const row=document.createElement('div');
+    row.className='bv-row';
+    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+    list.appendChild(row);
+  });
+  // 取消勾选
+  checks.forEach(cb=>{cb.checked=false;cb.closest('.video-pick-item').classList.remove('selected');});
+  // 如果列表空了，加回默认行
+  if(!list.querySelector('.bv-row')){bvAdd('booster-bv-list');}
+}
+
+function boosterRun(){
+  const bvList=bvGetList('booster-bv-list');
+  const target=document.getElementById('booster-target').value.trim();
+  if(!bvList.length||!target){alert('请填写 BV号 和 目标播放数');return;}
+  const bv=bvList.join(',');
+  const btn=document.getElementById('bst-run-btn');
+  const stopBtn=document.getElementById('bst-stop-btn');
+  btn.disabled=true;btn.textContent='运行中...';
+  stopBtn.style.display='inline-block';stopBtn.disabled=false;
+  setDot('bst-dot','run');setText('bst-status-text','运行中');
+  document.getElementById('booster-log').textContent='启动中...';
+  bstResultState={videos:{},round:null,totalClicks:0,totalGrowth:0,reached:0,videoCount:0};
+  document.getElementById('bst-rp-round-tag').innerHTML='<span style="font-size:14px">⏳</span> 等待第一轮完成...';
+  document.getElementById('bst-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
+  document.getElementById('bst-rp-videos').innerHTML='';
+
+  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target})})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 开始提升';stopBtn.style.display='none';return;}
+      bstTaskId=d.task_id;
+      startPoll(`/api/booster/status/${bstTaskId}`,2000,bstUpdate);
+    });
+}
+function boosterStop(){
+  fetch('/api/booster/stop',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task_id:bstTaskId})});
+}
+
+// ── 结果面板状态 ──
+let bstResultState={videos:{},round:null,totalClicks:0,totalGrowth:0,reached:0,videoCount:0};
+
+function bstParseResults(output){
+  if(!output)return;
+  const lines=output.split('\n');
+  let changed=false;
+  for(const line of lines){
+    const m=line.match(/\[RESULT\]\s*(video\|.+|round\|.+)/);
+    if(!m)continue;
+    const parts=m[1].split('|');
+    if(parts[0]==='video'&&parts.length>=6){
+      bstResultState.videos[parts[1]]={bvid:parts[1],views:parseInt(parts[2]),growth:parseInt(parts[3]),clicks:parseInt(parts[4]),gap:parseInt(parts[5])};
+      changed=true;
+    }else if(parts[0]==='round'&&parts.length>=6){
+      bstResultState.round=parseInt(parts[1]);
+      bstResultState.videoCount=parseInt(parts[2]);
+      bstResultState.reached=parseInt(parts[3]);
+      bstResultState.totalClicks=parseInt(parts[4]);
+      bstResultState.totalGrowth=parseInt(parts[5]);
+      changed=true;
+    }
+  }
+  if(changed)bstRenderResultPanel();
+}
+
+function bstRenderResultPanel(){
+  const panel=document.getElementById('bst-result-panel');
+  if(!panel)return;
+  const s=bstResultState;
+  const tag=document.getElementById('bst-rp-round-tag');
+  if(s.round!=null){
+    tag.innerHTML=`<span style="font-size:14px">🔄</span> 已完成第 ${s.round} 轮`;
+  }else{
+    tag.innerHTML=`<span style="font-size:14px">⏳</span> 等待第一轮完成...`;
+  }
+
+  const ov=document.getElementById('bst-rp-overview');
+  ov.innerHTML=
+    `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${s.totalGrowth}</div><div class="bst-rp-stat-label">播放增长</div></div>`+
+    `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${s.totalClicks}</div><div class="bst-rp-stat-label">总点击</div></div>`+
+    `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${s.reached}/${s.videoCount}</div><div class="bst-rp-stat-label">达标视频</div></div>`;
+
+  const vl=document.getElementById('bst-rp-videos');
+  vl.innerHTML='';
+  const vids=Object.values(bstResultState.videos);
+  if(vids.length===0){vl.innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0">等待第一轮完成...</div>';return;}
+  for(const v of vids){
+    const reached=v.gap<=0;
+    const row=document.createElement('div');
+    row.className='bst-rp-video-row'+(reached?' reached':'');
+    row.innerHTML=
+      `<span class="bst-rp-video-status">${reached?'✅':'📈'}</span>`+
+      `<span class="bst-rp-video-bvid">${v.bvid}</span>`+
+      `<span class="bst-rp-video-views">${v.views.toLocaleString()}</span>`+
+      `<span class="bst-rp-video-growth">+${v.growth.toLocaleString()}</span>`+
+      `<span class="bst-rp-video-clicks">点击: ${v.clicks.toLocaleString()}</span>`;
+    vl.appendChild(row);
+  }
+}
+
+function bstUpdate(d){
+  const log=document.getElementById('booster-log');
+  if(d.output){
+    const lines=d.output.split('\n').filter(l=>!l.includes('[RESULT]')).join('\n');
+    log.textContent=lines;
+    bstParseResults(d.output);
+  }
+  log.scrollTop=log.scrollHeight;
+  const done=d.status==='completed'||d.status==='error';
+  if(d.status==='completed'){
+    setDot('bst-dot','off');setText('bst-status-text','已完成');
+  }else if(d.status==='error'){
+    setDot('bst-dot','err');setText('bst-status-text','出错');
+  }else if(d.status==='stopping'){
+    setText('bst-status-text','正在停止...');
+  }
+  if(done){
+    document.getElementById('bst-run-btn').disabled=false;
+    document.getElementById('bst-run-btn').textContent='▶ 开始提升';
+    document.getElementById('bst-stop-btn').style.display='none';
+    stopPoll(`/api/booster/status/${bstTaskId}`);
+  }
+}
+
+/* ============================================================
+   TAB 2-B: 浏览器播放 (Playwright)
+   ============================================================ */
+let playerTaskId=null;
+let plPollTimer=null;
+
+function plLoadConfig(){
+  fetch('/api/player/config').then(r=>r.json()).then(d=>{
+    if(d.login_uid){
+      document.getElementById('pl-login-info').innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+    }
+  });
+}
+function plShowQR(){
+  const area=document.getElementById('pl-qr-area');
+  area.style.display='block';
+  document.getElementById('pl-qr-status').textContent='生成中...';
+  fetch('/api/player/login/qrcode').then(r=>r.json()).then(d=>{
+    if(d.success){
+      document.getElementById('pl-qr-img').src=d.qr_image;
+      document.getElementById('pl-qr-status').textContent='请用 B站 App 扫描二维码';
+      plStartPoll(d.qrcode_key);
+    }else{
+      document.getElementById('pl-qr-status').textContent='生成失败: '+d.message;
+    }
+  });
+}
+function plStartPoll(key){
+  if(plPollTimer)clearInterval(plPollTimer);
+  plPollTimer=setInterval(()=>{
+    fetch(`/api/player/login/poll/${key}`).then(r=>r.json()).then(d=>{
+      const st=document.getElementById('pl-qr-status');
+      if(d.success){
+        st.textContent='登录成功！';st.style.color='var(--success)';
+        clearInterval(plPollTimer);
+        document.getElementById('pl-qr-area').style.display='none';
+        document.getElementById('pl-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+      }else if(d.status==='waiting'){
+        st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
+      }else if(d.status==='confirming'){
+        st.textContent='已确认，处理中...';st.style.color='var(--warn)';
+      }else{
+        st.textContent=d.message||'未知错误';st.style.color='var(--danger)';
+        if(d.message&&d.message.includes('过期'))clearInterval(plPollTimer);
+      }
+    });
+  },2000);
+}
+
+function plFetchMyVideos(btnEl){
+  const btn=btnEl||event.target;
+  btn.disabled=true;btn.textContent='加载中...';
+  fetch('/api/player/my-videos').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📦 获取主账号投稿';
+    if(!d.success){alert(d.message||'获取失败');return;}
+    if(!d.videos||d.videos.length===0){alert('没有找到投稿视频');return;}
+    const box=document.getElementById('pl-video-list');
+    box.innerHTML='';
+    d.videos.forEach(v=>{
+      const date=new Date(v.created*1000);
+      const dateStr=date.getFullYear()+'-'+(date.getMonth()+1).toString().padStart(2,'0')+'-'+date.getDate().toString().padStart(2,'0')+' '+date.getHours().toString().padStart(2,'0')+':'+date.getMinutes().toString().padStart(2,'0');
+      const playText=v.play>=10000?(v.play/10000).toFixed(1)+'万':v.play;
+      const item=document.createElement('label');
+      item.className='video-pick-item';
+      item.innerHTML=`
+        <input type="checkbox" value="${v.bvid}" onchange="this.closest('.video-pick-item').classList.toggle('selected',this.checked)">
+        <img class="video-pick-thumb" src="${v.pic}@160w_90h.webp" loading="lazy" onerror="this.style.display='none'">
+        <div class="video-pick-info">
+          <div class="video-pick-title">${v.title}</div>
+          <div class="video-pick-meta">${v.bvid} · ${playText}播放 · ${dateStr} · ⏱${v.length||''}</div>
+        </div>`;
+      box.appendChild(item);
+    });
+    document.getElementById('pl-my-videos').style.display='block';
+  }).catch(e=>{btn.disabled=false;btn.textContent='📦 获取主账号投稿';alert('请求失败: '+e);});
+}
+
+function plAddSelected(){
+  const checks=document.querySelectorAll('#pl-video-list input[type="checkbox"]:checked');
+  if(!checks.length){alert('请先勾选要播放的视频');return;}
+  const list=document.getElementById('player-bv-list');
+  const rows=list.querySelectorAll('.bv-row');
+  rows.forEach(row=>{
+    const inp=row.querySelector('input');
+    if(inp&&!inp.value.trim())row.remove();
+  });
+  checks.forEach(cb=>{
+    const bvid=cb.value;
+    const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
+    if(existing)return;
+    const row=document.createElement('div');
+    row.className='bv-row';
+    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+    list.appendChild(row);
+  });
+  checks.forEach(cb=>{cb.checked=false;cb.closest('.video-pick-item').classList.remove('selected');});
+  if(!list.querySelector('.bv-row')){bvAdd('player-bv-list');}
+}
+
+function playerRun(){
+  const bvList=bvGetList('player-bv-list');
+  const rounds=document.getElementById('player-rounds').value.trim()||'1';
+  if(!bvList.length){alert('请填写 BV号');return;}
+  const bv=bvList.join(',');
+  const btn=document.getElementById('player-run-btn');
+  const stopBtn=document.getElementById('player-stop-btn');
+  btn.disabled=true;btn.textContent='运行中...';
+  stopBtn.style.display='inline-block';stopBtn.disabled=false;
+  document.getElementById('player-log').textContent='启动中...';
+  // 重置结果面板
+  plResultState={videos:{},completed:0,total:0,success:0,failed:0,totalGrowth:0};
+  document.getElementById('pl-rp-round-tag').innerHTML='<span style="font-size:14px">⏳</span> 等待播放完成...';
+  document.getElementById('pl-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
+  document.getElementById('pl-rp-videos').innerHTML='';
+
+  fetch('/api/player/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,rounds})})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 启动播放';stopBtn.style.display='none';return;}
+      playerTaskId=d.task_id;
+      startPoll(`/api/player/status/${playerTaskId}`,2000,playerUpdate);
+    });
+}
+function playerStop(){
+  fetch('/api/player/stop',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({task_id:playerTaskId})});
+}
+function playerUpdate(d){
+  const log=document.getElementById('player-log');
+  if(d.output){
+    const lines=d.output.split('\n').filter(l=>!l.includes('[RESULT]')).join('\n');
+    log.textContent=lines;
+    plParseResults(d.output);
+  }
+  log.scrollTop=log.scrollHeight;
+  const done=d.status==='completed'||d.status==='error';
+  if(d.status==='stopping'){
+    document.getElementById('player-log').textContent+='\n[SYSTEM] 正在停止...';
+  }
+  if(done){
+    document.getElementById('player-run-btn').disabled=false;
+    document.getElementById('player-run-btn').textContent='▶ 启动播放';
+    document.getElementById('player-stop-btn').style.display='none';
+    stopPoll(`/api/player/status/${playerTaskId}`);
+  }
+}
+
+// ── Player 结果面板状态 ──
+let plResultState={videos:{},completed:0,total:0,success:0,failed:0,totalGrowth:0};
+
+function plParseResults(output){
+  if(!output)return;
+  const lines=output.split('\n');
+  let changed=false;
+  for(const line of lines){
+    const m=line.match(/\[RESULT\]\s*(video\|.+|round\|.+)/);
+    if(!m)continue;
+    const parts=m[1].split('|');
+    if(parts[0]==='video'&&parts.length>=6){
+      plResultState.videos[parts[1]]={bvid:parts[1],views:parseInt(parts[2]),growth:parseInt(parts[3]),round:parseInt(parts[4]),rounds:parseInt(parts[5])};
+      changed=true;
+    }else if(parts[0]==='round'&&parts.length>=6){
+      plResultState.completed=parseInt(parts[1]);
+      plResultState.total=parseInt(parts[2]);
+      plResultState.success=parseInt(parts[3]);
+      plResultState.failed=parseInt(parts[4]);
+      plResultState.totalGrowth=parseInt(parts[5]);
+      changed=true;
+    }
+  }
+  if(changed)plRenderResultPanel();
+}
+
+function plRenderResultPanel(){
+  const panel=document.getElementById('pl-result-panel');
+  if(!panel)return;
+  const s=plResultState;
+  const tag=document.getElementById('pl-rp-round-tag');
+  if(s.completed>0){
+    tag.innerHTML=`<span style="font-size:14px">🔄</span> 已完成 ${s.completed}/${s.total} 轮`;
+  }else{
+    tag.innerHTML=`<span style="font-size:14px">⏳</span> 等待播放完成...`;
+  }
+
+  const ov=document.getElementById('pl-rp-overview');
+  ov.innerHTML=
+    `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${s.totalGrowth}</div><div class="bst-rp-stat-label">播放增长</div></div>`+
+    `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${s.completed}/${s.total}</div><div class="bst-rp-stat-label">完成进度</div></div>`+
+    `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${s.success}✅ ${s.failed}❌</div><div class="bst-rp-stat-label">成功/失败</div></div>`;
+
+  const vl=document.getElementById('pl-rp-videos');
+  vl.innerHTML='';
+  const vids=Object.values(plResultState.videos);
+  if(vids.length===0){vl.innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0">等待播放完成...</div>';return;}
+  for(const v of vids){
+    const done=v.growth>0;
+    const row=document.createElement('div');
+    row.className='bst-rp-video-row'+(done?' reached':'');
+    row.innerHTML=
+      `<span class="bst-rp-video-status">${done?'✅':'📈'}</span>`+
+      `<span class="bst-rp-video-bvid">${v.bvid}</span>`+
+      `<span class="bst-rp-video-views">${v.views.toLocaleString()}</span>`+
+      `<span class="bst-rp-video-growth">+${v.growth.toLocaleString()}</span>`+
+      `<span class="bst-rp-video-clicks">轮次: ${v.round}/${v.rounds}</span>`;
+    vl.appendChild(row);
+  }
+}
+
+/* ============================================================
+   TAB 3: 红包助手
+   ============================================================ */
+function rpCheckStatus(){
+  fetch('/api/redpocket/status').then(r=>r.json()).then(d=>{
+    if(d.running){
+      setDot('rp-dot','run');setText('rp-run-status','运行中 (PID '+d.pid+')');
+      document.getElementById('rp-start-btn').disabled=true;
+      document.getElementById('rp-stop-btn').disabled=false;
+    }else{
+      setDot('rp-dot','off');setText('rp-run-status','未运行');
+      document.getElementById('rp-start-btn').disabled=false;
+      document.getElementById('rp-stop-btn').disabled=true;
+    }
+    if(d.logs){document.getElementById('rp-log').textContent=d.logs;
+      document.getElementById('rp-log').scrollTop=document.getElementById('rp-log').scrollHeight;}
+  });
+  fetch('/api/redpocket/config').then(r=>r.json()).then(d=>{
+    if(d.sessdata){
+      const uid=d.login_uid||'未知';
+      document.getElementById('rp-login-info').innerHTML='已登录 <b>UID: '+uid+'</b>';
+    }
+  });
+}
+function rpStart(){
+  document.getElementById('rp-start-btn').disabled=true;
+  fetch('/api/redpocket/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      setDot('rp-dot','run');setText('rp-run-status','已启动');
+      document.getElementById('rp-stop-btn').disabled=false;
+      startPoll('/api/redpocket/status',3000,rpLogUpdate);
+    }else{
+      alert(d.message);document.getElementById('rp-start-btn').disabled=false;
+    }
+  });
+}
+function rpStop(){
+  fetch('/api/redpocket/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+    setDot('rp-dot','off');setText('rp-run-status','已停止');
+    document.getElementById('rp-start-btn').disabled=false;
+    document.getElementById('rp-stop-btn').disabled=true;
+    stopPoll('/api/redpocket/status');
+  });
+}
+function rpLogUpdate(d){
+  if(d.logs){document.getElementById('rp-log').textContent=d.logs;
+    document.getElementById('rp-log').scrollTop=document.getElementById('rp-log').scrollHeight;}
+}
+
+/* --- 房间管理 --- */
+function fillRoomId(id){
+  document.getElementById('rp-add-room').value=id;
+}
+function rpLoadRooms(){
+  fetch('/api/redpocket/rooms').then(r=>r.json()).then(d=>{
+    const box=document.getElementById('rp-rooms');
+    if(!d.rooms||d.rooms.length===0){box.innerHTML='<p style="color:var(--text-secondary)">暂无监听房间</p>';return;}
+    box.innerHTML='';
+    d.rooms.forEach((r,i)=>{
+      const card=document.createElement('div');card.className='room-card';
+      const dur = r.duration || 600;
+      const durText = dur===300?'5分钟':dur===600?'10分钟':dur+'秒';
+      const rpDesc = {188:'20电池',189:'100电池',190:'520电池',191:'1000电池',192:'5000电池'}[r.red_pocket_id]||r.red_pocket_id;
+      card.innerHTML=`
+        <div class="room-head">
+          <span class="room-title">#${i+1} 房间 ${r.room_id} ${r.uname?'- '+r.uname:''}</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-outline btn-sm" onclick="rpEditRoom(${i})">编辑</button>
+            <button class="btn btn-danger btn-sm" onclick="rpDelRoom(${i})">删除</button>
+          </div>
+        </div>
+        <div class="room-meta">
+          红包ID: ${r.red_pocket_id} (${rpDesc}) | 时长: ${durText} | 数量: ${r.count||1} | 弹幕: ${r.danmu_msg||''}
+          ${r.title?'<br>标题: '+r.title:''}
+        </div>`;
+      box.appendChild(card);
+    });
+  });
+}
+function rpAddRoom(){
+  const room_id=document.getElementById('rp-add-room').value.trim();
+  if(!room_id){alert('请输入房间号');return;}
+  fetch(`/api/redpocket/room-info/${room_id}`).then(r=>r.json()).then(info=>{
+    const payload={
+      room_id:parseInt(room_id),
+      red_pocket_id:parseInt(document.getElementById('rp-add-rpid').value)||189,
+      duration:parseInt(document.getElementById('rp-add-dur').value)||600,
+      count:parseInt(document.getElementById('rp-add-count').value)||1,
+      danmu_msg:document.getElementById('rp-add-danmu').value||'老板大气！点点红包抽礼物',
+    };
+    if(info.success&&info.uid){
+      payload.uid=info.uid;
+      fetch(`/api/redpocket/live-info/${info.uid}`).then(r=>r.json()).then(ld=>{
+        if(ld.success&&ld.data){
+          payload.uname=ld.data.uname||'';
+          payload.title=ld.data.title||'';
+          payload.face=ld.data.face||'';
+          payload.cover_from_user=ld.data.cover_from_user||'';
+        }
+        _rpDoAdd(payload);
+      });return;
+    }
+    _rpDoAdd(payload);
+  }).catch(()=>_rpDoAdd({room_id:parseInt(room_id),red_pocket_id:parseInt(document.getElementById('rp-add-rpid').value)||189,duration:parseInt(document.getElementById('rp-add-dur').value)||600,count:parseInt(document.getElementById('rp-add-count').value)||1,danmu_msg:document.getElementById('rp-add-danmu').value||'老板大气！点点红包抽礼物'}));
+}
+function _rpDoAdd(payload){
+  fetch('/api/redpocket/room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{if(d.success){rpLoadRooms();document.getElementById('rp-add-room').value='';}});
+}
+let rpRoomsCache=[];
+function rpEditRoom(idx){
+  fetch('/api/redpocket/rooms').then(r=>r.json()).then(d=>{
+    const r=d.rooms[idx];if(!r)return;
+    document.getElementById('rp-edit-idx').value=idx;
+    document.getElementById('rp-edit-room').value=r.room_id;
+    document.getElementById('rp-edit-rpid').value=r.red_pocket_id||189;
+    document.getElementById('rp-edit-dur').value=r.duration||600;
+    document.getElementById('rp-edit-count').value=r.count||1;
+    document.getElementById('rp-edit-danmu').value=r.danmu_msg||'';
+    document.getElementById('rp-edit-modal').style.display='flex';
+  });
+}
+function rpSaveEdit(){
+  const idx=parseInt(document.getElementById('rp-edit-idx').value);
+  const payload={
+    room_id:parseInt(document.getElementById('rp-edit-room').value),
+    red_pocket_id:parseInt(document.getElementById('rp-edit-rpid').value),
+    duration:parseInt(document.getElementById('rp-edit-dur').value),
+    count:parseInt(document.getElementById('rp-edit-count').value),
+    danmu_msg:document.getElementById('rp-edit-danmu').value,
+  };
+  fetch(`/api/redpocket/room/${idx}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){rpLoadRooms();document.getElementById('rp-edit-modal').style.display='none';}
+    });
+}
+function rpDelRoom(idx){
+  fetch(`/api/redpocket/room/${idx}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.success)rpLoadRooms();});
+}
+
+/* --- QR 登录 --- */
+let rpPollKey=null;
+function rpShowQR(){
+  const area=document.getElementById('rp-qr-area');
+  area.style.display='block';
+  document.getElementById('rp-qr-status').textContent='生成中...';
+  fetch('/api/redpocket/login/qrcode').then(r=>r.json()).then(d=>{
+    if(d.success){
+      document.getElementById('rp-qr-img').src=d.qr_image;
+      document.getElementById('rp-qr-status').textContent='请用 B站 App 扫描二维码';
+      rpPollKey=d.qrcode_key;
+      rpStartPollQR();
+    }else{
+      document.getElementById('rp-qr-status').textContent='生成失败: '+d.message;
+    }
+  });
+}
+function rpStartPollQR(){
+  if(rpPollTimer)clearInterval(rpPollTimer);
+  rpPollTimer=setInterval(()=>{
+    fetch(`/api/redpocket/login/poll/${rpPollKey}`).then(r=>r.json()).then(d=>{
+      const st=document.getElementById('rp-qr-status');
+      if(d.success){
+        st.textContent='登录成功！';st.style.color='var(--success)';
+        clearInterval(rpPollTimer);
+        document.getElementById('rp-qr-area').style.display='none';
+        document.getElementById('rp-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+      }else if(d.status==='waiting'){
+        st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
+      }else if(d.status==='confirming'){
+        st.textContent='已确认，处理中...';st.style.color='var(--warn)';
+      }else{
+        st.textContent=d.message||'未知错误';st.style.color='var(--danger)';
+        if(d.message&&d.message.includes('过期'))clearInterval(rpPollTimer);
+      }
+    });
+  },2000);
+}
+let rpPollTimer=null;
+
+/* ===== 工具函数 ===== */
+function setDot(id,state){
+  const el=document.getElementById(id);
+  el.className='status-dot '+(state==='run'?'dot-run':state==='err'?'dot-err':'dot-off');
+}
+function setText(id,text){document.getElementById(id).textContent=text;}
+
+// 初始加载
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();
+</script>
+</body>
+</html>
