@@ -1,7 +1,7 @@
 name: "bili-toolbox"
 profiles:
 - name: "release"
-  git_url: "https://ghfast.top/https://github.com/WafuChtholly/bili-toolbox.git"
+  git_url: "https://cnb.cool/WafuChtholly/bili-toolbox.git"
   main_script: "app.py"
   requires_python: "3.13"
   requirements: "requirements.txt"
