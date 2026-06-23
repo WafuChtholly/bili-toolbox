@@ -46,10 +46,7 @@ python app.py
 
 启动后访问 **http://localhost:5678**
 
-> 播放量提升（浏览器模拟）功能需要额外安装 Playwright 浏览器：
-> ```bash
-> playwright install chromium
-> ```
+> 播放量提升（浏览器模拟）功能需要额外安装 Playwright 浏览器后实现
 
 ## 使用说明
 
@@ -66,11 +63,11 @@ python app.py
 
 **代理池模式：**
 - 需要配置代理 IP，适合大批量快速提升
-- 并发数可调，默认 200 线程
+- 上限200播
 
 **浏览器模拟模式：**
 - 使用 Playwright 打开真实浏览器页面
-- 模拟用户观看行为，速度约 30 个视频/小时
+- 模拟用户观看行为，速度约 30 播/小时
 - 适合少量视频的精准播放
 
 ### 直播间红包助手
@@ -83,7 +80,6 @@ python app.py
 ```
 bili-toolbox/
 ├── app.py                  # Flask WebUI 主入口
-├── webui.bat               # Windows 一键启动脚本
 ├── pyappify.yml            # PyAppify 打包配置
 ├── requirements.txt        # Python 依赖
 ├── templates/
