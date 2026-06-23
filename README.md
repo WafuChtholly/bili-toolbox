@@ -30,10 +30,11 @@
 
 前往 [Releases](https://github.com/WafuChtholly/bili-toolbox/releases) 下载最新版本：
 
-- **China** 版本 — 国内用户，使用 cnb.cool 镜像源
-- **Global** 版本 — 海外用户，使用 GitHub 源
+- **Online** 版本（推荐） — 体积极小，首次启动自动下载 Python 环境及依赖
+- **China** 版本 — 国内用户，开箱即用，使用 cnb.cool 镜像源
+- **Global** 版本 — 海外用户，开箱即用，使用 GitHub 源
 
-下载后双击运行即可，首次启动会自动安装 Playwright Chromium（约 150MB）。
+双击运行即可，首次启动会自动安装 Playwright Chromium。
 
 ### 方式二：源码运行
 
