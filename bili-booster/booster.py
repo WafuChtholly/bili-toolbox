@@ -512,7 +512,7 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
 
         # 高刷模式：检查剩余额度，不足则等待
         if limiter is not None:
-            cap = limiter.wait_for_capacity(need=len(chunk), stop_event=stop_event)
+            cap = int(limiter.wait_for_capacity(need=len(chunk), stop_event=stop_event) or 0)
             if cap <= 0:
                 logger.info(f'    ⏸️ 高刷模式：已停止（额度耗尽或任务中断）')
                 break
