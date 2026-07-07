@@ -90,7 +90,7 @@ class HourlyLimiter:
                 if self.timestamps:
                     wait_until = self.timestamps[0] + 3600 + 1
                 else:
-                    break
+                    return 0
             wait_secs = max(1, int(wait_until - time_module.time()))
             logger.info(f'    ⏳ 当小时额度已满 ({self.limit}/{self.limit})，等待 {wait_secs}s 后恢复...')
             # 分段 sleep，支持 stop_event 中断
