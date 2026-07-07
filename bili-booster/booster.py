@@ -78,14 +78,14 @@ class HourlyLimiter:
             return max(0, self.limit - len(self.timestamps))
 
     def wait_for_capacity(self, need: int = 1, stop_event=None) -> int:
-        """等待直到有足够容量，返回实际可用容量。"""
+        """等待直到有可用容量，返回实际可用容量（可能小于need）。"""
         while True:
             if stop_event and stop_event.is_set():
                 return 0
             cap = self.remaining()
-            if cap >= need:
+            if cap > 0:
                 return min(cap, need)
-            # 计算需要等多久：等最早的时间戳过期
+            # 额度为0，等最早的时间戳过期
             with self.lock:
                 if self.timestamps:
                     wait_until = self.timestamps[0] + 3600 + 1
