@@ -23,6 +23,9 @@ class Settings:
         # Bilibili映射
         self.BILIBILI_CONFIG = config['bilibili']
         
+        # LiveHelper映射
+        self.LIVEHELPER_CONFIG = config.get('livehelper', {})
+        
         # 网络映射
         self.BROWSER_HEADERS = config['network']['browser_headers']
         

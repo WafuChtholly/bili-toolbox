@@ -677,7 +677,7 @@ booster_tasks = {}
 booster_lock = threading.Lock()
 
 
-def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None):
+def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, mode: str = 'speed'):
     with booster_lock:
         booster_tasks[task_id]["status"] = "running"
 
@@ -692,7 +692,7 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
         spec.loader.exec_module(booster)
 
         bv_input = ",".join(bv_list)
-        booster.main(bv_input, str(target), stop_event=stop_event, log_fn=log_fn)
+        booster.main(bv_input, str(target), stop_event=stop_event, log_fn=log_fn, mode=mode)
         with booster_lock:
             booster_tasks[task_id]["status"] = "completed"
     except Exception as e:
@@ -709,6 +709,7 @@ def booster_run():
     data = request.json
     bv_str = data.get("bv", "")
     target = data.get("target", 0)
+    mode = data.get("mode", "speed")
     bv_list = [b.strip() for b in bv_str.split(",") if b.strip()]
     if not bv_list or not target:
         return jsonify({"error": "缺少 BV号 或 目标播放数"}), 400
@@ -722,11 +723,12 @@ def booster_run():
             "end": None,
             "bv": bv_str,
             "target": target,
+            "mode": mode,
             "stop_event": stop_event,
         }
     with log_lock:
         log_buffers[tid] = []
-    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event), daemon=True)
+    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event, mode), daemon=True)
     t.start()
     return jsonify({"task_id": tid})
 
@@ -1449,6 +1451,162 @@ def redpocket_live_info(uid):
         return jsonify({"success": False, "message": "未找到"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+
+# =========================================================================
+#  四-B、B站直播间 LiveHelper (bili-redpocket/livehelper.py)
+# =========================================================================
+
+LIVEHELPER_SCRIPT = os.path.join(REDPOCKET_DIR, "livehelper.py")
+livehelper_process = None
+livehelper_lock = threading.Lock()
+
+
+def _livehelper_running():
+    global livehelper_process
+    if livehelper_process and livehelper_process.poll() is None:
+        return True, livehelper_process.pid
+    import psutil
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = proc.cmdline()
+            if cmdline and any("livehelper" in c for c in cmdline):
+                return True, proc.pid
+        except Exception:
+            continue
+    return False, None
+
+
+def _read_livehelper_config():
+    """读取 config.yaml 中的 livehelper 配置"""
+    import yaml
+    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return cfg.get("livehelper", {})
+    return {}
+
+
+def _write_livehelper_config(lh_cfg):
+    """更新 config.yaml 中的 livehelper 配置"""
+    import yaml
+    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    else:
+        cfg = {"bilibili": {}, "network": {"browser_headers": {}}, "logging": {"level": "INFO"}}
+    cfg["livehelper"] = lh_cfg
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+
+@app.route("/api/livehelper/status")
+def livehelper_status():
+    running, pid = _livehelper_running()
+    log_dir = os.path.join(REDPOCKET_DIR, "logs")
+    logs = ""
+    if os.path.exists(log_dir):
+        log_files = sorted(
+            [f for f in os.listdir(log_dir) if f.endswith(".log")],
+            reverse=True,
+        )
+        if log_files:
+            try:
+                with open(os.path.join(log_dir, log_files[0]), "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    logs = "".join(lines[-100:])
+            except Exception:
+                pass
+    return jsonify({"running": running, "pid": pid, "logs": logs})
+
+
+@app.route("/api/livehelper/start", methods=["POST"])
+def livehelper_start():
+    running, _ = _livehelper_running()
+    if running:
+        return jsonify({"success": False, "message": "已在运行中"})
+
+    python_exe = sys.executable
+    if not python_exe or not os.path.exists(python_exe):
+        return jsonify({"success": False, "message": "找不到 Python 解释器"})
+
+    global livehelper_process
+    try:
+        livehelper_process = subprocess.Popen(
+            [python_exe, LIVEHELPER_SCRIPT],
+            cwd=REDPOCKET_DIR,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        )
+        return jsonify({"success": True, "message": f"已启动 PID: {livehelper_process.pid}"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/livehelper/stop", methods=["POST"])
+def livehelper_stop():
+    running, pid = _livehelper_running()
+    if not running:
+        return jsonify({"success": True, "message": "未在运行"})
+
+    try:
+        stop_file = os.path.join(REDPOCKET_DIR, ".stop_signal")
+        with open(stop_file, "w") as f:
+            f.write(str(pid))
+
+        import psutil
+        if psutil.pid_exists(pid):
+            proc = psutil.Process(pid)
+            try:
+                proc.wait(timeout=10)
+            except psutil.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+
+        if os.path.exists(stop_file):
+            os.remove(stop_file)
+
+        return jsonify({"success": True, "message": "已停止"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/livehelper/config", methods=["GET"])
+def livehelper_config_get():
+    import yaml
+    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    cfg = {"enabled": True, "room_id": "", "interval_seconds": 60,
+           "interval_jitter_seconds": 10, "skip_duplicate": True,
+           "force_qr_login": False, "credential_file": "bilibili.json", "quotes": []}
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            yml = yaml.safe_load(f) or {}
+            lh = yml.get("livehelper", {})
+            cfg.update(lh)
+            # 登录状态也返回
+            bili = yml.get("bilibili", {})
+            cfg["_login_uid"] = bili.get("login_uid", "")
+            cfg["_has_login"] = bool(bili.get("sessdata") and bili.get("bili_jct"))
+    return jsonify(cfg)
+
+
+@app.route("/api/livehelper/config", methods=["POST"])
+def livehelper_config_save():
+    data = request.json or {}
+    # 只保存 livehelper 相关字段
+    lh_cfg = {
+        "enabled": data.get("enabled", True),
+        "room_id": data.get("room_id", ""),
+        "interval_seconds": int(data.get("interval_seconds", 60)),
+        "interval_jitter_seconds": int(data.get("interval_jitter_seconds", 10)),
+        "skip_duplicate": data.get("skip_duplicate", True),
+        "force_qr_login": data.get("force_qr_login", False),
+        "credential_file": data.get("credential_file", "bilibili.json"),
+        "quotes": data.get("quotes", []),
+    }
+    _write_livehelper_config(lh_cfg)
+    return jsonify({"success": True})
 
 
 # =========================================================================

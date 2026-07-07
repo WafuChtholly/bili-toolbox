@@ -49,6 +49,55 @@ thread_num = 200
 batch_size = 200
 request_delay = 0.01
 per_video_boost = 80
+HOURLY_CLICK_LIMIT = 190  # 高刷模式：每小时上限（留 10 安全余量）
+
+
+class HourlyLimiter:
+    """滚动窗口限速器：跟踪每次成功点击的时间戳，限制每小时不超过上限。"""
+
+    def __init__(self, limit: int = HOURLY_CLICK_LIMIT):
+        self.limit = limit
+        self.timestamps: list[float] = []  # 成功点击的时间戳列表
+        self.lock = threading.Lock()
+
+    def record(self) -> None:
+        """记录一次成功点击。"""
+        with self.lock:
+            self.timestamps.append(time_module.time())
+
+    def _purge_old(self) -> None:
+        """移除 1 小时前的时间戳。"""
+        cutoff = time_module.time() - 3600
+        while self.timestamps and self.timestamps[0] < cutoff:
+            self.timestamps.pop(0)
+
+    def remaining(self) -> int:
+        """返回当前小时窗口内还能发送的点击数。"""
+        with self.lock:
+            self._purge_old()
+            return max(0, self.limit - len(self.timestamps))
+
+    def wait_for_capacity(self, need: int = 1, stop_event=None) -> int:
+        """等待直到有足够容量，返回实际可用容量。"""
+        while True:
+            if stop_event and stop_event.is_set():
+                return 0
+            cap = self.remaining()
+            if cap >= need:
+                return min(cap, need)
+            # 计算需要等多久：等最早的时间戳过期
+            with self.lock:
+                if self.timestamps:
+                    wait_until = self.timestamps[0] + 3600 + 1
+                else:
+                    break
+            wait_secs = max(1, int(wait_until - time_module.time()))
+            logger.info(f'    ⏳ 当小时额度已满 ({self.limit}/{self.limit})，等待 {wait_secs}s 后恢复...')
+            # 分段 sleep，支持 stop_event 中断
+            for _ in range(wait_secs):
+                if stop_event and stop_event.is_set():
+                    return 0
+                sleep(1)
 
 
 def fetch_from_checkerproxy(min_count: int = 100, max_lookback_days: int = 7) -> list[str]:
@@ -343,6 +392,20 @@ def pbar(n: int, total: int) -> str:
     return f'\r{n}/{total} {progress}{blank}'
 
 
+def probe_once(proxy: str, bv: str) -> bool:
+    """轻量探测：通过代理请求视频信息接口，验证代理可用且不触发播放量。"""
+    try:
+        resp = requests.get(
+            'https://api.bilibili.com/x/web-interface/view',
+            params={'bvid': bv},
+            proxies={'http': f'http://{proxy}'},
+            headers={'User-Agent': UserAgent().random},
+            timeout=timeout)
+        return resp.status_code == 200
+    except:
+        return False
+
+
 def click_once(proxy: str, info: dict, bv: str) -> bool:
     try:
         ua = UserAgent().random
@@ -386,7 +449,7 @@ def click_batch(proxies: 'list[str]', info: dict, bv: str) -> int:
     return success[0]
 
 
-def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, stop_event=None) -> int:
+def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, stop_event=None, limiter: 'HourlyLimiter | None' = None) -> int:
     bv = video['bvid']
     info = video['info']
 
@@ -402,7 +465,7 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
         for proxy in proxies:
             if stop_event and stop_event.is_set():
                 return
-            if click_once(proxy, info, bv):
+            if probe_once(proxy, bv):
                 active_proxies.append(proxy)
             count[0] += 1
             # 每 20% 打印一次进度，避免刷屏
@@ -437,20 +500,40 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
         logger.info('  ❌ 无有效代理，跳过')
         return 0
 
-    logger.info(f'  👆 开始发送点击 ({len(active_proxies)} 个有效代理)...')
+    logger.info(f'  👆 开始发送点击 ({len(active_proxies)} 个有效代理){"" if limiter is None else " [高刷模式]"}...')
     start_click = datetime.now()
     clicks = 0
     total_chunks = (len(active_proxies) + batch_size - 1) // batch_size
     for i in range(0, len(active_proxies), batch_size):
         if stop_event and stop_event.is_set():
             return clicks
+
         chunk = active_proxies[i:i + batch_size]
+
+        # 高刷模式：检查剩余额度，不足则等待
+        if limiter is not None:
+            cap = limiter.wait_for_capacity(need=len(chunk), stop_event=stop_event)
+            if cap <= 0:
+                logger.info(f'    ⏸️ 高刷模式：已停止（额度耗尽或任务中断）')
+                break
+            if cap < len(chunk):
+                chunk = chunk[:cap]
+
         c = click_batch(chunk, info, bv)
         clicks += c
+
+        # 高刷模式：记录每次成功点击
+        if limiter is not None:
+            for _ in range(c):
+                limiter.record()
+
         chunk_idx = i // batch_size + 1
         # 只在最后一块或每 5 块打印一次，避免刷屏
         if chunk_idx == total_chunks or chunk_idx % 5 == 0:
-            logger.info(f'    📊 点击进度: {chunk_idx}/{total_chunks} 批 | 累计成功: {clicks}')
+            extra = ''
+            if limiter is not None:
+                extra = f' | 剩余额度: {limiter.remaining()}'
+            logger.info(f'    📊 点击进度: {chunk_idx}/{total_chunks} 批 | 累计成功: {clicks}{extra}')
         if request_delay > 0:
             sleep(request_delay)
     click_cost = int((datetime.now() - start_click).total_seconds())
@@ -459,7 +542,13 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
     return clicks
 
 
-def main(bv_input, target_input, stop_event=None, log_fn=None):
+def main(bv_input, target_input, stop_event=None, log_fn=None, mode='speed'):
+    """启动播放量提升任务。
+
+    mode:
+        'speed' — 速刷模式，不限速，尽快打满
+        'hourly' — 高刷模式，每小时最多 HOURLY_CLICK_LIMIT 次点击
+    """
     # 如果提供了 log_fn（WebUI 场景），将 logger handler 切换为回调模式
     # 这样所有 logger.info() 调用都会直接写入对应的 task buffer，避免线程串台
     if log_fn is not None:
@@ -467,6 +556,9 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
         _cb_handler = _CallbackHandler(log_fn)
         _cb_handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
         logger.addHandler(_cb_handler)
+
+    # 高刷模式：创建全局限速器
+    limiter = HourlyLimiter() if mode == 'hourly' else None
 
     bv_list = [bv.strip() for bv in bv_input.split(',') if bv.strip()]
     if not bv_list:
@@ -500,9 +592,11 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
         return
 
     # ── 任务概览 ──
+    mode_label = '速刷（不限速）' if mode == 'speed' else f'高刷（每小时≤{HOURLY_CLICK_LIMIT}次）'
     logger.info('')
     logger.info('━' * 40)
     logger.info(f'🚀 播放量提升任务启动')
+    logger.info(f'   模式: {mode_label}')
     logger.info(f'   视频数: {len(videos)} | 目标: {target} | 最大轮次: 5')
     for i, v in enumerate(videos, 1):
         gap = target - v['initial']
@@ -550,7 +644,7 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
             gap = target - v['current']
             logger.info(f'')
             logger.info(f'  📌 [{idx}/{len(pending)}] {v["bvid"]} | 当前: {v["current"]} | 目标: {target} | 差距: +{gap}')
-            hits = boost_video_once(v, total_proxies, round_num, stop_event=stop_event)
+            hits = boost_video_once(v, total_proxies, round_num, stop_event=stop_event, limiter=limiter)
             v['total_hits'] += hits
 
             try:
@@ -610,9 +704,12 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
         growth = v['current'] - v['initial']
         status = '✅' if v['current'] >= target else '❌'
         logger.info(f'  {status} {v["bvid"]}: {v["initial"]} → {v["current"]} (+{growth}) | 点击: {v["total_hits"]}')
+    if limiter is not None:
+        logger.info(f'⏰ 高刷模式：当小时剩余额度 {limiter.remaining()}/{limiter.limit}')
     logger.info(f'🕐 结束时间: {datetime.now().strftime("%H:%M:%S")}')
     logger.info('━' * 40)
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2])
+    mode = sys.argv[3] if len(sys.argv) > 3 else 'speed'
+    main(sys.argv[1], sys.argv[2], mode=mode)

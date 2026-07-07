@@ -688,6 +688,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
       </div>
     </div>
     <button class="tab-btn" onclick="switchTab('redpocket')">红包助手</button>
+    <button class="tab-btn" onclick="switchTab('livehelper')">弹幕助手</button>
   </div>
 </div>
 
@@ -741,8 +742,25 @@ textarea.form-input { min-height: 80px; resize: vertical; }
           <label class="checkbox-item"><input type="checkbox" id="auto-act-share" checked> 分享</label>
           <label class="checkbox-item"><input type="checkbox" id="auto-act-cover" checked> 封面评论</label>
           <label class="checkbox-item"><input type="checkbox" id="auto-act-play"> 播放一次</label>
+          <label class="checkbox-item"><input type="checkbox" id="auto-interact-own" checked> 互动自己的动态</label>
+          <label class="checkbox-item" title="仅对指定UID的视频投币，与三连和投币互斥"><input type="checkbox" id="auto-act-coin-target" onchange="onCoinTargetChange()"> 指定投币对象</label>
         </div>
-        <p style="color:var(--text-secondary);font-size:12px;margin-top:6px">三连与点赞/投币/收藏互斥。播放一次：互动完成后用 Playwright 浏览器随机播放一个已互动视频</p>
+        <!-- 指定投币对象面板 -->
+        <div id="coin-target-panel" style="display:none;margin-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label class="form-label" style="font-size:12px;color:var(--text-secondary);margin:0">投币对象 UID（每行一个，仅对这些用户的视频投币）</label>
+            <button type="button" class="btn btn-outline" id="btn-coin-fetch-following" onclick="fetchCoinTargetFollowing()" style="font-size:12px;padding:4px 10px">📡 拉取关注列表</button>
+          </div>
+          <textarea class="form-input" id="auto-coin-target-uid" rows="3" placeholder="12345678&#10;87654321" style="margin-bottom:8px"></textarea>
+          <p id="coin-target-status" style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px"></p>
+          <!-- 关注列表勾选区 -->
+          <div id="coin-target-following-container" style="display:none">
+            <label class="form-label" style="font-size:12px;color:var(--text-secondary)">👥 我的关注列表（点击勾选添加到投币对象）</label>
+            <input type="text" id="coin-target-following-search" class="form-input" placeholder="🔍 搜索用户名或 UID..." style="margin-bottom:8px;font-size:12px" oninput="filterCoinTargetFollowing()">
+            <div id="coin-target-following-box" style="max-height:200px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
+          </div>
+        </div>
+        <p style="color:var(--text-secondary);font-size:12px;margin-top:6px">三连与点赞/投币/收藏互斥。指定投币对象与三连/投币互斥。播放一次：互动完成后用 Playwright 浏览器随机播放一个已互动视频</p>
       </div>
 
       <!-- 评论子选项 -->
@@ -1021,6 +1039,19 @@ textarea.form-input { min-height: 80px; resize: vertical; }
         <label class="form-label">目标播放数</label>
         <input class="form-input" id="booster-target" type="number" placeholder="1000">
       </div>
+      <div class="form-group">
+        <label class="form-label">刷量模式</label>
+        <div style="display:flex;gap:10px;align-items:center">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:14px;color:var(--text-primary)">
+            <input type="radio" name="booster-mode" value="speed" checked> 速刷
+            <span style="color:var(--text-tertiary);font-size:12px">（不限速，尽快打满）</span>
+          </label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:14px;color:var(--text-primary)">
+            <input type="radio" name="booster-mode" value="hourly"> 高刷
+            <span style="color:var(--text-tertiary);font-size:12px">（每小时≤190次，防锁）</span>
+          </label>
+        </div>
+      </div>
       <div class="status-bar" id="bst-status-bar">
         <span class="status-dot dot-off" id="bst-dot"></span>
         <span id="bst-status-text" style="color:var(--text-secondary)">就绪</span>
@@ -1245,6 +1276,82 @@ textarea.form-input { min-height: 80px; resize: vertical; }
   </div>
 </div>
 
+<!-- ============================================================ -->
+<!--  TAB 4: 弹幕助手 LiveHelper                                   -->
+<!-- ============================================================ -->
+<div id="panel-livehelper" class="panel">
+
+  <!-- 登录卡片 -->
+  <div class="card">
+    <div class="card-head pink">账号登录</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span id="lh-login-info" style="color:var(--text-secondary)">未登录</span>
+        <button class="btn btn-outline btn-sm" onclick="lhShowQR()">扫码登录</button>
+      </div>
+      <div class="qr-wrap" id="lh-qr-area" style="display:none">
+        <img id="lh-qr-img" src="" alt="QR">
+        <div class="qr-status" id="lh-qr-status">请用B站 App 扫描</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 配置卡片 -->
+  <div class="card">
+    <div class="card-head blue">运行配置</div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="form-label">目标房间号</label>
+        <input class="form-input" id="lh-room-id" placeholder="27354807">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label class="form-label">发送间隔（秒）</label>
+          <input class="form-input" id="lh-interval" type="number" value="60">
+        </div>
+        <div class="form-group">
+          <label class="form-label">间隔抖动（秒）</label>
+          <input class="form-input" id="lh-jitter" type="number" value="10">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-item">
+          <input type="checkbox" id="lh-skip-dup" checked> 避免重复发送同一条语录
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="form-label">随机语录（每行一条）</label>
+        <textarea class="form-input" id="lh-quotes" rows="6" placeholder="晚上好呀~&#10;主播今天状态不错&#10;666&#10;来了来了&#10;加油加油"></textarea>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="lhSaveConfig()" style="width:100%">💾 保存配置</button>
+    </div>
+  </div>
+
+  <!-- 运行控制 -->
+  <div class="card">
+    <div class="card-head green">运行控制</div>
+    <div class="card-body">
+      <div class="status-bar">
+        <span class="status-dot dot-off" id="lh-dot"></span>
+        <span id="lh-run-status" style="color:var(--text-secondary)">未运行</span>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-success" id="lh-start-btn" onclick="lhStart()">▶ 启动</button>
+        <button class="btn btn-danger" id="lh-stop-btn" onclick="lhStop()" disabled>⏹ 停止</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="card">
+    <div class="card-head blue">运行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="lh-log">等待启动...</div>
+    </div>
+  </div>
+
+</div>
+
 </div><!-- /main -->
 
 <script>
@@ -1278,6 +1385,7 @@ function switchTab(name){
   if(name==='redpocket'){rpLoadRooms();rpCheckStatus()}
   if(name==='player'){plLoadConfig()}
   if(name==='auto'){autoLoadConfig()}
+  if(name==='livehelper'){lhLoadConfig()}
 }
 
 /* ===== BV 动态列表 ===== */
@@ -1381,6 +1489,11 @@ function loadAutoConfig(){
     document.getElementById('auto-act-share').checked=a.share!==false;
     document.getElementById('auto-act-cover').checked=a.cover_comment!==false;
     document.getElementById('auto-act-play').checked=!!a.play_once;
+    const coinTarget=cfg.coin_target_uid||[];
+    const coinTargetArr=Array.isArray(coinTarget)?coinTarget:(coinTarget?[coinTarget]:[]);
+    document.getElementById('auto-act-coin-target').checked=coinTargetArr.length>0;
+    document.getElementById('auto-coin-target-uid').value=coinTargetArr.join('\n');
+    document.getElementById('coin-target-panel').style.display=coinTargetArr.length>0?'block':'none';
     const rr=cfg.rival_reply||{};
     document.getElementById('auto-rival-witty').checked=rr.witty!==false;
     document.getElementById('auto-rival-zalan').checked=rr.zalan!==false;
@@ -1391,6 +1504,7 @@ function loadAutoConfig(){
     document.getElementById('auto-blacklist').value=bl.join('\n');
     const wl=cfg.whitelist||[];
     document.getElementById('auto-whitelist').value=wl.join('\n');
+    document.getElementById('auto-interact-own').checked=cfg.interact_own_dynamics!==false;
     switchListMode(cfg.list_mode||'blacklist');
     const ct=cfg.comment_text||{};
     document.getElementById('auto-comment-prefix').value=ct.prefix||'';
@@ -1404,12 +1518,13 @@ function loadAutoConfig(){
 
 function saveAutoConfig(){
   const tripleChecked=document.getElementById('auto-act-triple').checked;
+  const coinTargetChecked=document.getElementById('auto-act-coin-target').checked;
   // 读取当前配置，只更新动态互动相关字段，保留 history_actions 等其他配置
   return fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
     cfg.actions={
       triple:tripleChecked,
       like:tripleChecked?false:document.getElementById('auto-act-like').checked,
-      coin:tripleChecked?false:document.getElementById('auto-act-coin').checked,
+      coin:tripleChecked||coinTargetChecked?false:document.getElementById('auto-act-coin').checked,
       favorite:tripleChecked?false:document.getElementById('auto-act-favorite').checked,
       comment:document.getElementById('auto-act-comment').checked,
       share:document.getElementById('auto-act-share').checked,
@@ -1430,6 +1545,9 @@ function saveAutoConfig(){
     cfg.blacklist=document.getElementById('auto-blacklist').value.split('\n').map(s=>s.trim()).filter(s=>s);
     cfg.whitelist=document.getElementById('auto-whitelist').value.split('\n').map(s=>s.trim()).filter(s=>s);
     cfg.list_mode=document.querySelector('#btn-mode-blacklist').classList.contains('btn-active')?'blacklist':'whitelist';
+    cfg.interact_own_dynamics=document.getElementById('auto-interact-own').checked;
+    const coinTargetUid=document.getElementById('auto-act-coin-target').checked?document.getElementById('auto-coin-target-uid').value.split('\n').map(s=>s.trim()).filter(s=>s):[];
+    cfg.coin_target_uid=coinTargetUid;
     cfg.schedule={
       enabled:document.getElementById('auto-schedule-enabled').checked,
       interval_minutes:parseInt(document.getElementById('auto-schedule-interval').value)||30,
@@ -1451,14 +1569,97 @@ function toggleTripleMode(tripleState){
     document.getElementById('auto-act-like').checked=false;
     document.getElementById('auto-act-coin').checked=false;
     document.getElementById('auto-act-favorite').checked=false;
+    // 三连与指定投币对象互斥
+    document.getElementById('auto-act-coin-target').checked=false;
+    document.getElementById('coin-target-panel').style.display='none';
+    document.getElementById('auto-act-coin').disabled=false;
   }else{
     sub.style.display='inline-flex';
+    _syncCoinTargetState();
   }
 }
 function onSubActionChange(){
   // 勾选子动作时自动取消三连
   const any=document.getElementById('auto-act-like').checked||document.getElementById('auto-act-coin').checked||document.getElementById('auto-act-favorite').checked;
   if(any)document.getElementById('auto-act-triple').checked=false;
+}
+function onCoinTargetChange(){
+  const checked=document.getElementById('auto-act-coin-target').checked;
+  document.getElementById('coin-target-panel').style.display=checked?'block':'none';
+  if(checked){
+    // 指定投币对象与三连互斥
+    document.getElementById('auto-act-triple').checked=false;
+    document.getElementById('auto-sub-actions').style.display='inline-flex';
+    // 投币与指定投币对象互斥，但点赞/收藏不受影响
+    document.getElementById('auto-act-coin').checked=false;
+    document.getElementById('auto-act-coin').disabled=true;
+  }else{
+    document.getElementById('auto-act-coin').disabled=false;
+  }
+}
+function _syncCoinTargetState(){
+  // 如果投币对象被勾选，禁用投币
+  const coinTargetChecked=document.getElementById('auto-act-coin-target').checked;
+  document.getElementById('auto-act-coin').disabled=coinTargetChecked;
+  if(coinTargetChecked){
+    document.getElementById('auto-act-coin').checked=false;
+    // 确保子动作栏可见（投币对象模式下可点赞/收藏）
+    document.getElementById('auto-sub-actions').style.display='inline-flex';
+  }
+}
+
+/* 指定投币对象 - 关注列表 */
+let _coinTargetFollowingCache=[];
+function fetchCoinTargetFollowing(){
+  const btn=document.getElementById('btn-coin-fetch-following');
+  const status=document.getElementById('coin-target-status');
+  btn.disabled=true;btn.textContent='拉取中...';
+  status.textContent='正在拉取关注列表，请稍候...';
+  fetch('/api/auto/following-list').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📡 拉取关注列表';
+    if(!d.success){status.textContent='❌ '+(d.message||'拉取失败');return;}
+    _coinTargetFollowingCache=d.followings||[];
+    status.textContent='✅ 共拉取 '+_coinTargetFollowingCache.length+' 个关注用户';
+    const container=document.getElementById('coin-target-following-container');
+    container.style.display='block';
+    renderCoinTargetFollowing(_coinTargetFollowingCache);
+  }).catch(e=>{
+    btn.disabled=false;btn.textContent='📡 拉取关注列表';
+    status.textContent='❌ 网络错误: '+e;
+  });
+}
+function renderCoinTargetFollowing(list){
+  const box=document.getElementById('coin-target-following-box');
+  const uidText=document.getElementById('auto-coin-target-uid').value;
+  const uidSet=new Set(uidText.split('\n').map(s=>s.trim()).filter(s=>s));
+  if(!list.length){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">无关注用户</p>';return;}
+  box.innerHTML=list.map(u=>{
+    const checked=uidSet.has(String(u.uid))?'checked':'';
+    const face=u.face?`<img src="${u.face}" referrerpolicy="no-referrer" style="width:28px;height:28px;border-radius:50%;margin-right:8px;object-fit:cover">`:'';
+    return `<label class="following-item" style="display:flex;align-items:center;padding:6px 8px;border-radius:6px;cursor:pointer;gap:6px" onmouseenter="this.style.background='rgba(255,255,255,0.04)'" onmouseleave="this.style.background='transparent'">
+      <input type="checkbox" data-uid="${u.uid}" ${checked} onchange="toggleCoinTargetUid(this)">
+      ${face}
+      <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${u.name}</span>
+      <span style="font-size:11px;color:var(--text-tertiary)">UID ${u.uid}</span>
+    </label>`;
+  }).join('');
+}
+function filterCoinTargetFollowing(){
+  const q=document.getElementById('coin-target-following-search').value.trim().toLowerCase();
+  if(!q){renderCoinTargetFollowing(_coinTargetFollowingCache);return;}
+  const filtered=_coinTargetFollowingCache.filter(u=>String(u.uid).includes(q)||(u.name||'').toLowerCase().includes(q));
+  renderCoinTargetFollowing(filtered);
+}
+function toggleCoinTargetUid(cb){
+  const uid=String(cb.dataset.uid);
+  const uidText=document.getElementById('auto-coin-target-uid').value;
+  let uids=uidText.split('\n').map(s=>s.trim()).filter(s=>s);
+  if(cb.checked){
+    if(!uids.includes(uid))uids.push(uid);
+  }else{
+    uids=uids.filter(u=>u!==uid);
+  }
+  document.getElementById('auto-coin-target-uid').value=uids.join('\n');
 }
 
 /* 黑白名单模式切换 */
@@ -2068,20 +2269,21 @@ function bstAddSelected(){
 function boosterRun(){
   const bvList=bvGetList('booster-bv-list');
   const target=document.getElementById('booster-target').value.trim();
+  const mode=document.querySelector('input[name="booster-mode"]:checked')?.value||'speed';
   if(!bvList.length||!target){alert('请填写 BV号 和 目标播放数');return;}
   const bv=bvList.join(',');
   const btn=document.getElementById('bst-run-btn');
   const stopBtn=document.getElementById('bst-stop-btn');
   btn.disabled=true;btn.textContent='运行中...';
   stopBtn.style.display='inline-block';stopBtn.disabled=false;
-  setDot('bst-dot','run');setText('bst-status-text','运行中');
+  setDot('bst-dot','run');setText('bst-status-text',mode==='hourly'?'运行中（高刷）':'运行中');
   document.getElementById('booster-log').textContent='启动中...';
   bstResultState={videos:{},round:null,totalClicks:0,totalGrowth:0,reached:0,videoCount:0};
   document.getElementById('bst-rp-round-tag').innerHTML='<span style="font-size:14px">⏳</span> 等待第一轮完成...';
   document.getElementById('bst-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
   document.getElementById('bst-rp-videos').innerHTML='';
 
-  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target})})
+  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target,mode})})
     .then(r=>r.json()).then(d=>{
       if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 开始提升';stopBtn.style.display='none';return;}
       bstTaskId=d.task_id;
@@ -2572,8 +2774,142 @@ function setDot(id,state){
 }
 function setText(id,text){document.getElementById(id).textContent=text;}
 
+/* ============================================================
+   TAB 4: LiveHelper 弹幕助手
+   ============================================================ */
+let lhPollTimer=null;
+
+function lhLoadConfig(){
+  fetch('/api/livehelper/config').then(r=>r.json()).then(d=>{
+    if(d._has_login&&d._login_uid){
+      document.getElementById('lh-login-info').innerHTML='已登录 <b>UID: '+d._login_uid+'</b>';
+    }
+    document.getElementById('lh-room-id').value=d.room_id||'';
+    document.getElementById('lh-interval').value=d.interval_seconds||60;
+    document.getElementById('lh-jitter').value=d.interval_jitter_seconds||10;
+    document.getElementById('lh-skip-dup').checked=d.skip_duplicate!==false;
+    if(d.quotes&&d.quotes.length){
+      document.getElementById('lh-quotes').value=d.quotes.join('\n');
+    }
+  }).catch(()=>{});
+  lhCheckStatus();
+}
+
+function lhShowQR(){
+  const area=document.getElementById('lh-qr-area');
+  area.style.display='block';
+  document.getElementById('lh-qr-status').textContent='生成中...';
+  fetch('/api/redpocket/login/qrcode').then(r=>r.json()).then(d=>{
+    if(d.success){
+      document.getElementById('lh-qr-img').src=d.qr_image;
+      document.getElementById('lh-qr-status').textContent='请用 B站 App 扫描二维码';
+      lhStartPollQR(d.qrcode_key);
+    }else{
+      document.getElementById('lh-qr-status').textContent='生成失败: '+d.message;
+    }
+  });
+}
+
+function lhStartPollQR(key){
+  if(lhPollTimer)clearInterval(lhPollTimer);
+  lhPollTimer=setInterval(()=>{
+    fetch(`/api/redpocket/login/poll/${key}`).then(r=>r.json()).then(d=>{
+      const st=document.getElementById('lh-qr-status');
+      if(d.success){
+        st.textContent='登录成功！';st.style.color='var(--success)';
+        clearInterval(lhPollTimer);
+        document.getElementById('lh-qr-area').style.display='none';
+        document.getElementById('lh-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+      }else if(d.status==='waiting'){
+        st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
+      }else if(d.status==='confirming'){
+        st.textContent='已确认，处理中...';st.style.color='var(--warn)';
+      }else{
+        st.textContent=d.message||'未知错误';st.style.color='var(--danger)';
+        if(d.message&&d.message.includes('过期'))clearInterval(lhPollTimer);
+      }
+    });
+  },2000);
+}
+
+function lhSaveConfig(){
+  const quotesText=document.getElementById('lh-quotes').value.trim();
+  const quotes=quotesText?quotesText.split('\n').map(s=>s.trim()).filter(s=>s):[];
+  const payload={
+    room_id:document.getElementById('lh-room-id').value.trim(),
+    interval_seconds:parseInt(document.getElementById('lh-interval').value)||60,
+    interval_jitter_seconds:parseInt(document.getElementById('lh-jitter').value)||10,
+    skip_duplicate:document.getElementById('lh-skip-dup').checked,
+    quotes:quotes,
+  };
+  fetch('/api/livehelper/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){alert('配置已保存');}else{alert('保存失败: '+d.message);}
+    });
+}
+
+function lhCheckStatus(){
+  fetch('/api/livehelper/status').then(r=>r.json()).then(d=>{
+    if(d.running){
+      setDot('lh-dot','run');
+      document.getElementById('lh-run-status').textContent='运行中 PID: '+d.pid;
+      document.getElementById('lh-start-btn').disabled=true;
+      document.getElementById('lh-stop-btn').disabled=false;
+      if(d.logs){
+        document.getElementById('lh-log').textContent=d.logs;
+      }
+    }else{
+      setDot('lh-dot','off');
+      document.getElementById('lh-run-status').textContent='未运行';
+      document.getElementById('lh-start-btn').disabled=false;
+      document.getElementById('lh-stop-btn').disabled=true;
+    }
+  });
+}
+
+function lhStart(){
+  fetch('/api/livehelper/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      lhStartPoll();
+    }else{
+      alert('启动失败: '+d.message);
+    }
+  });
+}
+
+function lhStop(){
+  fetch('/api/livehelper/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      clearInterval(lhPollTimer);
+      lhCheckStatus();
+    }else{
+      alert('停止失败: '+d.message);
+    }
+  });
+}
+
+function lhStartPoll(){
+  if(lhPollTimer)clearInterval(lhPollTimer);
+  lhPollTimer=setInterval(()=>{
+    fetch('/api/livehelper/status').then(r=>r.json()).then(d=>{
+      if(d.running){
+        setDot('lh-dot','run');
+        document.getElementById('lh-run-status').textContent='运行中 PID: '+d.pid;
+        document.getElementById('lh-start-btn').disabled=true;
+        document.getElementById('lh-stop-btn').disabled=false;
+        if(d.logs){
+          document.getElementById('lh-log').textContent=d.logs;
+        }
+      }else{
+        clearInterval(lhPollTimer);
+        lhCheckStatus();
+      }
+    });
+  },3000);
+}
+
 // 初始加载
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();lhLoadConfig();
 </script>
 </body>
 </html>
