@@ -86,6 +86,7 @@ _auto_schedule = {
 _auto_run_lock = threading.Lock()  # 防止 run_once 并发执行
 
 AUTO_CONFIG_FILE = ROOT / "bili-auto" / "config.yaml"
+AUTO_CONFIG_DEFAULT = ROOT / "bili-auto" / "config.yaml.default"
 
 
 def _load_auto_config():
@@ -93,6 +94,14 @@ def _load_auto_config():
     if AUTO_CONFIG_FILE.exists():
         with open(AUTO_CONFIG_FILE, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
+    # 文件不存在时，从 config.yaml.default 复制
+    if AUTO_CONFIG_DEFAULT.exists():
+        import shutil
+        shutil.copy2(AUTO_CONFIG_DEFAULT, AUTO_CONFIG_FILE)
+        print(f"[AUTO] 配置文件不存在，已从默认模板创建: {AUTO_CONFIG_FILE}")
+        with open(AUTO_CONFIG_FILE, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    # default 也不存在，返回空配置
     return {}
 
 
