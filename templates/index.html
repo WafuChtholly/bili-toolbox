@@ -1037,7 +1037,23 @@ textarea.form-input { min-height: 80px; resize: vertical; }
         <div id="booster-bv-list" class="bv-list">
           <div class="bv-row"><input class="form-input" placeholder="BV1fz421o8J7" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>
         </div>
-        <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="bvAdd('booster-bv-list')">+ 添加视频</button>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('booster-bv-list')">+ 添加视频</button>
+          <button type="button" class="btn btn-outline btn-sm" id="bst-webhook-btn" onclick="bstWebhookToggle()">🔗 从活动助手获取</button>
+        </div>
+        <div id="bst-webhook-area" style="display:none;margin-top:10px;padding:10px 12px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--info);font-size:13px">📡 Webhook 监听中</span>
+            <button type="button" class="btn btn-outline btn-sm" onclick="bstWebhookToggle()" style="font-size:12px;padding:2px 10px">关闭</button>
+          </div>
+          <div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">
+            POST <code id="bst-webhook-url"></code>
+          </div>
+          <div style="margin-top:4px;font-size:11px;color:var(--text-tertiary)">
+            Body: <code>{"bvid":"BVxxx"}</code> 或 <code>{"bvid":["BV1","BV2"]}</code>
+          </div>
+          <div id="bst-webhook-status" style="margin-top:6px;font-size:12px;color:var(--text-tertiary)">等待接收...</div>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">目标播放数</label>
@@ -1375,7 +1391,7 @@ function switchTab(name){
     const btn = document.querySelector(`.tab-btn[onclick="switchTab('${name}')"]`);
     if(btn) btn.classList.add('active');
   }
-  if(name==='booster'){bstLoadLoginStatus()}
+  if(name==='booster'){bstLoadLoginStatus()}else{bstWebhookStopPoll();}
   if(name==='redpocket'){rpLoadRooms();rpCheckStatus()}
   if(name==='player'){plLoadConfig()}
   if(name==='auto'){autoLoadConfig()}
@@ -2286,6 +2302,87 @@ function boosterRun(){
 function boosterStop(){
   fetch('/api/booster/stop',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({task_id:bstTaskId})});
+}
+
+// ── Webhook（活动助手推送） ──
+let bstWebhookPollTimer=null;
+let bstWebhookReceived=[];
+
+function bstWebhookToggle(){
+  const area=document.getElementById('bst-webhook-area');
+  const btn=document.getElementById('bst-webhook-btn');
+  if(area.style.display==='none'){
+    // 开启 webhook
+    fetch('/api/booster/webhook/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+      if(d.success){
+        area.style.display='block';
+        btn.textContent='🔗 监听中...';
+        btn.style.borderColor='var(--info)';
+        btn.style.color='var(--info)';
+        const loc=window.location;
+        document.getElementById('bst-webhook-url').textContent=loc.protocol+'//'+loc.host+'/booster';
+        document.getElementById('bst-webhook-status').textContent='等待接收...';
+        bstWebhookReceived=[];
+        bstWebhookStartPoll();
+      }
+    });
+  } else {
+    // 关闭 webhook
+    fetch('/api/booster/webhook/stop',{method:'POST'}).then(()=>{
+      area.style.display='none';
+      btn.textContent='🔗 从活动助手获取';
+      btn.style.borderColor='';
+      btn.style.color='';
+      bstWebhookStopPoll();
+    });
+  }
+}
+
+function bstWebhookStartPoll(){
+  bstWebhookStopPoll();
+  bstWebhookPollTimer=setInterval(()=>{
+    fetch('/api/booster/webhook/poll').then(r=>r.json()).then(d=>{
+      if(d.bvs&&d.bvs.length>0){
+        bstWebhookReceived.push(...d.bvs);
+        const statusEl=document.getElementById('bst-webhook-status');
+        statusEl.innerHTML='<span style="color:var(--success)">✓ 收到 '+d.bvs.length+' 个BV号: '+d.bvs.join(', ')+'</span> — 共 '+bstWebhookReceived.length+' 个待处理';
+
+        // 自动填充到 BV 输入列表
+        bstWebhookFillBVs(d.bvs);
+
+        // 弹窗确认是否开始提升
+        setTimeout(()=>{
+          if(confirm('收到 '+d.bvs.length+' 个BV号: '+d.bvs.join(', ')+'\n\n是否立即开始提升？')){
+            boosterRun();
+          }
+        },300);
+      }
+    }).catch(()=>{});
+  },1500);
+}
+
+function bstWebhookStopPoll(){
+  if(bstWebhookPollTimer){clearInterval(bstWebhookPollTimer);bstWebhookPollTimer=null;}
+}
+
+function bstWebhookFillBVs(bvs){
+  const list=document.getElementById('booster-bv-list');
+  // 清除空行
+  list.querySelectorAll('.bv-row').forEach(row=>{
+    const inp=row.querySelector('input');
+    if(inp&&!inp.value.trim())row.remove();
+  });
+  bvs.forEach(bvid=>{
+    // 检查是否已存在
+    const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
+    if(existing)return;
+    const row=document.createElement('div');
+    row.className='bv-row';
+    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+    list.appendChild(row);
+  });
+  // 如果列表空了加回默认行
+  if(!list.querySelector('.bv-row')){bvAdd('booster-bv-list');}
 }
 
 // ── 结果面板状态 ──

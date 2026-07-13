@@ -686,6 +686,77 @@ def auto_history_stop():
 booster_tasks = {}
 booster_lock = threading.Lock()
 
+# ── Webhook（活动助手推送） ──
+booster_webhook_enabled = False
+booster_webhook_queue: list[str] = []   # 存放收到的 BV号
+booster_webhook_lock = threading.Lock()
+
+
+@app.route("/booster", methods=["POST"])
+def booster_webhook():
+    """接收外部推送的 BV号（活动助手等），格式：
+    {"bvid": "BVxxx"} 或 {"bv": "BVxxx"} 或 {"bvid": ["BV1", "BV2"]}
+    也支持纯字符串 "BVxxx"。
+    """
+    if not booster_webhook_enabled:
+        return jsonify({"error": "webhook 未开启"}), 403
+
+    data = request.json
+    if data is None:
+        # 尝试纯文本
+        raw = request.data.decode("utf-8", errors="ignore").strip()
+        if raw:
+            bv_list = [raw]
+        else:
+            return jsonify({"error": "空数据"}), 400
+    else:
+        # 支持多种字段名
+        raw_val = data.get("bvid") or data.get("bv") or data.get("bvids") or data.get("video_id") or data.get("videoId") or ""
+        if isinstance(raw_val, list):
+            bv_list = [str(v).strip() for v in raw_val if str(v).strip()]
+        elif isinstance(raw_val, str):
+            # 逗号分隔也支持
+            bv_list = [v.strip() for v in raw_val.replace("，", ",").split(",") if v.strip()]
+        else:
+            bv_list = [str(raw_val).strip()]
+
+    if not bv_list:
+        return jsonify({"error": "未解析到 BV号"}), 400
+
+    with booster_webhook_lock:
+        for bv in bv_list:
+            if bv not in booster_webhook_queue:
+                booster_webhook_queue.append(bv)
+
+    print(f"[WEBHOOK] 收到 BV号: {bv_list}")
+    return jsonify({"success": True, "received": bv_list, "total_queued": len(booster_webhook_queue)})
+
+
+@app.route("/api/booster/webhook/start", methods=["POST"])
+def booster_webhook_start():
+    global booster_webhook_enabled
+    with booster_webhook_lock:
+        booster_webhook_enabled = True
+        booster_webhook_queue.clear()
+    return jsonify({"success": True, "url": "/booster"})
+
+
+@app.route("/api/booster/webhook/stop", methods=["POST"])
+def booster_webhook_stop():
+    global booster_webhook_enabled
+    with booster_webhook_lock:
+        booster_webhook_enabled = False
+    return jsonify({"success": True})
+
+
+@app.route("/api/booster/webhook/poll")
+def booster_webhook_poll():
+    """拉取 webhook 收到的 BV号（消费式：取完即清空队列）"""
+    with booster_webhook_lock:
+        bvs = list(booster_webhook_queue)
+        booster_webhook_queue.clear()
+    return jsonify({"bvs": bvs, "enabled": booster_webhook_enabled})
+
 
 def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None):
     with booster_lock:
