@@ -11,3 +11,4 @@ __pycache__/
 .env
 webui.bat
 bili-auto/config.yaml
+bili-player/config.yaml
