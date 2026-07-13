@@ -1,8 +1,8 @@
 bilibili:
-  bili_jct: 118d1052b6cddf1cafc1294845e226ae
-  buvid3: null
-  login_uid: 3546766915930803
-  sessdata: f31f9a1b%2C1798018988%2C303b9%2A62CjBvq1Xzr_FaRsznZO2w274_65sspuhdDgIqSTUHX8n2DzDX4NXrucQ57-lIA_QNDboSVjZyYmNsU0JpdThWcWZNTWp6NGxDRXBhaWpFTkpka0ZmenpJNUFiVl9lNlFxNnNSaXZLbjhjcjBVT2RlbU1WLUZPSmZQdzVGU2J2ZlZIUTVxYW51WU5nIIEC
+  bili_jct: 
+  buvid3: 
+  login_uid: 
+  sessdata: 
 livehelper:
   credential_file: bilibili.json
   enabled: true
@@ -15,7 +15,7 @@ livehelper:
   - '666'
   - 来了来了
   - 加油加油
-  room_id: '1758153368'
+  room_id: ''
   skip_duplicate: true
 logging:
   level: INFO
