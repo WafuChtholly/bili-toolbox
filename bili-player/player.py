@@ -323,7 +323,6 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
     total_rounds = 0
     success_rounds = 0
     failed_rounds = 0
-    cumulative_growth = 0
     video_results = {}  # bvid -> {"rounds": n, "success": n, "failed": n}
     results_lock = asyncio.Lock()
 
@@ -332,7 +331,7 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
 
     async def play_with_semaphore(bvid, round_num):
         """带并发限制的播放任务"""
-        nonlocal total_rounds, success_rounds, failed_rounds, cumulative_growth
+        nonlocal total_rounds, success_rounds, failed_rounds
 
         async with semaphore:
             if stop_event and stop_event.is_set():
@@ -356,17 +355,25 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
                 if cur_views is not None:
                     growth = max(0, cur_views - initial_views.get(bvid, cur_views))
                     async with results_lock:
-                        if growth > 0:
-                            cumulative_growth += growth
+                        video_results[bvid]["last_views"] = cur_views
                     log(f"[RESULT] video|{bvid}|{cur_views}|{growth}|{round_num}|{rounds}")
+                # 计算所有视频的真实总增长
                 async with results_lock:
-                    log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{cumulative_growth}")
+                    total_growth = 0
+                    for bv, res in video_results.items():
+                        if res.get("last_views") is not None:
+                            total_growth += max(0, res["last_views"] - initial_views.get(bv, res["last_views"]))
+                    log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{total_growth}")
             except Exception as e:
                 log(f"[PLAYER] 播放失败: {e}")
                 async with results_lock:
                     failed_rounds += 1
                     video_results[bvid]["failed"] += 1
-                    log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{cumulative_growth}")
+                    total_growth = 0
+                    for bv, res in video_results.items():
+                        if res.get("last_views") is not None:
+                            total_growth += max(0, res["last_views"] - initial_views.get(bv, res["last_views"]))
+                    log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{total_growth}")
 
     # 创建所有任务
     tasks = []
@@ -375,7 +382,7 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
             log("[PLAYER] 收到停止信号，退出")
             break
 
-        video_results.setdefault(bvid, {"rounds": 0, "success": 0, "failed": 0})
+        video_results.setdefault(bvid, {"rounds": 0, "success": 0, "failed": 0, "last_views": None})
 
         for round_num in range(1, rounds + 1):
             if stop_event and stop_event.is_set():
