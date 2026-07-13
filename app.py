@@ -1,6 +1,6 @@
 """
 B站工具箱 — 统一 WebUI
-整合四大场景：自动互动 / 播放量提升(proxy) / 播放量提升(Playwright) / 直播间红包助手
+整合五大场景：自动互动 / 播放量提升(proxy) / 播放量提升(Playwright) / 直播间红包助手 / 话题助手
 """
 import asyncio
 import json
@@ -177,21 +177,27 @@ def _try_play_bvids(task_id: str, stop_event: threading.Event, bvids: list[str])
             auto_cookies.append({"name": "DedeUserID", "value": login_uid, "domain": ".bilibili.com", "path": "/"})
         _append_log(task_id, "[SYSTEM] 播放使用 auto 模块凭证")
 
-    for i, bvid in enumerate(bvids):
-        if stop_event.is_set():
-            _append_log(task_id, "[SYSTEM] 收到停止信号，停止播放")
-            break
-        _append_log(task_id, f"[SYSTEM] 播放 ({i+1}/{len(bvids)}): {bvid}")
-        try:
-            play_video(bvid, stop_event=stop_event, log_fn=lambda msg: _append_log(task_id, msg), cookies=auto_cookies)
-        except Exception as e:
-            _append_log(task_id, f"[SYSTEM] 播放 {bvid} 失败: {e}")
-        # 视频间短暂等待
-        if not stop_event.is_set() and i < len(bvids) - 1:
-            import random as _r
-            wait = _r.randint(3, 8)
-            _append_log(task_id, f"[SYSTEM] 等待 {wait} 秒后播放下一个...")
-            time.sleep(wait)
+    # play_video 现在是异步函数，需要使用 asyncio.run()
+    import asyncio
+
+    async def _play_all():
+        for i, bvid in enumerate(bvids):
+            if stop_event.is_set():
+                _append_log(task_id, "[SYSTEM] 收到停止信号，停止播放")
+                break
+            _append_log(task_id, f"[SYSTEM] 播放 ({i+1}/{len(bvids)}): {bvid}")
+            try:
+                await play_video(bvid, stop_event=stop_event, log_fn=lambda msg: _append_log(task_id, msg), cookies=auto_cookies)
+            except Exception as e:
+                _append_log(task_id, f"[SYSTEM] 播放 {bvid} 失败: {e}")
+            # 视频间短暂等待
+            if not stop_event.is_set() and i < len(bvids) - 1:
+                import random as _r
+                wait = _r.randint(3, 8)
+                _append_log(task_id, f"[SYSTEM] 等待 {wait} 秒后播放下一个...")
+                await asyncio.sleep(wait)
+
+    asyncio.run(_play_all())
     _append_log(task_id, f"[SYSTEM] 播放完成")
 
 
@@ -677,7 +683,7 @@ booster_tasks = {}
 booster_lock = threading.Lock()
 
 
-def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, mode: str = 'speed'):
+def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None):
     with booster_lock:
         booster_tasks[task_id]["status"] = "running"
 
@@ -692,7 +698,7 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
         spec.loader.exec_module(booster)
 
         bv_input = ",".join(bv_list)
-        booster.main(bv_input, str(target), stop_event=stop_event, log_fn=log_fn, mode=mode)
+        booster.main(bv_input, str(target), stop_event=stop_event, log_fn=log_fn)
         with booster_lock:
             booster_tasks[task_id]["status"] = "completed"
     except Exception as e:
@@ -709,7 +715,6 @@ def booster_run():
     data = request.json
     bv_str = data.get("bv", "")
     target = data.get("target", 0)
-    mode = data.get("mode", "speed")
     bv_list = [b.strip() for b in bv_str.split(",") if b.strip()]
     if not bv_list or not target:
         return jsonify({"error": "缺少 BV号 或 目标播放数"}), 400
@@ -723,12 +728,11 @@ def booster_run():
             "end": None,
             "bv": bv_str,
             "target": target,
-            "mode": mode,
             "stop_event": stop_event,
         }
     with log_lock:
         log_buffers[tid] = []
-    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event, mode), daemon=True)
+    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event), daemon=True)
     t.start()
     return jsonify({"task_id": tid})
 
@@ -799,7 +803,11 @@ def booster_my_videos():
             })
         return jsonify({"success": True, "videos": videos, "mid": mid})
     except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
+        import traceback
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        print(f"[ERROR] player_my_videos: {error_msg}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": error_msg})
 
 
 @app.route("/api/booster/tasks")
@@ -854,7 +862,9 @@ def _run_player_task(task_id: str, bv_list: list[str], rounds: int, stop_event: 
         spec.loader.exec_module(player)
 
         bv_input = ",".join(bv_list)
-        player.main(bv_input, rounds=rounds, stop_event=stop_event, log_fn=log_fn)
+        # main() 现在是异步函数，需要用 asyncio.run() 执行
+        import asyncio
+        asyncio.run(player.main(bv_input, rounds=rounds, stop_event=stop_event, log_fn=log_fn))
         with player_lock:
             player_tasks[task_id]["status"] = "completed"
     except Exception as e:
@@ -1032,7 +1042,11 @@ def player_qr():
             "qr_image": f"data:image/png;base64,{b64}",
         })
     except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
+        import traceback
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        print(f"[ERROR] player_qr: {error_msg}")
+        traceback.print_exc()
+        return jsonify({"success": False, "message": error_msg})
 
 
 @app.route("/api/player/login/poll/<qrcode_key>")

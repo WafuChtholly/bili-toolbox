@@ -671,6 +671,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
   text-align: center;
   flex-shrink: 0;
 }
+
 </style>
 </head>
 <body>
@@ -1028,6 +1029,9 @@ textarea.form-input { min-height: 80px; resize: vertical; }
   <div class="card">
     <div class="card-head pink">B站播放量提升 — 代理池自动刷量</div>
     <div class="card-body">
+      <p style="color:var(--text-tertiary);font-size:12px;margin-bottom:12px;background:rgba(236,72,153,0.1);padding:6px 10px;border-radius:6px">
+        ⚡ 并发模式：多个视频将同时提升，充分利用代理资源
+      </p>
       <div class="form-group">
         <label class="form-label">BV号</label>
         <div id="booster-bv-list" class="bv-list">
@@ -1038,19 +1042,6 @@ textarea.form-input { min-height: 80px; resize: vertical; }
       <div class="form-group">
         <label class="form-label">目标播放数</label>
         <input class="form-input" id="booster-target" type="number" placeholder="1000">
-      </div>
-      <div class="form-group">
-        <label class="form-label">刷量模式</label>
-        <div style="display:flex;gap:10px;align-items:center">
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:14px;color:var(--text-primary)">
-            <input type="radio" name="booster-mode" value="speed" checked> 速刷
-            <span style="color:var(--text-tertiary);font-size:12px">（不限速，尽快打满）</span>
-          </label>
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:14px;color:var(--text-primary)">
-            <input type="radio" name="booster-mode" value="hourly"> 高刷
-            <span style="color:var(--text-tertiary);font-size:12px">（每小时≤190次，防锁）</span>
-          </label>
-        </div>
       </div>
       <div class="status-bar" id="bst-status-bar">
         <span class="status-dot dot-off" id="bst-dot"></span>
@@ -1116,6 +1107,9 @@ textarea.form-input { min-height: 80px; resize: vertical; }
     <div class="card-body">
       <p style="color:var(--text-secondary);margin-bottom:16px;font-size:13px">
         使用 Playwright 浏览器模拟真实用户播放行为，登录后播放量更有效
+      </p>
+      <p style="color:var(--text-tertiary);font-size:12px;margin-bottom:12px;background:rgba(34,197,94,0.1);padding:6px 10px;border-radius:6px">
+        ⚡ 并发模式：最多同时播放 3 个视频，多视频将并行执行
       </p>
       <div class="form-group">
         <label class="form-label">视频 BV 号</label>
@@ -2269,21 +2263,20 @@ function bstAddSelected(){
 function boosterRun(){
   const bvList=bvGetList('booster-bv-list');
   const target=document.getElementById('booster-target').value.trim();
-  const mode=document.querySelector('input[name="booster-mode"]:checked')?.value||'speed';
   if(!bvList.length||!target){alert('请填写 BV号 和 目标播放数');return;}
   const bv=bvList.join(',');
   const btn=document.getElementById('bst-run-btn');
   const stopBtn=document.getElementById('bst-stop-btn');
   btn.disabled=true;btn.textContent='运行中...';
   stopBtn.style.display='inline-block';stopBtn.disabled=false;
-  setDot('bst-dot','run');setText('bst-status-text',mode==='hourly'?'运行中（高刷）':'运行中');
+  setDot('bst-dot','run');setText('bst-status-text','运行中');
   document.getElementById('booster-log').textContent='启动中...';
   bstResultState={videos:{},round:null,totalClicks:0,totalGrowth:0,reached:0,videoCount:0};
   document.getElementById('bst-rp-round-tag').innerHTML='<span style="font-size:14px">⏳</span> 等待第一轮完成...';
   document.getElementById('bst-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
   document.getElementById('bst-rp-videos').innerHTML='';
 
-  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target,mode})})
+  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target})})
     .then(r=>r.json()).then(d=>{
       if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 开始提升';stopBtn.style.display='none';return;}
       bstTaskId=d.task_id;

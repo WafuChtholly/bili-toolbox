@@ -9,8 +9,9 @@ import sys
 import time
 import logging
 import threading
+import asyncio
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.async_api import async_playwright
 
 # 抑制 httpx 的 HTTP 请求日志
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -116,7 +117,7 @@ def get_view_count(page) -> int:
     return 0
 
 
-def simulate_user_behavior(page, stop_event=None):
+async def simulate_user_behavior(page, stop_event=None):
     """模拟真实用户行为"""
     if stop_event and stop_event.is_set():
         return
@@ -128,22 +129,22 @@ def simulate_user_behavior(page, stop_event=None):
             if stop_event and stop_event.is_set():
                 return
             scroll_y = random.randint(100, 400)
-            page.evaluate(f"window.scrollBy(0, {scroll_y})")
-            page.wait_for_timeout(random.randint(1000, 3000))
+            await page.evaluate(f"window.scrollBy(0, {scroll_y})")
+            await page.wait_for_timeout(random.randint(1000, 3000))
 
         # 模拟鼠标移动到视频区域
         if stop_event and stop_event.is_set():
             return
         try:
-            video = page.query_selector('video')
+            video = await page.query_selector('video')
             if video:
-                box = video.bounding_box()
+                box = await video.bounding_box()
                 if box:
                     # 随机移动到视频区域内的某个位置
                     x = box['x'] + random.uniform(box['width'] * 0.2, box['width'] * 0.8)
                     y = box['y'] + random.uniform(box['height'] * 0.2, box['height'] * 0.8)
-                    page.mouse.move(x, y)
-                    page.wait_for_timeout(random.randint(500, 1500))
+                    await page.mouse.move(x, y)
+                    await page.wait_for_timeout(random.randint(500, 1500))
         except Exception:
             pass
 
@@ -152,9 +153,9 @@ def simulate_user_behavior(page, stop_event=None):
             return
         if random.random() < 0.3:
             try:
-                page.keyboard.press('k')  # B站快捷键：暂停
-                page.wait_for_timeout(random.randint(1000, 3000))
-                page.keyboard.press('k')  # 继续播放
+                await page.keyboard.press('k')  # B站快捷键：暂停
+                await page.wait_for_timeout(random.randint(1000, 3000))
+                await page.keyboard.press('k')  # 继续播放
             except Exception:
                 pass
 
@@ -162,9 +163,9 @@ def simulate_user_behavior(page, stop_event=None):
         pass
 
 
-def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cookies=None):
+async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cookies=None):
     """
-    用 Playwright 打开一个视频并模拟播放
+    用 Playwright 打开一个视频并模拟播放（异步版本）
 
     Args:
         bvid: 视频 BV 号
@@ -193,8 +194,8 @@ def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cook
 
     _result_views = None
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
             headless=True,
             args=[
                 '--disable-blink-features=AutomationControlled',
@@ -202,29 +203,29 @@ def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cook
                 '--disable-dev-shm-usage',
             ]
         )
-        context = browser.new_context(
+        context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080},
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             locale='zh-CN',
         )
         # 注入反检测脚本
-        context.add_init_script("""
+        await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
         """)
 
         # 注入登录 cookie
         if cookies:
-            context.add_cookies(cookies)
+            await context.add_cookies(cookies)
             log("[PLAYER] 已注入登录 Cookie")
         else:
             log("[PLAYER] 未登录，将以游客身份播放")
 
-        page = context.new_page()
+        page = await context.new_page()
 
         try:
             # 访问视频页面
-            page.goto(url, wait_until='domcontentloaded', timeout=30000)
-            page.wait_for_timeout(random.randint(3000, 5000))
+            await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            await page.wait_for_timeout(random.randint(3000, 5000))
 
             if stop_event and stop_event.is_set():
                 return
@@ -241,10 +242,10 @@ def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cook
 
                 # 每 3-8 秒模拟一次用户行为
                 wait_time = random.randint(3, 8)
-                page.wait_for_timeout(wait_time * 1000)
+                await page.wait_for_timeout(wait_time * 1000)
                 elapsed += wait_time
 
-                simulate_user_behavior(page, stop_event)
+                await simulate_user_behavior(page, stop_event)
                 log(f"[PLAYER] 已播放 {elapsed}/{play_duration} 秒")
 
             # 通过 API 获取当前播放量，与初始值对比
@@ -259,15 +260,15 @@ def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cook
         except Exception as e:
             log(f"[PLAYER] 播放出错: {e}")
         finally:
-            browser.close()
+            await browser.close()
             log("[PLAYER] 浏览器已关闭")
 
     return _result_views
 
 
-def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, log_fn=None):
+async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, log_fn=None):
     """
-    主入口
+    主入口（异步版本，支持并发播放）
 
     Args:
         bvid_input: BV号，逗号分隔
@@ -280,6 +281,8 @@ def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, l
             log_fn(msg)
         else:
             print(msg)
+
+    MAX_CONCURRENT = 3  # 最大并发数限制
 
     bvids = [extract_bvid(b) for b in bvid_input.split(',') if b.strip()]
     if not bvids:
@@ -302,6 +305,7 @@ def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, l
 
     log(f"[PLAYER] 准备播放 {len(bvids)} 个视频，每轮 {rounds} 次")
     log(f"[PLAYER] BV 列表: {', '.join(bvids)}")
+    log(f"[PLAYER] 最大并发数: {MAX_CONCURRENT}")
 
     # ── 任务概览 ──
     total_planned = len(bvids) * rounds
@@ -309,6 +313,7 @@ def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, l
     log(f"[PLAYER] ━━━━━━━━━━━━━━━━━━━━━━━━")
     log(f"[PLAYER] 🚀 播放任务启动")
     log(f"[PLAYER]    视频数: {len(bvids)} | 每视频轮次: {rounds} | 总计: {total_planned} 轮")
+    log(f"[PLAYER]    并发数: {MAX_CONCURRENT}")
     for i, bvid in enumerate(bvids, 1):
         log(f"[PLAYER]    [{i}/{len(bvids)}] {bvid} | 初始播放量: {initial_views.get(bvid, '?')}")
     log(f"[PLAYER] ━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -320,7 +325,51 @@ def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, l
     failed_rounds = 0
     cumulative_growth = 0
     video_results = {}  # bvid -> {"rounds": n, "success": n, "failed": n}
+    results_lock = asyncio.Lock()
 
+    # 创建信号量限制并发数
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+
+    async def play_with_semaphore(bvid, round_num):
+        """带并发限制的播放任务"""
+        nonlocal total_rounds, success_rounds, failed_rounds, cumulative_growth
+
+        async with semaphore:
+            if stop_event and stop_event.is_set():
+                return
+
+            async with results_lock:
+                total_rounds += 1
+                video_results[bvid]["rounds"] += 1
+                overall = sum(r["success"] + r["failed"] for r in video_results.values())
+
+            log(f"[PLAYER] ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
+            log(f"[PLAYER] 📌 {bvid} | 第 {round_num}/{rounds} 轮")
+
+            try:
+                cur_views = await play_video(bvid, stop_event=stop_event, log_fn=log, initial_views=initial_views.get(bvid), cookies=cookies)
+                async with results_lock:
+                    success_rounds += 1
+                    video_results[bvid]["success"] += 1
+                # ── RESULT 标记 ──
+                growth = 0
+                if cur_views is not None:
+                    growth = max(0, cur_views - initial_views.get(bvid, cur_views))
+                    async with results_lock:
+                        if growth > 0:
+                            cumulative_growth += growth
+                    log(f"[RESULT] video|{bvid}|{cur_views}|{growth}|{round_num}|{rounds}")
+                async with results_lock:
+                    log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{cumulative_growth}")
+            except Exception as e:
+                log(f"[PLAYER] 播放失败: {e}")
+                async with results_lock:
+                    failed_rounds += 1
+                    video_results[bvid]["failed"] += 1
+                    log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{cumulative_growth}")
+
+    # 创建所有任务
+    tasks = []
     for bvid in bvids:
         if stop_event and stop_event.is_set():
             log("[PLAYER] 收到停止信号，退出")
@@ -332,38 +381,12 @@ def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, l
             if stop_event and stop_event.is_set():
                 log("[PLAYER] 收到停止信号，退出")
                 break
+            tasks.append(play_with_semaphore(bvid, round_num))
 
-            total_rounds += 1
-            video_results[bvid]["rounds"] += 1
-            # 计算全局进度
-            overall = sum(r["success"] + r["failed"] for r in video_results.values())
-            log(f"[PLAYER] ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
-            log(f"[PLAYER] 📌 [{overall}/{total_planned}] {bvid} | 第 {round_num}/{rounds} 轮")
-
-            try:
-                cur_views = play_video(bvid, stop_event=stop_event, log_fn=log, initial_views=initial_views.get(bvid))
-                success_rounds += 1
-                video_results[bvid]["success"] += 1
-                # ── RESULT 标记 ──
-                growth = 0
-                if cur_views is not None:
-                    growth = max(0, cur_views - initial_views.get(bvid, cur_views))
-                    if growth > 0:
-                        cumulative_growth += growth
-                    log(f"[RESULT] video|{bvid}|{cur_views}|{growth}|{round_num}|{rounds}")
-                log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{cumulative_growth}")
-            except Exception as e:
-                log(f"[PLAYER] 播放失败: {e}")
-                failed_rounds += 1
-                video_results[bvid]["failed"] += 1
-                log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{cumulative_growth}")
-
-            # 视频间随机等待
-            if stop_event and stop_event.is_set():
-                break
-            wait = random.randint(5, 15)
-            log(f"[PLAYER] 等待 {wait} 秒后播放下一个...")
-            time.sleep(wait)
+    # 并发执行所有任务
+    if tasks:
+        log(f"[PLAYER] 启动 {len(tasks)} 个并发任务...")
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     # ── 结果汇总 ──
     elapsed = int(time.time() - start_time)
@@ -398,4 +421,4 @@ if __name__ == '__main__':
 
     bv_input = sys.argv[1]
     r = int(sys.argv[2]) if len(sys.argv) > 2 else 1
-    main(bv_input, rounds=r)
+    asyncio.run(main(bv_input, rounds=r))
