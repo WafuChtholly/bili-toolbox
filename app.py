@@ -93,7 +93,11 @@ def _load_auto_config():
     import yaml
     if AUTO_CONFIG_FILE.exists():
         with open(AUTO_CONFIG_FILE, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+            cfg = yaml.safe_load(f) or {}
+        # 加载时也创建备份，防止升级时 git 删除配置后无法恢复
+        import shutil
+        shutil.copy2(AUTO_CONFIG_FILE, AUTO_CONFIG_BACKUP)
+        return cfg
     # 文件不存在时，从备份恢复（升级时 git pull 可能删除了配置）
     if AUTO_CONFIG_BACKUP.exists():
         import shutil
