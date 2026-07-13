@@ -406,7 +406,10 @@ def auto_config_get():
 
 @app.route("/api/auto/config", methods=["POST"])
 def auto_config_save():
-    cfg = request.json or {}
+    data = request.json or {}
+    # 加载现有配置，合并更新，防止覆盖其他字段
+    cfg = _load_auto_config()
+    cfg.update(data)
     _save_auto_config(cfg)
     return jsonify({"success": True})
 
