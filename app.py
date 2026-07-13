@@ -85,24 +85,22 @@ _auto_schedule = {
 }
 _auto_run_lock = threading.Lock()  # 防止 run_once 并发执行
 
-AUTO_CONFIG_FILE = ROOT / "bili-auto" / "config.yaml"
-AUTO_CONFIG_BACKUP = ROOT / "bili-auto" / "config.yaml.bak"
+AUTO_CONFIG_DIR = ROOT / "data"
+AUTO_CONFIG_FILE = AUTO_CONFIG_DIR / "auto_config.yaml"
 
 
 def _load_auto_config():
     import yaml
     if AUTO_CONFIG_FILE.exists():
         with open(AUTO_CONFIG_FILE, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        # 加载时也创建备份，防止升级时 git 删除配置后无法恢复
+            return yaml.safe_load(f) or {}
+    # 迁移：旧配置存在时自动复制到新位置
+    old_cfg = ROOT / "bili-auto" / "config.yaml"
+    if old_cfg.exists():
         import shutil
-        shutil.copy2(AUTO_CONFIG_FILE, AUTO_CONFIG_BACKUP)
-        return cfg
-    # 文件不存在时，从备份恢复（升级时 git pull 可能删除了配置）
-    if AUTO_CONFIG_BACKUP.exists():
-        import shutil
-        shutil.copy2(AUTO_CONFIG_BACKUP, AUTO_CONFIG_FILE)
-        print(f"[AUTO] 配置文件不存在，已从备份恢复: {AUTO_CONFIG_FILE}")
+        AUTO_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(old_cfg, AUTO_CONFIG_FILE)
+        print(f"[AUTO] 已迁移旧配置到: {AUTO_CONFIG_FILE}")
         with open(AUTO_CONFIG_FILE, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     return {}
@@ -110,12 +108,9 @@ def _load_auto_config():
 
 def _save_auto_config(cfg):
     import yaml
-    AUTO_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUTO_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     with open(AUTO_CONFIG_FILE, "w", encoding="utf-8") as f:
         yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-    # 同时备份到 config.yaml.bak（防止升级时 git pull 删除配置）
-    import shutil
-    shutil.copy2(AUTO_CONFIG_FILE, AUTO_CONFIG_BACKUP)
 
 
 def _run_auto_task(task_id: str, stop_event: threading.Event):
