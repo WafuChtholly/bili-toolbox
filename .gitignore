@@ -10,4 +10,7 @@ __pycache__/
 *.pyo
 .env
 webui.bat
+bili-auto/config.yaml
+bili-auto/config.yaml.bak
 bili-player/config.yaml
+bili-redpocket/config.yaml
