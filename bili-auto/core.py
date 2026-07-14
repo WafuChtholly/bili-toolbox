@@ -25,7 +25,8 @@ CREDENTIAL_FILE = CONFIG_DIR / "credential.json"
 MULTI_CREDENTIALS_FILE = CONFIG_DIR / "multi_credentials.json"
 PROCESSED_FILE = CONFIG_DIR / "processed_dynamics.json"
 INTERACTED_BVIDS_FILE = CONFIG_DIR / "interacted_bvids.json"
-CONFIG_FILE = Path(__file__).resolve().parent / "config.yaml"
+CONFIG_FILE = Path(__file__).resolve().parent.parent / "data" / "auto_config.yaml"
+_OLD_CONFIG_FILE = Path(__file__).resolve().parent / "config.yaml"
 
 # ---- comment template ----
 COMMENT_PREFIX = "第{idx}时间赶来支持up"
@@ -191,6 +192,16 @@ def load_config() -> dict:
             return cfg
         except Exception as e:
             logger.warning("加载配置失败: %s, 使用默认配置", e)
+    # 迁移：旧配置存在时自动复制到新位置
+    if _OLD_CONFIG_FILE.exists():
+        try:
+            import shutil
+            CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_OLD_CONFIG_FILE, CONFIG_FILE)
+            logger.info("已迁移旧配置到: %s", CONFIG_FILE)
+            return load_config()
+        except Exception:
+            pass
     return _DEFAULT_CONFIG.copy()
 
 

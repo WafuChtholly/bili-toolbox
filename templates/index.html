@@ -886,9 +886,12 @@ textarea.form-input { min-height: 80px; resize: vertical; }
         </div>
       </div>
 
-      <div class="status-bar" id="auto-status-bar">
-        <span class="status-dot dot-off" id="auto-dot"></span>
-        <span id="auto-status-text" style="color:var(--text-secondary)">就绪</span>
+      <div class="status-bar" id="auto-status-bar" style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span class="status-dot dot-off" id="auto-dot"></span>
+          <span id="auto-status-text" style="color:var(--text-secondary)">就绪</span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="saveAutoConfig()" style="margin:0;padding:4px 14px;font-size:12px">💾 保存配置</button>
       </div>
       <div class="btn-row">
         <button class="btn btn-pink" id="auto-run-btn" onclick="autoRun()">▶ 立即执行一次</button>
