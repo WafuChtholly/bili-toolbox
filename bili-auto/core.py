@@ -814,11 +814,39 @@ async def _upload_cover_direct(content: bytes, fmt: str, cred: Credential) -> di
     return result["data"]
 
 
+async def _has_cover_comment(aid: int, cred: Credential) -> bool:
+    """Check if a '封面来啦' comment already exists in the comment section."""
+    try:
+        for page in range(1, 4):
+            data = await comment.get_comments(
+                oid=aid,
+                type_=comment.CommentResourceType.VIDEO,
+                page_index=page,
+                order=comment.OrderType.TIME,
+                credential=cred,
+            )
+            replies = data.get("replies", [])
+            if not replies:
+                break
+            for r in replies:
+                msg = r.get("content", {}).get("message", "")
+                if "封面来啦" in msg:
+                    return True
+    except Exception as e:
+        logger.debug("检查封面评论失败 aid=%d: %s", aid, e)
+    return False
+
+
 async def post_cover_comment(bvid: str, aid: int, cred: Credential, v: video.Video) -> None:
     """Download video cover, upload to Bilibili and post as picture comment.
     Upload is via aiohttp (not curl_cffi) for reliability.
     Retries up to 3 times with exponential backoff on transient failures.
+    Skips if a '封面来啦' comment already exists.
     """
+    if await _has_cover_comment(aid, cred):
+        logger.info("🖼️ 已有封面评论，跳过: %s", bvid)
+        return
+
     info = await v.get_info()
     pic_url = info.get("pic", "")
     if not pic_url:
