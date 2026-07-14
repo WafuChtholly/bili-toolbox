@@ -50,10 +50,14 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 timeout = 3
-thread_num = 200
-batch_size = 200
+thread_num = 50
+batch_size = 50
 request_delay = 0.01
 per_video_boost = 80
+_max_concurrent_requests = 80  # 全局并发请求上限，防止线程爆炸
+
+# 全局信号量，限制同时进行的网络请求数（筛选+点击共享）
+_net_semaphore = threading.Semaphore(_max_concurrent_requests)
 
 
 def fetch_from_checkerproxy(min_count: int = 100, max_lookback_days: int = 7) -> list[str]:
@@ -350,6 +354,7 @@ def pbar(n: int, total: int) -> str:
 
 def probe_once(proxy: str, bv: str) -> bool:
     """轻量探测：通过代理请求视频信息接口，验证代理可用且不触发播放量。"""
+    _net_semaphore.acquire()
     try:
         resp = requests.get(
             'https://api.bilibili.com/x/web-interface/view',
@@ -360,9 +365,12 @@ def probe_once(proxy: str, bv: str) -> bool:
         return resp.status_code == 200
     except:
         return False
+    finally:
+        _net_semaphore.release()
 
 
 def click_once(proxy: str, info: dict, bv: str) -> bool:
+    _net_semaphore.acquire()
     try:
         ua = _ua_instance.random
         cookies = build_random_cookies()
@@ -383,6 +391,8 @@ def click_once(proxy: str, info: dict, bv: str) -> bool:
         return resp.status_code == 200
     except:
         return False
+    finally:
+        _net_semaphore.release()
 
 
 def click_batch(proxies: 'list[str]', info: dict, bv: str, max_workers: int = None) -> int:
@@ -390,7 +400,9 @@ def click_batch(proxies: 'list[str]', info: dict, bv: str, max_workers: int = No
     success = [0]
     lock = threading.Lock()
     # 使用传入的线程数限制，或默认使用 batch_size
+    # 点击与筛选共享全局信号量，因此点击线程数取筛选的 1/3 即可
     worker_count = max_workers if max_workers else batch_size
+    worker_count = max(5, worker_count // 3)
 
     def worker(proxy: str) -> None:
         if click_once(proxy, info, bv):
@@ -412,6 +424,7 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
 
     active_proxies = []
     count = [0]
+    active_proxies_len_ref = [0]  # 用引用类型跟踪有效代理数，避免频繁 append 列表
     last_milestone = [0]
     lock = threading.Lock()
     total = len(total_proxies)
@@ -422,23 +435,39 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
     filter_done = threading.Event()
 
     def filter_worker(proxies: 'list[str]') -> None:
+        local_count = 0
+        local_active = 0
         for proxy in proxies:
             if stop_event and stop_event.is_set():
+                # 退出前同步本地计数
+                with lock:
+                    count[0] += local_count
+                    active_proxies_len_ref[0] += local_active
                 return
             if probe_once(proxy, bv):
                 proxy_queue.put(proxy)
+                local_active += 1
+            local_count += 1
+            # 每检查 20 个代理才同步一次，大幅减少锁竞争
+            if local_count % 20 == 0:
                 with lock:
-                    active_proxies.append(proxy)
+                    count[0] += local_count
+                    active_proxies_len_ref[0] += local_active
+                    local_count = 0
+                    local_active = 0
+                    # 打印进度
+                    pct = int(count[0] * 100 / total)
+                    milestone = (pct // 10) * 10
+                    if milestone > last_milestone[0] and milestone <= 100:
+                        last_milestone[0] = milestone
+                        bar_len = milestone // 10
+                        bar = '█' * bar_len + '░' * (10 - bar_len)
+                        logger.info(f'    ⏳ [{bar}] {pct}% | 已检测: {count[0]}/{total} | 有效: {active_proxies_len_ref[0]}')
+        # 处理剩余的本地计数
+        if local_count > 0:
             with lock:
-                count[0] += 1
-                # 每 10% 打印一次进度
-                pct = int(count[0] * 100 / total)
-                milestone = (pct // 10) * 10
-                if milestone > last_milestone[0] and milestone <= 100:
-                    last_milestone[0] = milestone
-                    bar_len = milestone // 10
-                    bar = '█' * bar_len + '░' * (10 - bar_len)
-                    logger.info(f'    ⏳ [{bar}] {pct}% | 已检测: {count[0]}/{total} | 有效: {len(active_proxies)}')
+                count[0] += local_count
+                active_proxies_len_ref[0] += local_active
 
     logger.info(f'  🔍 正在筛选代理 ({total} 个，使用 {effective_thread_num} 线程，超时 {timeout}秒)...')
     start_filter = datetime.now()
@@ -592,7 +621,9 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
         # 使用线程池并发处理多个视频
         # 计算每个视频可用的线程数，避免总线程数过多导致系统卡死
         num_pending = len(pending)
-        threads_per_video = max(20, thread_num // num_pending)  # 每个视频至少 20 线程
+        # 外层最多同时处理 3 个视频，避免线程数叠加
+        max_concurrent_videos = min(num_pending, 3)
+        threads_per_video = max(10, thread_num // max(num_pending, 1))  # 每个视频至少 10 线程
 
         def boost_single_video(v, idx):
             """并发提升单个视频"""
@@ -620,8 +651,8 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
 
             return v
 
-        # 使用线程池并发执行，最多同时处理 len(pending) 个视频
-        with ThreadPoolExecutor(max_workers=len(pending)) as executor:
+        # 使用线程池并发执行，最多同时处理 max_concurrent_videos 个视频
+        with ThreadPoolExecutor(max_workers=max_concurrent_videos) as executor:
             futures = {
                 executor.submit(boost_single_video, v, idx): v
                 for idx, v in enumerate(pending, 1)
