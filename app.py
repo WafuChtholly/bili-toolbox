@@ -417,10 +417,8 @@ def auto_config_get():
 @app.route("/api/auto/config", methods=["POST"])
 def auto_config_save():
     data = request.json or {}
-    # 加载现有配置，配置文件优先，缺失字段才用前端数据填充
     cfg = _load_auto_config()
-    for k, v in data.items():
-        cfg.setdefault(k, v)
+    cfg.update(data)
     _save_auto_config(cfg)
     return jsonify({"success": True})
 
