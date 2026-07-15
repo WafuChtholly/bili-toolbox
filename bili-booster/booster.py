@@ -1,7 +1,6 @@
 import sys
 import logging
 import threading
-import queue
 import random
 import hashlib
 import time as time_module
@@ -399,82 +398,53 @@ def click_once(proxy: str, info: dict, bv: str) -> bool:
         _net_semaphore.release()
 
 
-def click_batch(proxies: 'list[str]', info: dict, bv: str, max_workers: int = None) -> int:
-    """批量点击，使用线程池限制并发数"""
-    success = [0]
-    lock = threading.Lock()
-    worker_count = max_workers if max_workers else batch_size
-    # 点击线程数取筛选的1/2，与筛选共享全局信号量
-    worker_count = max(3, worker_count // 2)
-
-    def worker(proxy: str) -> None:
-        if click_once(proxy, info, bv):
-            with lock:
-                success[0] += 1
-
-    with ThreadPoolExecutor(max_workers=min(worker_count, len(proxies))) as executor:
-        executor.map(worker, proxies)
-
-    return success[0]
-
-
 def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, stop_event=None, max_threads: int = None) -> int:
     bv = video['bvid']
     info = video['info']
 
     random.shuffle(total_proxies)
 
-    active_proxies = []
     count = [0]
-    active_proxies_len_ref = [0]  # 用引用类型跟踪有效代理数，避免频繁 append 列表
+    active_proxies = []
     last_milestone = [0]
     lock = threading.Lock()
     total = len(total_proxies)
     effective_thread_num = max_threads if max_threads else thread_num
-    
-    # 使用队列实现边筛选边点击
-    proxy_queue = queue.Queue()
-    filter_done = threading.Event()
 
     def filter_worker(proxies: 'list[str]') -> None:
         local_count = 0
-        local_active = 0
+        local_active = []
         for proxy in proxies:
             if stop_event and stop_event.is_set():
-                # 退出前同步本地计数
                 with lock:
                     count[0] += local_count
-                    active_proxies_len_ref[0] += local_active
+                    active_proxies.extend(local_active)
                 return
             if probe_once(proxy, bv):
-                proxy_queue.put(proxy)
-                local_active += 1
+                local_active.append(proxy)
             local_count += 1
-            # 每检查 20 个代理才同步一次，大幅减少锁竞争
             if local_count % 20 == 0:
                 with lock:
                     count[0] += local_count
-                    active_proxies_len_ref[0] += local_active
+                    active_proxies.extend(local_active)
                     local_count = 0
-                    local_active = 0
-                    # 打印进度
+                    local_active = []
                     pct = int(count[0] * 100 / total)
                     milestone = (pct // 10) * 10
                     if milestone > last_milestone[0] and milestone <= 100:
                         last_milestone[0] = milestone
                         bar_len = milestone // 10
                         bar = '█' * bar_len + '░' * (10 - bar_len)
-                        logger.info(f'    ⏳ [{bar}] {pct}% | 已检测: {count[0]}/{total} | 有效: {active_proxies_len_ref[0]}')
-        # 处理剩余的本地计数
+                        logger.info(f'    ⏳ [{bar}] {pct}% | 已检测: {count[0]}/{total} | 有效: {len(active_proxies)}')
         if local_count > 0:
             with lock:
                 count[0] += local_count
-                active_proxies_len_ref[0] += local_active
+                active_proxies.extend(local_active)
 
+    # ── 阶段一：多线程筛选 ──
     logger.info(f'  🔍 正在筛选代理 ({total} 个，使用 {effective_thread_num} 线程，超时 {timeout}秒)...')
     start_filter = datetime.now()
-    
-    # 启动筛选线程
+
     thread_proxy_num = max(1, total // effective_thread_num)
     filter_threads = []
     for i in range(effective_thread_num):
@@ -485,52 +455,33 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
         t = threading.Thread(target=filter_worker, args=(total_proxies[start:end],))
         t.start()
         filter_threads.append(t)
-    
-    # 同时开始点击，边筛选边点击
-    logger.info(f'  👆 开始边筛选边点击...')
-    start_click = datetime.now()
-    clicks = 0
-    batch_count = 0
-    current_batch = []
-    
-    # 等待筛选完成
-    while not filter_done.is_set():
-        try:
-            proxy = proxy_queue.get(timeout=0.5)
-            current_batch.append(proxy)
-            
-            if len(current_batch) >= batch_size:
-                batch_count += 1
-                c = click_batch(current_batch, info, bv, max_workers=effective_thread_num)
-                clicks += c
-                
-                if batch_count % 5 == 0:
-                    logger.info(f'    📊 已完成 {batch_count} 批 | 累计成功: {clicks}')
-                current_batch = []
-                
-                if request_delay > 0:
-                    sleep(request_delay)
-        except queue.Empty:
-            pass
-        
-        if all(not t.is_alive() for t in filter_threads):
-            filter_done.set()
-    
-    # 处理剩余的代理
-    while not proxy_queue.empty():
-        current_batch.append(proxy_queue.get())
-    
-    if current_batch:
-        batch_count += 1
-        c = click_batch(current_batch, info, bv, max_workers=effective_thread_num)
-        clicks += c
-    
+
     for t in filter_threads:
         t.join()
-    
+
     filter_cost = int((datetime.now() - start_filter).total_seconds())
+    logger.info(f'  ✅ 筛选完成: 有效代理 {len(active_proxies)}/{total} | 耗时: {time_fmt(filter_cost)}')
+
+    if not active_proxies:
+        logger.info(f'  ⚠️ 没有可用代理，跳过')
+        return 0
+
+    # ── 阶段二：逐个点击（单线程，原始 viewcount 方式，最稳定） ──
+    logger.info(f'  👆 开始点击 ({len(active_proxies)} 个有效代理)...')
+    start_click = datetime.now()
+    clicks = 0
+
+    for idx, proxy in enumerate(active_proxies):
+        if stop_event and stop_event.is_set():
+            break
+        if click_once(proxy, info, bv):
+            clicks += 1
+        # 每完成一批输出一次进度
+        if (idx + 1) % batch_size == 0:
+            logger.info(f'    📊 已点击 {idx + 1}/{len(active_proxies)} | 成功: {clicks}')
+
     click_cost = int((datetime.now() - start_click).total_seconds())
-    logger.info(f'  ✅ 完成: {clicks} 次成功 | 有效代理: {len(active_proxies)}/{total} | 筛选耗时: {time_fmt(filter_cost)} | 点击耗时: {time_fmt(click_cost)}')
+    logger.info(f'  ✅ 完成: {clicks} 次成功 | 有效代理: {len(active_proxies)}/{total} | 筛选: {time_fmt(filter_cost)} | 点击: {time_fmt(click_cost)}')
 
     return clicks
 
