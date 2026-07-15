@@ -48,7 +48,7 @@ if not logger.handlers:
     logger.addHandler(_handler)
     logger.setLevel(logging.INFO)
 
-timeout = 3
+timeout = 1.5
 thread_num = 30
 batch_size = 30
 request_delay = 0.01
@@ -307,7 +307,8 @@ def fetch_video_info(video_id: str) -> dict:
     return data
 
 
-def get_total_proxies(stop_event=None) -> list[str]:
+def get_total_proxies(stop_event=None, max_total: int = 2000) -> list[str]:
+    """获取代理列表，总量上限 max_total（默认2000，够用且不会筛选太久）"""
     fetchers = [
         ('checkerproxy', fetch_from_checkerproxy),
         ('89ip', fetch_from_89ip),
@@ -336,9 +337,18 @@ def get_total_proxies(stop_event=None) -> list[str]:
             continue
         for proxy in proxies:
             all_proxies.add(proxy)
+        # 收集够了就提前退出，不再浪费时间请求更多源
+        if len(all_proxies) >= max_total:
+            logger.info(f'已收集 {len(all_proxies)} 个代理（达到上限 {max_total}），跳过剩余源')
+            break
     if all_proxies:
-        logger.info(f'collected {len(all_proxies)} proxies from available sources')
-        return list(all_proxies)
+        result = list(all_proxies)
+        # 超过上限时随机采样
+        if len(result) > max_total:
+            random.shuffle(result)
+            result = result[:max_total]
+        logger.info(f'共收集 {len(result)} 个代理')
+        return result
     raise RuntimeError('failed to fetch proxies from all sources')
 
 
