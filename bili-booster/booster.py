@@ -56,8 +56,12 @@ request_delay = 0.01
 per_video_boost = 80
 _max_concurrent_requests = 20  # 全局并发请求上限，每个请求都有SSL握手，太高会吃满CPU
 
-# 全局信号量，限制同时进行的网络请求数（筛选+点击共享）
-_net_semaphore = threading.Semaphore(_max_concurrent_requests)
+# 全局信号量，挂在 threading 模块上实现进程级单例
+# 因为 app.py 每次启动任务都会 importlib 重新加载本模块，模块级变量会被重置
+# 用 threading 模块属性可以跨模块重载共享同一个信号量
+if not hasattr(threading, '_bili_booster_semaphore'):
+    threading._bili_booster_semaphore = threading.Semaphore(_max_concurrent_requests)
+_net_semaphore = threading._bili_booster_semaphore
 
 
 def fetch_from_checkerproxy(min_count: int = 100, max_lookback_days: int = 7) -> list[str]:
