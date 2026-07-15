@@ -50,11 +50,11 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 timeout = 3
-thread_num = 30
-batch_size = 30
-request_delay = 0.01
+thread_num = 10
+batch_size = 10
+request_delay = 0.05
 per_video_boost = 80
-_max_concurrent_requests = 20  # 全局并发请求上限，每个请求都有SSL握手，太高会吃满CPU
+_max_concurrent_requests = 8  # 全局并发请求上限，每个请求都有SSL握手，太高会吃满CPU
 
 # 全局信号量，挂在 threading 模块上实现进程级单例
 # 因为 app.py 每次启动任务都会 importlib 重新加载本模块，模块级变量会被重置
@@ -404,8 +404,8 @@ def click_batch(proxies: 'list[str]', info: dict, bv: str, max_workers: int = No
     success = [0]
     lock = threading.Lock()
     worker_count = max_workers if max_workers else batch_size
-    # 点击线程数取筛选的1/2，与筛选共享全局信号量
-    worker_count = max(3, worker_count // 2)
+    # 点击线程数取筛选的1/3，与筛选共享全局信号量
+    worker_count = max(2, worker_count // 3)
 
     def worker(proxy: str) -> None:
         if click_once(proxy, info, bv):
@@ -450,6 +450,8 @@ def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, st
                 proxy_queue.put(proxy)
                 local_active += 1
             local_count += 1
+            # 每次请求后短暂等待，降低CPU压力
+            sleep(0.02)
             # 每检查 20 个代理才同步一次，大幅减少锁竞争
             if local_count % 20 == 0:
                 with lock:
@@ -623,9 +625,9 @@ def main(bv_input, target_input, stop_event=None, log_fn=None):
         # 使用线程池并发处理多个视频
         # 计算每个视频可用的线程数，避免总线程数过多导致系统卡死
         num_pending = len(pending)
-        # 外层最多同时处理 3 个视频，避免线程数叠加
-        max_concurrent_videos = min(num_pending, 3)
-        threads_per_video = max(10, thread_num // max(num_pending, 1))  # 每个视频至少 10 线程
+        # 外层最多同时处理 2 个视频，避免线程数叠加
+        max_concurrent_videos = min(num_pending, 2)
+        threads_per_video = max(5, thread_num // max(num_pending, 1))  # 每个视频至少 5 线程
 
         def boost_single_video(v, idx):
             """并发提升单个视频"""
