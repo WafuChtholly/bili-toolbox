@@ -50,11 +50,11 @@ if not logger.handlers:
     logger.setLevel(logging.INFO)
 
 timeout = 3
-thread_num = 50
-batch_size = 50
+thread_num = 30
+batch_size = 30
 request_delay = 0.01
 per_video_boost = 80
-_max_concurrent_requests = 80  # 全局并发请求上限，防止线程爆炸
+_max_concurrent_requests = 20  # 全局并发请求上限，每个请求都有SSL握手，太高会吃满CPU
 
 # 全局信号量，限制同时进行的网络请求数（筛选+点击共享）
 _net_semaphore = threading.Semaphore(_max_concurrent_requests)
@@ -396,24 +396,12 @@ def click_once(proxy: str, info: dict, bv: str) -> bool:
 
 
 def click_batch(proxies: 'list[str]', info: dict, bv: str, max_workers: int = None) -> int:
-    """批量点击，使用线程池限制并发数"""
-    success = [0]
-    lock = threading.Lock()
-    # 使用传入的线程数限制，或默认使用 batch_size
-    # 点击与筛选共享全局信号量，因此点击线程数取筛选的 1/3 即可
-    worker_count = max_workers if max_workers else batch_size
-    worker_count = max(5, worker_count // 3)
-
-    def worker(proxy: str) -> None:
+    """批量点击，单线程顺序执行（与原始viewcount-booster一致，避免多线程吃满CPU）"""
+    success = 0
+    for proxy in proxies:
         if click_once(proxy, info, bv):
-            with lock:
-                success[0] += 1
-
-    # 使用线程池而不是为每个代理创建独立线程
-    with ThreadPoolExecutor(max_workers=min(worker_count, len(proxies))) as executor:
-        executor.map(worker, proxies)
-
-    return success[0]
+            success += 1
+    return success
 
 
 def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, stop_event=None, max_threads: int = None) -> int:
