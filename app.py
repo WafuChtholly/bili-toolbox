@@ -24,7 +24,7 @@ from flask import Flask, jsonify, render_template, request
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent
 # 注意：bili-booster 目录不能直接加到 sys.path，否则其 app.py 会与本文件冲突
-# booster 模块在需要时通过 importlib 动态加载
+# booster 模块在启动时通过 importlib 一次性加载（见 booster 章节）
 sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
 
@@ -47,7 +47,7 @@ def _append_log(task_id: str, line: str):
 
 def _get_log(task_id: str) -> str:
     with log_lock:
-        return "\n".join(log_buffers.get(task_id, []))
+        return "\n".join(line.rstrip('\n') for line in log_buffers.get(task_id, []))
 
 
 class TaskLogHandler(logging.Handler):
@@ -691,8 +691,18 @@ def auto_history_stop():
 #  三、B站播放量提升 (bili-booster)
 # =========================================================================
 
+# 启动时一次性加载 booster 模块，避免每次任务都 importlib 重载（非常慢）
+import importlib.util as _ilu
+_booster_spec = _ilu.spec_from_file_location("booster", str(ROOT / "bili-booster" / "booster.py"))
+booster = _ilu.module_from_spec(_booster_spec)
+_booster_spec.loader.exec_module(booster)
+
 booster_tasks = {}
 booster_lock = threading.Lock()
+
+# ── 并发任务限流（与 webui 一致：最多同时跑 max_concurrent_boost_tasks 个任务，其余排队） ──
+max_concurrent_boost_tasks = 3
+_booster_semaphore = threading.Semaphore(max_concurrent_boost_tasks)
 
 # ── Webhook（活动助手推送） ──
 booster_webhook_enabled = False
@@ -767,30 +777,78 @@ def booster_webhook_poll():
 
 
 def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None):
-    with booster_lock:
-        booster_tasks[task_id]["status"] = "running"
-
-    # 通过 log_fn 回调直接写入 task buffer，不再重定向 sys.stdout
-    def log_fn(msg: str):
-        _append_log(task_id, f"[BOOSTER] {msg}")
-
+    # 等待信号量：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
+    _booster_semaphore.acquire()
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("booster", str(ROOT / "bili-booster" / "booster.py"))
-        booster = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(booster)
+        # 排队期间可能已被取消（stop 端点会设为 stopping）
+        with booster_lock:
+            if booster_tasks[task_id]["status"] in ("cancelled", "stopping"):
+                booster_tasks[task_id]["status"] = "cancelled"
+                booster_tasks[task_id]["end"] = time.time()
+                return
+            booster_tasks[task_id]["status"] = "running"
 
-        bv_input = ",".join(bv_list)
-        booster.main(bv_input, str(target), stop_event=stop_event, log_fn=log_fn)
-        with booster_lock:
-            booster_tasks[task_id]["status"] = "completed"
-    except Exception as e:
-        _append_log(task_id, f"[ERROR] {e}")
-        with booster_lock:
-            booster_tasks[task_id]["status"] = "error"
+        # sys.stdout 重定向捕获 booster 的 print() 输出（与 webui 完全一致）
+        class _CaptureOutput:
+            def __init__(self):
+                self.original_stdout = sys.stdout
+                self._buffer = ""
+            def _append_line(self, line):
+                with booster_lock:
+                    if booster_tasks.get(task_id, {}).get("status") == "cancelled":
+                        return
+                    buf = log_buffers.get(task_id)
+                    if buf is not None:
+                        buf.append(f'[BOOSTER] {line}\n')
+            def _replace_last_line(self, line):
+                with booster_lock:
+                    if booster_tasks.get(task_id, {}).get("status") == "cancelled":
+                        return
+                    buf = log_buffers.get(task_id)
+                    if buf is not None:
+                        text = ''.join(buf)
+                        lines = text.splitlines()
+                        if lines:
+                            lines[-1] = f'[BOOSTER] {line}'
+                        else:
+                            lines = [f'[BOOSTER] {line}']
+                        buf.clear()
+                        buf.append('\n'.join(lines) + '\n')
+            def write(self, s):
+                self.original_stdout.write(s)
+                self._buffer += s
+                if '\r' in self._buffer:
+                    # booster 用 \r 覆盖同一行更新进度，保持终端行为
+                    line = self._buffer.replace('\r', '').rstrip('\n')
+                    self._buffer = ""
+                    self._replace_last_line(line)
+                elif '\n' in self._buffer:
+                    parts = self._buffer.split('\n')
+                    self._buffer = parts[-1]
+                    for part in parts[:-1]:
+                        self._append_line(part)
+            def flush(self):
+                self.original_stdout.flush()
+
+        capture = _CaptureOutput()
+        sys.stdout = capture
+        try:
+            bv_input = ",".join(bv_list)
+            booster.main(bv_input, str(target), stop_event=stop_event)
+            with booster_lock:
+                if booster_tasks[task_id]["status"] != "cancelled":
+                    booster_tasks[task_id]["status"] = "completed"
+        except Exception as e:
+            with booster_lock:
+                log_buffers.get(task_id, []).append(f"\n[ERROR] {e}\n")
+            with booster_lock:
+                booster_tasks[task_id]["status"] = "error"
+        finally:
+            sys.stdout = capture.original_stdout
     finally:
         with booster_lock:
             booster_tasks[task_id]["end"] = time.time()
+        _booster_semaphore.release()
 
 
 @app.route("/api/booster/run", methods=["POST"])

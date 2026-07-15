@@ -1,51 +1,40 @@
-"""
-B站播放量提升 — 核心模块
-完全基于 bili-booster-webui 逻辑，仅增加 stop_event 支持任务取消。
-输出使用 print()，由 app.py 端 sys.stdout 重定向捕获。"""
 import sys
 import threading
 import random
 import hashlib
 import time as time_module
 from time import sleep
+from typing import Optional
 from datetime import date, datetime, timedelta
 
 import requests
 from requests.exceptions import RequestException
 from fake_useragent import UserAgent
 
-# ── 全局配置（与 webui 完全一致） ──
 timeout = 5
-thread_num = 100
+thread_num = 200
 batch_size = 200
 request_delay = 0.01
 per_video_boost = 80
 
-# ── 全局 UserAgent 实例 ──
-_ua_instance = UserAgent()
 
-
-# =========================================================================
-#  一、代理源（与 webui 完全一致）
-# =========================================================================
-
-def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7):
+def fetch_from_checkerproxy(min_count: int = 100, max_lookback_days: int = 7) -> list[str]:
     day = date.today()
     for _ in range(max_lookback_days):
         day = day - timedelta(days=1)
         proxy_url = f'https://api.checkerproxy.net/v1/landing/archive/{day.strftime("%Y-%m-%d")}'
-        log(f'getting proxies from {proxy_url} ...')
+        print(f'getting proxies from {proxy_url} ...')
         try:
             response = requests.get(proxy_url, timeout=timeout)
             response.raise_for_status()
         except RequestException as err:
-            log(f'checkerproxy unavailable: {err}')
+            print(f'checkerproxy unavailable: {err}')
             continue
 
         data = response.json()
         data_obj = data.get('data')
         if not data_obj:
-            log(f'checkerproxy has no data for {day.strftime("%Y-%m-%d")}')
+            print(f'checkerproxy has no data for {day.strftime("%Y-%m-%d")}')
             continue
 
         proxies_obj = data_obj.get('proxyList')
@@ -54,17 +43,17 @@ def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7):
         elif isinstance(proxies_obj, dict):
             total_proxies = [proxy for proxy in proxies_obj.values() if proxy]
         else:
-            log(f'unexpected checkerproxy proxyList type: {type(proxies_obj)}')
+            print(f'unexpected checkerproxy proxyList type: {type(proxies_obj)}')
             continue
 
         if len(total_proxies) >= min_count:
-            log(f'successfully get {len(total_proxies)} proxies from checkerproxy')
+            print(f'successfully get {len(total_proxies)} proxies from checkerproxy')
             return total_proxies
-        log(f'only have {len(total_proxies)} proxies from checkerproxy')
+        print(f'only have {len(total_proxies)} proxies from checkerproxy')
     return []
 
 
-def fetch_from_geonode(log, limit=500):
+def fetch_from_geonode(limit: int = 500) -> list[str]:
     proxy_url = 'https://proxylist.geonode.com/api/proxy-list'
     params = {
         'limit': limit,
@@ -73,73 +62,73 @@ def fetch_from_geonode(log, limit=500):
         'sort_type': 'desc',
         'protocols': 'http',
     }
-    log(f'getting proxies from {proxy_url} ...')
+    print(f'getting proxies from {proxy_url} ...')
     response = requests.get(proxy_url, params=params, timeout=timeout + 2)
     response.raise_for_status()
     data = response.json().get('data', [])
     proxies = [f"{item['ip']}:{item['port']}" for item in data if item.get('ip') and item.get('port')]
-    log(f'successfully get {len(proxies)} proxies from geonode')
+    print(f'successfully get {len(proxies)} proxies from geonode')
     return proxies
 
 
-def fetch_plaintext_proxy_list(log, url, label, req_timeout=15):
-    log(f'getting proxies from {url} ...')
+def fetch_plaintext_proxy_list(url: str, label: str, req_timeout: int = 15) -> list[str]:
+    print(f'getting proxies from {url} ...')
     try:
         response = requests.get(url, timeout=req_timeout)
         response.raise_for_status()
         proxies = [line.strip() for line in response.text.splitlines() if line.strip() and ':' in line]
-        log(f'successfully get {len(proxies)} proxies from {label}')
+        print(f'successfully get {len(proxies)} proxies from {label}')
         return proxies
     except Exception as err:
-        log(f'{label} failed: {err}')
+        print(f'{label} failed: {err}')
         return []
 
 
-def fetch_from_shiftytr(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_shiftytr() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
         'ShiftyTR GitHub list', 15)
 
 
-def fetch_from_roosterkid(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_roosterkid() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt',
         'roosterkid GitHub list', 15)
 
 
-def fetch_from_mmpx12(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_mmpx12() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt',
         'mmpx12 GitHub list', 15)
 
 
-def fetch_from_monosans(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_monosans() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
         'monosans GitHub list', 8)
 
 
-def fetch_from_clarketm(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_clarketm() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
         'clarketm GitHub list', 8)
 
 
-def fetch_from_proxy4parsing(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_proxy4parsing() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt',
         'proxy4parsing GitHub list', 8)
 
 
-def fetch_from_zevtyardt(log):
-    return fetch_plaintext_proxy_list(log,
+def fetch_from_zevtyardt() -> list[str]:
+    return fetch_plaintext_proxy_list(
         'https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt',
         'zevtyardt GitHub list', 8)
 
 
-def fetch_from_scdnio(log, max_count=100):
+def fetch_from_scdnio(max_count: int = 100) -> list[str]:
     proxy_url = 'https://proxy.scdn.io/api/get_proxy.php'
-    all_proxies = []
+    all_proxies: list[str] = []
     calls_needed = (max_count + 19) // 20
     for i in range(calls_needed):
         params = {'protocol': 'http', 'count': 20}
@@ -151,19 +140,19 @@ def fetch_from_scdnio(log, max_count=100):
             for p in proxies:
                 if p and ':' in p:
                     all_proxies.append(p)
-            log(f'  scdnio call {i+1}/{calls_needed}: got {len(proxies)} proxies')
+            print(f'  scdnio call {i+1}/{calls_needed}: got {len(proxies)} proxies')
         except Exception as err:
-            log(f'  scdnio call {i+1} failed: {err}')
+            print(f'  scdnio call {i+1} failed: {err}')
             break
         if i < calls_needed - 1:
             sleep(0.5)
-    log(f'successfully get {len(all_proxies)} proxies from scdnio')
+    print(f'successfully get {len(all_proxies)} proxies from scdnio')
     return all_proxies
 
 
-def fetch_from_89ip(log):
+def fetch_from_89ip() -> list[str]:
     proxy_url = 'http://api.89ip.cn/tqdl.html?api=1&num=9999'
-    log(f'getting proxies from {proxy_url} ...')
+    print(f'getting proxies from {proxy_url} ...')
     response = requests.get(proxy_url, timeout=timeout + 5)
     response.raise_for_status()
     text = response.text
@@ -173,18 +162,18 @@ def fetch_from_89ip(log):
         line = part.strip()
         if line and ':' in line and not line.startswith('<'):
             proxies.append(line)
-    log(f'successfully get {len(proxies)} proxies from 89ip')
+    print(f'successfully get {len(proxies)} proxies from 89ip')
     return proxies
 
 
-def fetch_from_zdopen(log):
+def fetch_from_zdopen() -> list[str]:
     base_url = 'http://www.zdopen.com/FreeProxy/Get/'
     params = {
         'app_id': '202605261442027753',
         'akey': '41ef99a09ee6b0ca',
         'return_type': 3,
     }
-    all_proxies = []
+    all_proxies: list[str] = []
     for dalu in (0, 1):
         try:
             response = requests.get(base_url, params={**params, 'dalu': dalu}, timeout=timeout + 5)
@@ -196,20 +185,16 @@ def fetch_from_zdopen(log):
                 port = item.get('port')
                 if ip and port:
                     all_proxies.append(f'{ip}:{port}')
-            log(f'  zdopen dalu={dalu}: got {len(proxy_list)} proxies')
+            print(f'  zdopen dalu={dalu}: got {len(proxy_list)} proxies')
         except Exception as err:
-            log(f'  zdopen dalu={dalu} failed: {err}')
+            print(f'  zdopen dalu={dalu} failed: {err}')
         if dalu == 0:
             sleep(3)
-    log(f'successfully get {len(all_proxies)} proxies from zdopen')
+    print(f'successfully get {len(all_proxies)} proxies from zdopen')
     return all_proxies
 
 
-# =========================================================================
-#  二、工具函数（与 webui 完全一致）
-# =========================================================================
-
-def build_view_params(video_id):
+def build_view_params(video_id: str) -> dict[str, str]:
     normalized = video_id.strip()
     if not normalized:
         raise ValueError('video id is empty')
@@ -224,20 +209,20 @@ def build_view_params(video_id):
     return {'bvid': normalized}
 
 
-def generate_buvid3():
+def generate_buvid3() -> str:
     rand_str = f'{random.random()}{time_module.time()}'
     digest = hashlib.md5(rand_str.encode()).hexdigest()
     return f'{digest[:8]}-{digest[8:12]}infoc'
 
 
-def generate_buvid4():
+def generate_buvid4() -> str:
     ts = int(time_module.time() * 1000)
     rand_str = f'{random.randint(0, 99999)}{ts}{random.random()}'
     digest = hashlib.md5(rand_str.encode()).hexdigest()
     return f'{ts}-{digest[:32]}'
 
 
-def build_click_headers(ua, bv, cookies):
+def build_click_headers(ua: str, bv: str, cookies: str) -> dict[str, str]:
     return {
         'User-Agent': ua,
         'Referer': f'https://www.bilibili.com/video/{bv}/',
@@ -251,19 +236,19 @@ def build_click_headers(ua, bv, cookies):
     }
 
 
-def build_random_cookies():
+def build_random_cookies() -> str:
     buvid3 = generate_buvid3()
     buvid4 = generate_buvid4()
     b_nut = str(int(time_module.time()))
     return f'buvid3={buvid3}; buvid4={buvid4}; b_nut={b_nut}; i-wanna-go-back=-1; header_theme_version=BMD25032713'
 
 
-def fetch_video_info(video_id):
+def fetch_video_info(video_id: str) -> dict:
     params = build_view_params(video_id)
     response = requests.get(
         'https://api.bilibili.com/x/web-interface/view',
         params=params,
-        headers={'User-Agent': _ua_instance.random},
+        headers={'User-Agent': UserAgent().random},
         timeout=timeout + 2
     )
     response.raise_for_status()
@@ -277,7 +262,7 @@ def fetch_video_info(video_id):
     return data
 
 
-def get_total_proxies(log, stop_event=None):
+def get_total_proxies() -> list[str]:
     fetchers = [
         ('checkerproxy', fetch_from_checkerproxy),
         ('89ip', fetch_from_89ip),
@@ -292,62 +277,40 @@ def get_total_proxies(log, stop_event=None):
         ('clarketm', fetch_from_clarketm),
         ('geonode', fetch_from_geonode),
     ]
-    all_proxies = set()
+    all_proxies: set[str] = set()
     for name, fetcher in fetchers:
-        if stop_event and stop_event.is_set():
-            return []
         try:
-            proxies = fetcher(log)
+            proxies = fetcher()
         except RequestException as err:
-            log(f'{name} source failed: {err}')
+            print(f'{name} source failed: {err}')
             continue
         except Exception as err:
-            log(f'{name} source error: {err}')
+            print(f'{name} source error: {err}')
             continue
         for proxy in proxies:
             all_proxies.add(proxy)
     if all_proxies:
-        log(f'collected {len(all_proxies)} proxies from available sources')
+        print(f'collected {len(all_proxies)} proxies from available sources')
         return list(all_proxies)
     raise RuntimeError('failed to fetch proxies from all sources')
 
 
-def time_fmt(seconds):
+def time_fmt(seconds: int) -> str:
     if seconds < 60:
         return f'{seconds}s'
     else:
         return f'{int(seconds / 60)}min {seconds % 60}s'
 
 
-def pbar(n, total):
-    progress = '\u2501' * int(n / total * 50)
+def pbar(n: int, total: int) -> str:
+    progress = '━' * int(n / total * 50)
     blank = ' ' * (50 - len(progress))
     return f'\r{n}/{total} {progress}{blank}'
 
 
-# =========================================================================
-#  三、核心：筛选 + 点击（与 webui 完全一致）
-# =========================================================================
-
-def probe_once(proxy, bv):
-    """轻量探测：GET 请求验证代理可用，不触发播放量。使用 HTTP 避免 HTTPS 隧道的高 CPU 开销。"""
+def click_once(proxy: str, info: dict, bv: str) -> bool:
     try:
-        resp = requests.get(
-            'http://api.bilibili.com/x/web-interface/view',
-            params={'bvid': bv},
-            proxies={'http': f'http://{proxy}'},
-            headers={'User-Agent': _ua_instance.random},
-            timeout=timeout,
-            allow_redirects=False)
-        return resp.status_code in (200, 301, 302, 307, 308)
-    except:
-        return False
-
-
-def click_once(proxy, info, bv):
-    """发送一次播放点击请求。"""
-    try:
-        ua = _ua_instance.random
+        ua = UserAgent().random
         cookies = build_random_cookies()
         resp = requests.post('http://api.bilibili.com/x/click-interface/click/web/h5',
                              proxies={'http': f'http://{proxy}'},
@@ -368,22 +331,17 @@ def click_once(proxy, info, bv):
         return False
 
 
-def click_batch(proxies, info, bv, stop_event=None):
-    """批量并发点击（webui 原始逻辑）。"""
+def click_batch(proxies: 'list[str]', info: dict, bv: str) -> int:
     success = [0]
     lock = threading.Lock()
 
-    def worker(proxy):
-        if stop_event and stop_event.is_set():
-            return
+    def worker(proxy: str) -> None:
         if click_once(proxy, info, bv):
             with lock:
                 success[0] += 1
 
     threads = []
     for proxy in proxies:
-        if stop_event and stop_event.is_set():
-            break
         t = threading.Thread(target=worker, args=(proxy,))
         t.start()
         threads.append(t)
@@ -393,8 +351,7 @@ def click_batch(proxies, info, bv, stop_event=None):
     return success[0]
 
 
-def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
-    """对单个视频执行一轮筛选+点击（webui 原始逻辑）。"""
+def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int) -> int:
     bv = video['bvid']
     info = video['info']
 
@@ -403,19 +360,15 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
     active_proxies = []
     count = [0]
 
-    def filter_worker(proxies):
-        total = len(total_proxies)
+    def filter_worker(proxies: 'list[str]') -> None:
         for proxy in proxies:
-            if stop_event and stop_event.is_set():
-                return
-            if probe_once(proxy, bv):
+            if click_once(proxy, info, bv):
                 active_proxies.append(proxy)
             count[0] += 1
             n = count[0]
-            if n % 50 == 0 or n == total:
-                print(f'{pbar(n, total)} {100*n/total:.1f}% [valid: {len(active_proxies)}]   ', end='')
+            print(f'{pbar(n, len(total_proxies))} {100*n/len(total_proxies):.1f}% [valid: {len(active_proxies)}]   ', end='')
 
-    log(f'  filtering {len(total_proxies)} proxies for {bv}...')
+    print(f'  filtering {len(total_proxies)} proxies for {bv}...')
     start_filter = datetime.now()
     thread_proxy_num = len(total_proxies) // thread_num
     threads = []
@@ -428,51 +381,40 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
     for t in threads:
         t.join()
     filter_cost = int((datetime.now() - start_filter).total_seconds())
-    log(f'\n  filtered {len(active_proxies)} valid proxies using {time_fmt(filter_cost)}')
+    print(f'\n  filtered {len(active_proxies)} valid proxies using {time_fmt(filter_cost)}')
 
     if not active_proxies:
-        log('  no valid proxies, skipping')
+        print('  no valid proxies, skipping')
         return 0
 
-    log(f'  sending clicks for {bv}...')
+    print(f'  sending clicks for {bv}...')
     start_click = datetime.now()
     clicks = 0
     for i in range(0, len(active_proxies), batch_size):
-        if stop_event and stop_event.is_set():
-            break
         chunk = active_proxies[i:i + batch_size]
-        c = click_batch(chunk, info, bv, stop_event=stop_event)
+        c = click_batch(chunk, info, bv)
         clicks += c
-        log(f'    chunk {i//batch_size + 1}/{(len(active_proxies)-1)//batch_size + 1}: {c}/{len(chunk)} success')
+        print(f'    chunk {i//batch_size + 1}/{(len(active_proxies)-1)//batch_size + 1}: {c}/{len(chunk)} success')
         if request_delay > 0:
             sleep(request_delay)
     click_cost = int((datetime.now() - start_click).total_seconds())
-    log(f'  done: {clicks} clicks in {time_fmt(click_cost)}')
+    print(f'  done: {clicks} clicks in {time_fmt(click_cost)}')
 
     return clicks
 
 
-# =========================================================================
-#  四、主入口（webui 原始循环 + log_fn / stop_event / logger_name）
-# =========================================================================
-
-def main(bv_input, target_input, stop_event=None):
-    """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。"""
-    log = print
-
+def main(bv_input, target_input):
     bv_list = [bv.strip() for bv in bv_input.split(',') if bv.strip()]
     if not bv_list:
-        log('no valid video ids provided')
-        return
+        print('no valid video ids provided')
+        sys.exit(1)
 
     target = int(target_input)
 
     videos = []
+    print()
     for raw_bv in bv_list:
-        if stop_event and stop_event.is_set():
-            log('stopped by user')
-            return
-        log(f'fetching info for {raw_bv}...')
+        print(f'fetching info for {raw_bv}...')
         try:
             info = fetch_video_info(raw_bv)
             videos.append({
@@ -482,23 +424,19 @@ def main(bv_input, target_input, stop_event=None):
                 'current': info['stat']['view'],
                 'total_hits': 0,
             })
-            log(f'  {info["bvid"]}: initial views = {info["stat"]["view"]}')
+            print(f'  {info["bvid"]}: initial views = {info["stat"]["view"]}')
         except Exception as e:
-            log(f'  failed: {e}')
+            print(f'  failed: {e}')
 
     if not videos:
-        log('no videos available, exiting')
-        return
+        print('no videos available, exiting')
+        sys.exit(1)
 
     round_num = 0
     max_rounds = 5
     no_growth_streak = 0
 
     while True:
-        if stop_event and stop_event.is_set():
-            log('stopped by user')
-            break
-
         all_done = True
         for v in videos:
             if v['current'] < target:
@@ -509,42 +447,36 @@ def main(bv_input, target_input, stop_event=None):
 
         round_num += 1
         if round_num > max_rounds:
-            log(f'\nmax rounds ({max_rounds}) reached, stopping')
+            print(f'\nmax rounds ({max_rounds}) reached, stopping')
             break
 
         # snapshot views before this round
         views_before = {v['bvid']: v['current'] for v in videos}
 
-        log(f'\n========== ROUND {round_num}/{max_rounds} ==========')
+        print(f'\n========== ROUND {round_num}/{max_rounds} ==========')
 
         try:
-            total_proxies = get_total_proxies(log, stop_event=stop_event)
+            total_proxies = get_total_proxies()
         except Exception as e:
-            log(f'failed to fetch proxies: {e}')
+            print(f'failed to fetch proxies: {e}')
             sleep(5)
             continue
 
-        if not total_proxies:
-            log('代理列表为空，跳过本轮')
-            continue
-
         for v in videos:
-            if stop_event and stop_event.is_set():
-                break
             if v['current'] >= target:
-                log(f'\n  {v["bvid"]} already at target ({v["current"]}), skipping')
+                print(f'\n  {v["bvid"]} already at target ({v["current"]}), skipping')
                 continue
 
-            log(f'\n--- boosting {v["bvid"]} (current: {v["current"]}, target: {target}) ---')
-            hits = boost_video_once(v, total_proxies, round_num, log, stop_event=stop_event)
+            print(f'\n--- boosting {v["bvid"]} (current: {v["current"]}, target: {target}) ---')
+            hits = boost_video_once(v, total_proxies, round_num)
             v['total_hits'] += hits
 
             try:
                 fresh = fetch_video_info(v['bvid'])
                 v['current'] = fresh['stat']['view']
-                log(f'  {v["bvid"]} views: {v["current"]} (+{v["current"] - v["initial"]})')
+                print(f'  {v["bvid"]} views: {v["current"]} (+{v["current"] - v["initial"]})')
             except Exception as e:
-                log(f'  failed to check views: {e}')
+                print(f'  failed to check views: {e}')
 
             sleep(random.uniform(1, 3))
 
@@ -559,19 +491,19 @@ def main(bv_input, target_input, stop_event=None):
             no_growth_streak = 0
         else:
             no_growth_streak += 1
-            log(f'\n  warning: no views growth in this round (streak: {no_growth_streak})')
+            print(f'\n  warning: no views growth in this round (streak: {no_growth_streak})')
             if no_growth_streak >= 2:
-                log(f'  no growth for {no_growth_streak} consecutive rounds, stopping')
+                print(f'  no growth for {no_growth_streak} consecutive rounds, stopping')
                 break
 
-        log(f'\n========== ROUND {round_num} SUMMARY ==========')
+        print(f'\n========== ROUND {round_num} SUMMARY ==========')
         for v in videos:
-            log(f'  {v["bvid"]}: {v["current"]} (+{v["current"] - v["initial"]}) | hits: {v["total_hits"]}')
+            print(f'  {v["bvid"]}: {v["current"]} (+{v["current"] - v["initial"]}) | hits: {v["total_hits"]}')
 
-    log(f'\nFinish at {datetime.now().strftime("%H:%M:%S")}')
-    log(f'Final Statistics:')
+    print(f'\nFinish at {datetime.now().strftime("%H:%M:%S")}')
+    print(f'Final Statistics:')
     for v in videos:
-        log(f'  {v["bvid"]}: {v["initial"]} -> {v["current"]} (+{v["current"] - v["initial"]}) | total hits: {v["total_hits"]}')
+        print(f'  {v["bvid"]}: {v["initial"]} -> {v["current"]} (+{v["current"] - v["initial"]}) | total hits: {v["total_hits"]}')
 
 
 if __name__ == '__main__':

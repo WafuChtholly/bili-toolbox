@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bilibili Booster WebUI</title>
+    <style>
+        :root {
+            --primary-color: #fb7299;
+            --primary-hover: #f85989;
+            --secondary-color: #23ade5;
+            --bg-color: #f4f5f7;
+            --card-bg: #ffffff;
+            --text-color: #18191c;
+            --text-secondary: #61666d;
+            --border-color: #e3e5e7;
+            --success-color: #00b578;
+            --danger-color: #f25d8e;
+            --warning-color: #ff6699;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            color: var(--text-color);
+            background: linear-gradient(135deg, #fdfbfb 0%, #f4f5f7 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .page-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .page-header h1 {
+            font-size: 28px;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .page-header p {
+            color: var(--text-secondary);
+            font-size: 15px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+            overflow: hidden;
+            transition: box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 16px 24px;
+            font-weight: 600;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 500;
+            color: var(--text-color);
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .form-control {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid var(--border-color);
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            background: #fafafa;
+        }
+
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            background: white;
+            box-shadow: 0 0 0 4px rgba(251, 114, 153, 0.1);
+        }
+
+        .form-control::placeholder {
+            color: #aab2bd;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            width: 100%;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(251, 114, 153, 0.35);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .btn-outline {
+            background: white;
+            color: var(--primary-color);
+            border: 2px solid var(--primary-color);
+        }
+
+        .btn-outline:hover {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #e8487a;
+        }
+
+        .btn-light {
+            background: #f0f1f3;
+            color: var(--text-color);
+        }
+
+        .btn-light:hover {
+            background: #e3e5e7;
+        }
+
+        .btn-sm {
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        .task-item {
+            background: #fafafa;
+            border: 2px solid transparent;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .task-item:hover {
+            background: white;
+            border-color: var(--primary-color);
+            transform: translateX(4px);
+            box-shadow: 0 4px 12px rgba(251, 114, 153, 0.15);
+        }
+
+        .task-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .task-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-item-title {
+            font-weight: 600;
+            color: var(--text-color);
+            margin-bottom: 4px;
+        }
+
+        .task-item-info {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .badge-secondary {
+            background: #e3e5e7;
+            color: #61666d;
+        }
+
+        .badge-info {
+            background: linear-gradient(135deg, #23ade5, #1e9bc9);
+            color: white;
+        }
+
+        .badge-success {
+            background: linear-gradient(135deg, #00b578, #00a06c);
+            color: white;
+        }
+
+        .badge-danger {
+            background: linear-gradient(135deg, #f25d8e, #e8487a);
+            color: white;
+        }
+
+        .badge-warning {
+            background: linear-gradient(135deg, #ff6699, #ff5288);
+            color: white;
+        }
+
+        .queue-indicator {
+            margin-left: auto;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.2);
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state p {
+            font-size: 15px;
+        }
+
+        .output-area {
+            max-height: 320px;
+            overflow-y: auto;
+            font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .output-area::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .output-area::-webkit-scrollbar-track {
+            background: #2d2d2d;
+            border-radius: 4px;
+        }
+
+        .output-area::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 4px;
+        }
+
+        .output-area::-webkit-scrollbar-thumb:hover {
+            background: #666;
+        }
+
+        .task-detail-header {
+            position: relative;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-detail-header h5 {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
+        }
+
+        .btn-close {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            padding: 0;
+        }
+
+        .btn-close:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: scale(1.1);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .info-item {
+            background: #fafafa;
+            padding: 12px 16px;
+            border-radius: 10px;
+        }
+
+        .info-item strong {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .info-item span {
+            color: var(--text-color);
+            font-weight: 500;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+        }
+
+        .bv-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .bv-row .form-control {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .bv-row .btn-remove {
+            padding: 8px 12px;
+            font-size: 13px;
+            background: #f0f1f3;
+            color: #f25d8e;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .bv-row .btn-remove:hover {
+            background: #f25d8e;
+            color: white;
+        }
+
+        .btn-group .btn {
+            flex: 1;
+        }
+
+        .section-title {
+            font-weight: 600;
+            color: var(--text-color);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        @media (max-width: 640px) {
+            .container {
+                padding: 20px 16px;
+            }
+
+            .page-header h1 {
+                font-size: 22px;
+            }
+
+            .info-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .card-body {
+                padding: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="page-header">
+            <h1>🚀 Bilibili 播放量 Booster</h1>
+            <p>通过代理池自动提升B站视频播放量</p>
+        </div>
+        
+        <!-- 任务提交表单 -->
+        <div class="card">
+            <div class="card-header">
+                ➕ 提交新任务
+            </div>
+            <div class="card-body">
+                <form id="taskForm">
+                    <div class="form-group">
+                        <label class="form-label">BV号列表</label>
+                        <div id="bvList">
+                            <div class="bv-row">
+                                <input type="text" class="form-control bv-input" placeholder="例如: BV1fz421o8J7" required>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline btn-sm" id="addBvBtn" style="margin-top: 10px;">➕ 添加视频</button>
+                    </div>
+                    <div class="form-group">
+                        <label for="target" class="form-label">目标播放数</label>
+                        <input type="number" class="form-control" id="target" placeholder="例如: 349" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">▶ 开始提升</button>
+                </form>
+            </div>
+        </div>
+        
+        <!-- 任务列表 -->
+        <div class="card">
+            <div class="card-header">
+                📋 任务列表
+                <span id="queueCount" class="queue-indicator"></span>
+            </div>
+            <div class="card-body">
+                <div id="taskList">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📭</div>
+                        <p>暂无任务</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 任务详情 -->
+        <div class="card" id="taskDetail" style="display: none;">
+            <div class="card-header">
+                <div class="task-detail-header">
+                    <h5 id="taskTitle">ℹ️ 任务详情</h5>
+                    <button id="closeDetail" class="btn-close">✕</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <strong>状态</strong>
+                        <span id="taskStatus"></span>
+                    </div>
+                    <div class="info-item">
+                        <strong>开始时间</strong>
+                        <span id="startTime"></span>
+                    </div>
+                    <div class="info-item">
+                        <strong>结束时间</strong>
+                        <span id="endTime"></span>
+                    </div>
+                </div>
+                <div class="section-title">💻 执行输出</div>
+                <div class="output-area" id="taskOutput"></div>
+                <div class="btn-group" style="margin-top: 16px;">
+                    <button id="refreshOutput" class="btn btn-outline">🔄 刷新日志</button>
+                    <button id="cancelTask" class="btn btn-danger" style="display: none;">⏹ 取消任务</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 全局变量
+        let currentTaskId = null;
+        
+        // 状态颜色映射
+        const statusColors = {
+            'queued': 'secondary',
+            'running': 'info',
+            'completed': 'success',
+            'failed': 'danger',
+            'error': 'danger',
+            'cancelled': 'warning'
+        };
+        
+        // 状态文本映射
+        const statusTexts = {
+            'queued': '排队中',
+            'running': '运行中',
+            'completed': '已完成',
+            'failed': '失败',
+            'error': '错误',
+            'cancelled': '已取消'
+        };
+        
+        // 格式化时间
+        function formatTime(timestamp) {
+            if (!timestamp) return 'N/A';
+            const date = new Date(timestamp * 1000);
+            return date.toLocaleString('zh-CN');
+        }
+        
+        // 加载任务列表
+        function loadTasks() {
+            fetch('/api/tasks')
+                .then(response => response.json())
+                .then(data => {
+                    const taskList = document.getElementById('taskList');
+                    const queueCount = document.getElementById('queueCount');
+                    
+                    // 计算队列中的任务数
+                    let queuedCount = 0;
+                    Object.values(data).forEach(task => {
+                        if (task.status === 'queued') {
+                            queuedCount++;
+                        }
+                    });
+                    
+                    queueCount.textContent = `队列: ${queuedCount}`;
+                    
+                    if (Object.keys(data).length === 0) {
+                        taskList.innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-state-icon">📭</div>
+                                <p>暂无任务</p>
+                            </div>
+                        `;
+                        return;
+                    }
+                    
+                    // 按任务ID倒序排序
+                    const sortedTaskIds = Object.keys(data).sort((a, b) => parseInt(b) - parseInt(a));
+                    
+                    taskList.innerHTML = '';
+                    sortedTaskIds.forEach(taskId => {
+                        const task = data[taskId];
+                        const status = task.status;
+                        const statusColor = statusColors[status] || 'secondary';
+                        const statusText = statusTexts[status] || status;
+                        
+                        const taskItem = document.createElement('div');
+                        taskItem.className = 'task-item';
+                        taskItem.onclick = () => showTaskDetail(taskId);
+                        
+                        // BV号和target在任务创建时就已经有了
+                        const bv = task.bv || '未知';
+                        const target = task.target || '未知';
+                        
+                        taskItem.innerHTML = `
+                            <div class="task-item-header">
+                                <div>
+                                    <div class="task-item-title">任务 #${taskId}</div>
+                                    <div class="task-item-info">BV: ${bv.length > 25 ? bv.substring(0, 25) + '...' : bv} | 目标: ${target}</div>
+                                </div>
+                                <span class="badge badge-${statusColor}">${statusText}</span>
+                            </div>
+                        `;
+                        
+                        taskList.appendChild(taskItem);
+                    });
+                })
+                .catch(error => {
+                    console.error('加载任务失败:', error);
+                });
+        }
+        
+        // 刷新任务详情输出
+        function refreshTaskDetail() {
+            if (!currentTaskId) return;
+            
+            fetch(`/api/tasks/${currentTaskId}`)
+                .then(response => response.json())
+                .then(task => {
+                    document.getElementById('taskStatus').innerHTML = `
+                        <span class="badge badge-${statusColors[task.status] || 'secondary'}">
+                            ${statusTexts[task.status] || task.status}
+                        </span>
+                    `;
+                    document.getElementById('startTime').textContent = formatTime(task.start_time);
+                    document.getElementById('endTime').textContent = formatTime(task.end_time);
+                    document.getElementById('taskOutput').textContent = task.output || '暂无输出';
+                    
+                    const cancelButton = document.getElementById('cancelTask');
+                    if (task.status === 'running') {
+                        cancelButton.style.display = 'block';
+                    } else {
+                        cancelButton.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('刷新任务详情失败:', error);
+                });
+        }
+        
+        // 显示任务详情
+        function showTaskDetail(taskId) {
+            currentTaskId = taskId;
+            document.getElementById('taskTitle').textContent = `ℹ️ 任务 #${taskId} 详情`;
+            
+            // 立即刷新一次
+            refreshTaskDetail();
+            
+            document.getElementById('taskDetail').style.display = 'block';
+        }
+        
+        // 关闭任务详情
+        document.getElementById('closeDetail').onclick = function() {
+            document.getElementById('taskDetail').style.display = 'none';
+            currentTaskId = null;
+        };
+        
+        // 刷新日志按钮点击事件
+        document.getElementById('refreshOutput').onclick = function() {
+            refreshTaskDetail();
+        };
+        
+        // 取消任务
+        document.getElementById('cancelTask').onclick = function() {
+            if (currentTaskId) {
+                if (confirm('确定要取消这个任务吗？')) {
+                    fetch(`/api/tasks/${currentTaskId}`, {
+                        method: 'DELETE'
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'cancelled') {
+                            alert('任务已取消');
+                            loadTasks();
+                            showTaskDetail(currentTaskId);
+                        } else {
+                            alert('取消任务失败: ' + (data.error || '未知错误'));
+                        }
+                    })
+                    .catch(error => {
+                        console.error('取消任务失败:', error);
+                        alert('取消任务失败');
+                    });
+                }
+            }
+        };
+        
+        // BV列表管理
+        const bvList = document.getElementById('bvList');
+        const addBvBtn = document.getElementById('addBvBtn');
+
+        function createBvRow() {
+            const row = document.createElement('div');
+            row.className = 'bv-row';
+            row.innerHTML = `
+                <input type="text" class="form-control bv-input" placeholder="例如: BV1fz421o8J7" required>
+                <button type="button" class="btn-remove">删除</button>
+            `;
+            row.querySelector('.btn-remove').onclick = function() {
+                row.remove();
+            };
+            return row;
+        }
+
+        addBvBtn.onclick = function() {
+            bvList.appendChild(createBvRow());
+        };
+
+        // 提交任务表单
+        document.getElementById('taskForm').onsubmit = function(e) {
+            e.preventDefault();
+
+            const bvInputs = bvList.querySelectorAll('.bv-input');
+            const bvs = [];
+            bvInputs.forEach(input => {
+                const val = input.value.trim();
+                if (val) bvs.push(val);
+            });
+
+            if (bvs.length === 0) {
+                alert('请至少输入一个BV号');
+                return;
+            }
+
+            const bv = bvs.join(',');
+            const target = parseInt(document.getElementById('target').value);
+
+            if (isNaN(target)) {
+                alert('请输入有效的目标播放数');
+                return;
+            }
+
+            fetch('/api/tasks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ bv, target })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if ('task_id' in data) {
+                    alert('任务提交成功！共 ' + bvs.length + ' 个视频');
+                    // 重置为单个输入框
+                    bvList.innerHTML = '<div class="bv-row"><input type="text" class="form-control bv-input" placeholder="例如: BV1fz421o8J7" required></div>';
+                    document.getElementById('target').value = '';
+                    loadTasks();
+                } else {
+                    alert('提交失败: ' + (data.error || '未知错误'));
+                }
+            })
+            .catch(error => {
+                console.error('提交任务失败:', error);
+                alert('提交任务失败');
+            });
+        };
+        
+        // 定期刷新任务列表
+        setInterval(loadTasks, 3000);
+        
+        // 页面加载时初始化
+        window.onload = loadTasks;
+    </script>
+</body>
+</html>
