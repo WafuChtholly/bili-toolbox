@@ -478,7 +478,7 @@ def auto_following_list():
         return jsonify({"success": False, "message": "请先扫码登录"})
 
     try:
-        from bilibili_api.utils.network import Credential
+        from bilibili_api import Credential
         from core import get_following_list
 
         credential = Credential(
@@ -599,7 +599,7 @@ def auto_history_preview():
         return jsonify({"success": False, "message": "请先扫码登录"})
 
     try:
-        from bilibili_api.utils.network import Credential
+        from bilibili_api import Credential
         from core import get_user_videos_in_range
 
         credential = Credential(
@@ -855,7 +855,7 @@ def booster_my_videos():
         return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
 
     try:
-        from bilibili_api.utils.network import Credential
+        from bilibili_api import Credential
         from bilibili_api.user import User, VideoOrder
 
         # Credential 会自动处理 SESSDATA 编码和 buvid 获取
@@ -869,13 +869,13 @@ def booster_my_videos():
 
         loop = asyncio.new_event_loop()
         try:
-            for _attempt in range(2):
+            for _attempt in range(3):
                 try:
                     result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
                     break
                 except Exception as retry_err:
-                    if _attempt == 0 and "第三方请求库" in str(retry_err):
-                        import time as _t; _t.sleep(0.5)
+                    if _attempt < 2 and "第三方请求库" in str(retry_err):
+                        import time as _t; _t.sleep(1)
                         continue
                     raise
         finally:
@@ -1039,7 +1039,7 @@ def player_my_videos():
         return jsonify({"success": False, "message": "请先在「自动互动」页面登录主账号"})
 
     try:
-        from bilibili_api.utils.network import Credential
+        from bilibili_api import Credential
         from bilibili_api.user import User, VideoOrder
 
         credential = Credential(
