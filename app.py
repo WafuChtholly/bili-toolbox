@@ -869,7 +869,15 @@ def booster_my_videos():
 
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
+            for _attempt in range(2):
+                try:
+                    result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
+                    break
+                except Exception as retry_err:
+                    if _attempt == 0 and "第三方请求库" in str(retry_err):
+                        import time as _t; _t.sleep(0.5)
+                        continue
+                    raise
         finally:
             loop.close()
 
