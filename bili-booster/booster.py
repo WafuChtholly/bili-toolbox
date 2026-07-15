@@ -396,12 +396,22 @@ def click_once(proxy: str, info: dict, bv: str) -> bool:
 
 
 def click_batch(proxies: 'list[str]', info: dict, bv: str, max_workers: int = None) -> int:
-    """批量点击，单线程顺序执行（与原始viewcount-booster一致，避免多线程吃满CPU）"""
-    success = 0
-    for proxy in proxies:
+    """批量点击，使用线程池限制并发数"""
+    success = [0]
+    lock = threading.Lock()
+    worker_count = max_workers if max_workers else batch_size
+    # 点击线程数取筛选的1/2，与筛选共享全局信号量
+    worker_count = max(3, worker_count // 2)
+
+    def worker(proxy: str) -> None:
         if click_once(proxy, info, bv):
-            success += 1
-    return success
+            with lock:
+                success[0] += 1
+
+    with ThreadPoolExecutor(max_workers=min(worker_count, len(proxies))) as executor:
+        executor.map(worker, proxies)
+
+    return success[0]
 
 
 def boost_video_once(video: dict, total_proxies: 'list[str]', batch_num: int, stop_event=None, max_threads: int = None) -> int:
