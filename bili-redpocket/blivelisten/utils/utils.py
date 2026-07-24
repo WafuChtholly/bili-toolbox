@@ -49,8 +49,8 @@ def get_credential() -> Credential:
     bili_jct = config.get("BILI_JCT")
     buvid3 = config.get("BUVID3")
     
-    # 如果任一凭证字段为空，则尝试从 bilibili.json 读取
-    if not sessdata or not bili_jct or not buvid3:
+    # 如果 sessdata 或 bili_jct 为空，则尝试从 bilibili.json 读取（buvid3 可选）
+    if not sessdata or not bili_jct:
         try:
             # 尝试从不同位置读取配置文件
             possible_paths = [
@@ -84,7 +84,9 @@ def get_credential() -> Credential:
                 if buvid3:
                     config.set("BUVID3", buvid3)
             else:
-                logger.warning("未找到 bilibili.json 配置文件，某些功能可能不可用")
+                # 仅在 sessdata 和 bili_jct 都为空时才打印警告
+                if not sessdata and not bili_jct:
+                    logger.warning("未找到 bilibili.json 配置文件，某些功能可能不可用")
         except Exception as e:
             logger.error(f"读取 bilibili.json 配置文件时出错: {e}")
     

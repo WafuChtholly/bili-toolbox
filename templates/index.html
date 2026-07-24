@@ -1103,10 +1103,11 @@ textarea.form-input { min-height: 80px; resize: vertical; }
         <span id="pl-login-info" style="color:var(--text-secondary)">未登录</span>
         <div style="display:flex;gap:8px">
           <button class="btn btn-outline btn-sm" onclick="plFetchMyVideos(this)">📦 获取主账号投稿</button>
-          <button class="btn btn-outline btn-sm" onclick="plShowQR()">刷新播放登录</button>
+          <button class="btn btn-outline btn-sm" onclick="plShowQR()">添加播放账号</button>
         </div>
       </div>
-      <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">播放登录用于 Playwright 模拟播放（更有效），投稿获取复用「自动互动」主账号凭证</p>
+      <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">播放登录用于 Playwright 模拟播放（更有效），可添加多个账号并行播放；投稿获取复用「自动互动」主账号凭证</p>
+      <div id="pl-accounts-list" style="margin-top:10px"></div>
       <div class="qr-wrap" id="pl-qr-area" style="display:none">
         <img id="pl-qr-img" src="" alt="QR">
         <div class="qr-status" id="pl-qr-status">请用B站 App 扫描</div>
@@ -1207,7 +1208,8 @@ textarea.form-input { min-height: 80px; resize: vertical; }
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group">
           <label class="form-label">红包 ID</label>
-          <select class="form-input" id="rp-add-rpid">
+          <select class="form-input" id="rp-add-rpid" onchange="rpToggleBatteryFields()">
+            <option value="0">0 - 电池红包</option>
             <option value="188">188 - 20电池 / 15个礼物</option>
             <option value="189" selected>189 - 100电池 / 44个礼物</option>
             <option value="190">190 - 520电池 / 142个礼物</option>
@@ -1223,13 +1225,46 @@ textarea.form-input { min-height: 80px; resize: vertical; }
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">数量</label>
-          <input class="form-input" id="rp-add-count" type="number" value="1">
+          <label class="form-label">发送上限（0=无上限）</label>
+          <input class="form-input" id="rp-add-count" type="number" min="0" value="1">
         </div>
-        <div class="form-group">
+        <div class="form-group" id="rp-add-danmu-group">
           <label class="form-label">弹幕消息</label>
           <input class="form-input" id="rp-add-danmu" value="老板大气！点点红包抽礼物">
         </div>
+      </div>
+      <!-- 电池红包配置（红包 ID 为 0 时显示） -->
+      <div id="rp-battery-fields" style="display:none;margin-top:10px;padding:10px;background:var(--bg-hover);border-radius:8px">
+        <p style="font-weight:600;margin:0 0 8px;color:var(--text-primary)">电池红包配置</p>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="form-group">
+            <label class="form-label">电池数量</label>
+            <select class="form-input" id="rp-add-battery-total" onchange="rpUpdateAwardOptions('rp-add-battery-total','rp-add-battery-award')">
+              <option value="20">20电池</option>
+              <option value="100">100电池</option>
+              <option value="520">520电池</option>
+              <option value="1000">1000电池</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">发奖份数</label>
+            <select class="form-input" id="rp-add-battery-award">
+              <option value="10">10份</option>
+              <option value="20">20份</option>
+              <option value="50">50份</option>
+              <option value="100">100份</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">参与对象</label>
+            <select class="form-input" id="rp-add-battery-join">
+              <option value="0">全部</option>
+              <option value="1">关注</option>
+              <option value="2">粉丝团</option>
+            </select>
+          </div>
+        </div>
+        <p style="margin:8px 0 0;font-size:12px;color:var(--text-secondary)">* 20电池可选10/20份，100/520电池可选10/20/50份，1000电池可选20/50/100份</p>
       </div>
       <button class="btn btn-outline btn-sm" onclick="rpAddRoom()" style="width:100%">+ 添加房间</button>
     </div>
@@ -1266,7 +1301,8 @@ textarea.form-input { min-height: 80px; resize: vertical; }
     <input type="hidden" id="rp-edit-idx">
     <div class="form-group"><label class="form-label">房间号</label><input class="form-input" id="rp-edit-room" type="number"></div>
     <div class="form-group"><label class="form-label">红包 ID</label>
-      <select class="form-input" id="rp-edit-rpid">
+      <select class="form-input" id="rp-edit-rpid" onchange="rpEditToggleBattery()">
+        <option value="0">0 - 电池红包</option>
         <option value="188">188 - 20电池 / 15个礼物</option>
         <option value="189">189 - 100电池 / 44个礼物</option>
         <option value="190">190 - 520电池 / 142个礼物</option>
@@ -1280,8 +1316,38 @@ textarea.form-input { min-height: 80px; resize: vertical; }
         <option value="600">10分钟</option>
       </select>
     </div>
-    <div class="form-group"><label class="form-label">数量</label><input class="form-input" id="rp-edit-count" type="number" value="1"></div>
-    <div class="form-group"><label class="form-label">弹幕消息</label><input class="form-input" id="rp-edit-danmu"></div>
+    <div class="form-group"><label class="form-label">发送上限（0=无上限）</label><input class="form-input" id="rp-edit-count" type="number" min="0" value="1"></div>
+    <div class="form-group" id="rp-edit-danmu-group"><label class="form-label">弹幕消息</label><input class="form-input" id="rp-edit-danmu"></div>
+    <!-- 电池红包编辑字段 -->
+    <div id="rp-edit-battery-fields" style="display:none;margin-top:10px;padding:10px;background:var(--bg-hover);border-radius:8px">
+      <p style="font-weight:600;margin:0 0 8px;color:var(--text-primary)">电池红包配置</p>
+      <div class="form-group">
+        <label class="form-label">电池数量</label>
+        <select class="form-input" id="rp-edit-battery-total" onchange="rpUpdateAwardOptions('rp-edit-battery-total','rp-edit-battery-award')">
+          <option value="20">20电池</option>
+          <option value="100">100电池</option>
+          <option value="520">520电池</option>
+          <option value="1000">1000电池</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">发奖份数</label>
+        <select class="form-input" id="rp-edit-battery-award">
+          <option value="10">10份</option>
+          <option value="20">20份</option>
+          <option value="50">50份</option>
+          <option value="100">100份</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">参与对象</label>
+        <select class="form-input" id="rp-edit-battery-join">
+          <option value="0">全部</option>
+          <option value="1">关注</option>
+          <option value="2">粉丝团</option>
+        </select>
+      </div>
+    </div>
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
       <button class="btn btn-outline" onclick="document.getElementById('rp-edit-modal').style.display='none'">取消</button>
       <button class="btn btn-success" onclick="rpSaveEdit()">保存</button>
@@ -2481,9 +2547,27 @@ let plPollTimer=null;
 
 function plLoadConfig(){
   fetch('/api/player/config').then(r=>r.json()).then(d=>{
-    if(d.login_uid){
-      document.getElementById('pl-login-info').innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+    const listEl=document.getElementById('pl-accounts-list');
+    const infoEl=document.getElementById('pl-login-info');
+    const accounts=d.accounts||[];
+    if(accounts.length===0){
+      infoEl.textContent='未登录';
+      listEl.innerHTML='';
+      return;
     }
+    infoEl.innerHTML='已登录账号数: <b>'+accounts.length+'</b>';
+    listEl.innerHTML=accounts.map(a=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-bottom:6px;background:var(--bg-tertiary);border-radius:6px">
+        <span style="font-size:13px">UID: <b>${a.login_uid||'?'}</b></span>
+        <button class="btn btn-sm btn-danger" style="padding:2px 8px;font-size:12px" onclick="plDeleteAccount('${a.login_uid||''}')">删除</button>
+      </div>`).join('');
+  });
+}
+function plDeleteAccount(login_uid){
+  if(!login_uid||!confirm('确定删除该播放账号？'))return;
+  fetch('/api/player/accounts/'+encodeURIComponent(login_uid),{method:'DELETE'}).then(r=>r.json()).then(d=>{
+    if(d.success){plLoadConfig();}
+    else{alert(d.message||'删除失败');}
   });
 }
 function plShowQR(){
@@ -2509,7 +2593,7 @@ function plStartPoll(key){
         st.textContent='登录成功！';st.style.color='var(--success)';
         clearInterval(plPollTimer);
         document.getElementById('pl-qr-area').style.display='none';
-        document.getElementById('pl-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        plLoadConfig();
       }else if(d.status==='waiting'){
         st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
       }else if(d.status==='confirming'){
@@ -2742,7 +2826,17 @@ function rpLoadRooms(){
       const card=document.createElement('div');card.className='room-card';
       const dur = r.duration || 600;
       const durText = dur===300?'5分钟':dur===600?'10分钟':dur+'秒';
-      const rpDesc = {188:'20电池',189:'100电池',190:'520电池',191:'1000电池',192:'5000电池'}[r.red_pocket_id]||r.red_pocket_id;
+      const countText = r.count===0?'无上限':r.count;
+      let rpDesc, extraInfo;
+      if(r.red_pocket_id===0){
+        const batteryMap={20:'20电池',100:'100电池',520:'520电池',1000:'1000电池'};
+        const joinMap={0:'全部',1:'关注',2:'粉丝团'};
+        rpDesc='电池红包';
+        extraInfo=`<br>电池: ${batteryMap[r.total_battery]||r.total_battery} | 份数: ${r.award_num||10} | 参与: ${joinMap[r.join_requirement]||r.join_requirement}`;
+      }else{
+        rpDesc = {188:'20电池',189:'100电池',190:'520电池',191:'1000电池',192:'5000电池'}[r.red_pocket_id]||r.red_pocket_id;
+        extraInfo='';
+      }
       card.innerHTML=`
         <div class="room-head">
           <span class="room-title">#${i+1} 房间 ${r.room_id} ${r.uname?'- '+r.uname:''}</span>
@@ -2752,8 +2846,9 @@ function rpLoadRooms(){
           </div>
         </div>
         <div class="room-meta">
-          红包ID: ${r.red_pocket_id} (${rpDesc}) | 时长: ${durText} | 数量: ${r.count||1} | 弹幕: ${r.danmu_msg||''}
+          红包ID: ${r.red_pocket_id} (${rpDesc}) | 时长: ${durText} | 上限: ${countText} | 弹幕: ${r.danmu_msg||''}
           ${r.title?'<br>标题: '+r.title:''}
+          ${extraInfo}
         </div>`;
       box.appendChild(card);
     });
@@ -2762,14 +2857,21 @@ function rpLoadRooms(){
 function rpAddRoom(){
   const room_id=document.getElementById('rp-add-room').value.trim();
   if(!room_id){alert('请输入房间号');return;}
+  const rpid=parseInt(document.getElementById('rp-add-rpid').value)||189;
+  const countVal=parseInt(document.getElementById('rp-add-count').value);
+  const payload={
+    room_id:parseInt(room_id),
+    red_pocket_id:rpid,
+    duration:parseInt(document.getElementById('rp-add-dur').value)||600,
+    count:isNaN(countVal)?1:countVal,
+    danmu_msg:rpid===0?'':(document.getElementById('rp-add-danmu').value||'老板大气！点点红包抽礼物'),
+  };
+  if(rpid===0){
+    payload.total_battery=parseInt(document.getElementById('rp-add-battery-total').value)||20;
+    payload.award_num=parseInt(document.getElementById('rp-add-battery-award').value)||10;
+    payload.join_requirement=parseInt(document.getElementById('rp-add-battery-join').value)||0;
+  }
   fetch(`/api/redpocket/room-info/${room_id}`).then(r=>r.json()).then(info=>{
-    const payload={
-      room_id:parseInt(room_id),
-      red_pocket_id:parseInt(document.getElementById('rp-add-rpid').value)||189,
-      duration:parseInt(document.getElementById('rp-add-dur').value)||600,
-      count:parseInt(document.getElementById('rp-add-count').value)||1,
-      danmu_msg:document.getElementById('rp-add-danmu').value||'老板大气！点点红包抽礼物',
-    };
     if(info.success&&info.uid){
       payload.uid=info.uid;
       fetch(`/api/redpocket/live-info/${info.uid}`).then(r=>r.json()).then(ld=>{
@@ -2783,7 +2885,7 @@ function rpAddRoom(){
       });return;
     }
     _rpDoAdd(payload);
-  }).catch(()=>_rpDoAdd({room_id:parseInt(room_id),red_pocket_id:parseInt(document.getElementById('rp-add-rpid').value)||189,duration:parseInt(document.getElementById('rp-add-dur').value)||600,count:parseInt(document.getElementById('rp-add-count').value)||1,danmu_msg:document.getElementById('rp-add-danmu').value||'老板大气！点点红包抽礼物'}));
+  }).catch(()=>_rpDoAdd(payload));
 }
 function _rpDoAdd(payload){
   fetch('/api/redpocket/room',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
@@ -2799,18 +2901,31 @@ function rpEditRoom(idx){
     document.getElementById('rp-edit-dur').value=r.duration||600;
     document.getElementById('rp-edit-count').value=r.count||1;
     document.getElementById('rp-edit-danmu').value=r.danmu_msg||'';
+    // 电池红包字段
+    rpEditToggleBattery();
+    if(r.red_pocket_id===0){
+      document.getElementById('rp-edit-battery-total').value=r.total_battery||20;
+      document.getElementById('rp-edit-battery-award').value=r.award_num||10;
+      document.getElementById('rp-edit-battery-join').value=r.join_requirement||0;
+    }
     document.getElementById('rp-edit-modal').style.display='flex';
   });
 }
 function rpSaveEdit(){
   const idx=parseInt(document.getElementById('rp-edit-idx').value);
+  const rpid=parseInt(document.getElementById('rp-edit-rpid').value);
   const payload={
     room_id:parseInt(document.getElementById('rp-edit-room').value),
-    red_pocket_id:parseInt(document.getElementById('rp-edit-rpid').value),
+    red_pocket_id:rpid,
     duration:parseInt(document.getElementById('rp-edit-dur').value),
     count:parseInt(document.getElementById('rp-edit-count').value),
-    danmu_msg:document.getElementById('rp-edit-danmu').value,
+    danmu_msg:rpid===0?'':(document.getElementById('rp-edit-danmu').value||''),
   };
+  if(rpid===0){
+    payload.total_battery=parseInt(document.getElementById('rp-edit-battery-total').value)||20;
+    payload.award_num=parseInt(document.getElementById('rp-edit-battery-award').value)||10;
+    payload.join_requirement=parseInt(document.getElementById('rp-edit-battery-join').value)||0;
+  }
   fetch(`/api/redpocket/room/${idx}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
     .then(r=>r.json()).then(d=>{
       if(d.success){rpLoadRooms();document.getElementById('rp-edit-modal').style.display='none';}
@@ -2818,6 +2933,38 @@ function rpSaveEdit(){
 }
 function rpDelRoom(idx){
   fetch(`/api/redpocket/room/${idx}`,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.success)rpLoadRooms();});
+}
+function rpToggleBatteryFields(){
+  const isBattery=document.getElementById('rp-add-rpid').value==='0';
+  document.getElementById('rp-battery-fields').style.display=isBattery?'block':'none';
+  document.getElementById('rp-add-danmu-group').style.display=isBattery?'none':'block';
+  if(isBattery){
+    // 根据电池数量限制发奖份数选项
+    rpUpdateAwardOptions('rp-add-battery-total','rp-add-battery-award');
+  }
+}
+function rpEditToggleBattery(){
+  const isBattery=document.getElementById('rp-edit-rpid').value==='0';
+  document.getElementById('rp-edit-battery-fields').style.display=isBattery?'block':'none';
+  document.getElementById('rp-edit-danmu-group').style.display=isBattery?'none':'block';
+  if(isBattery){
+    rpUpdateAwardOptions('rp-edit-battery-total','rp-edit-battery-award');
+  }
+}
+function rpUpdateAwardOptions(totalSelectId, awardSelectId){
+  const total=parseInt(document.getElementById(totalSelectId).value);
+  const awardSel=document.getElementById(awardSelectId);
+  const currentVal=parseInt(awardSel.value);
+  const options={10:true,20:true,50:true,100:true};
+  if(total===20) options[50]=options[100]=false;
+  if(total===100||total===520) options[100]=false;
+  if(total===1000) options[10]=false;
+  awardSel.innerHTML='';
+  [10,20,50,100].forEach(v=>{
+    if(options[v]){const o=document.createElement('option');o.value=v;o.textContent=v+'份';awardSel.appendChild(o);}
+  });
+  // 恢复当前值（如果可用）
+  if(options[currentVal]) awardSel.value=currentVal;
 }
 
 /* --- QR 登录 --- */

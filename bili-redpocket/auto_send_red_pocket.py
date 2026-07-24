@@ -40,12 +40,187 @@ logger.add(
 )
 
 # 需要监听并自动发红包的直播间配置
-# 格式: [(room_id, red_pocket_id, danmu_msg), ...]
+# 格式: [(room_id, red_pocket_id, duration, max_count, danmu_msg, ...), ...]
+#   max_count: 发送上限，0=无上限
+# 人气红包: (room_id, red_pocket_id, duration, max_count, danmu_msg, uname, title, face, uid, cover)
+# 电池红包: (room_id, 0, duration, max_count, "", uname, title, face, uid, cover, "battery", total_battery, award_num, join_requirement)
 WATCH_ROOMS = [
-    (27263119, 189, 600, 1, "老板大气！点点红包抽礼物", "鸣潮", "《鸣潮》3.4版本前瞻通讯", "https://i2.hdslb.com/bfs/face/7258e7c765f82c5952c2accbab6fc5c1e16e663b.jpg", 1955897084, "https://i0.hdslb.com/bfs/live/new_room_cover/e4e08ee054dc1fe85789717d4fbc9538b06ee020.jpg")
+    (1991380721, 0, 600, 2, "", "华芙喵wafu", "看会好妹妹", "https://i0.hdslb.com/bfs/face/357323aa1f445222ceed5946122c9fb4633ad0ce.jpg", 3546857487731451, "https://i0.hdslb.com/bfs/live/new_room_cover/21819a6ccfb7e54857450332f3cde3b4f2f23a68.jpg", "battery", 20, 10, 0)
 ]
 
 ROOM_AREA_CACHE = {}
+
+# 每个房间的发送循环状态
+ROOM_SEND_TASKS: Dict[int, asyncio.Task] = {}     # room_real_id -> Task
+ROOM_STOP_EVENTS: Dict[int, asyncio.Event] = {}    # room_real_id -> Event
+
+
+def _find_room_config(room_real_id: int) -> tuple | None:
+    """在 WATCH_ROOMS 中查找该房间的配置"""
+    for room_config in WATCH_ROOMS:
+        if room_config[0] == room_real_id:
+            return room_config
+    return None
+
+
+def _parse_room_config(room_config: tuple) -> dict:
+    """解析房间配置元组，返回结构化 dict"""
+    room_id = room_config[0]
+    red_pocket_id = room_config[1]
+    duration = room_config[2] if len(room_config) >= 3 else 300
+    max_count = room_config[3] if len(room_config) >= 4 else 0  # 0 = 无上限
+    danmu_msg = room_config[4] if len(room_config) >= 5 else "老板大气！点点红包抽礼物"
+
+    is_battery = red_pocket_id == 0
+    battery_info = None
+    if is_battery:
+        danmu_msg = ""
+        if len(room_config) >= 13 and isinstance(room_config[10], str) and room_config[10] == "battery":
+            battery_info = {
+                "total_battery": int(room_config[11]) * 100,
+                "award_num": int(room_config[12]),
+                "join_requirement": int(room_config[13])
+            }
+    return {
+        "room_id": room_id,
+        "red_pocket_id": red_pocket_id,
+        "duration": duration,
+        "max_count": max_count,  # 0 = 无上限
+        "danmu_msg": danmu_msg,
+        "is_battery": is_battery,
+        "battery_info": battery_info,
+    }
+
+
+async def _get_room_area_info(room_real_id: int) -> tuple:
+    """获取房间分区信息，优先从缓存获取"""
+    cached = ROOM_AREA_CACHE.get(room_real_id, {})
+    target_uid = cached.get("target_uid")
+    parent_area_id = cached.get("parent_area_id", 0)
+    area_id = cached.get("area_id", 0)
+
+    if target_uid is not None:
+        return target_uid, parent_area_id, area_id
+
+    # 缓存未命中，实时获取
+    live_room = LiveRoom(room_real_id)
+    room_info = await live_room.get_room_play_info()
+    target_uid = room_info["uid"]
+
+    params = {"uids[]": target_uid}
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids",
+            params=params,
+            headers=settings.BROWSER_HEADERS
+        )
+        data = response.json()
+        if data.get("code") == 0 and str(target_uid) in data["data"]:
+            parent_area_id = data["data"][str(target_uid)]["area_v2_parent_id"]
+            area_id = data["data"][str(target_uid)]["area_v2_id"]
+
+    return target_uid, parent_area_id, area_id
+
+
+async def _send_one_red_pocket(room_real_id: int, config: dict) -> bool:
+    """发送一个红包，带重试逻辑"""
+    credential = get_credential()
+    gift_live_room = LiveRoom(room_real_id, credential)
+    target_uid, parent_area_id, area_id = await _get_room_area_info(room_real_id)
+
+    for attempt in range(3):
+        try:
+            result = await gift_live_room.send_red_pocket(
+                red_pocket_id=config["red_pocket_id"],
+                danmu_id=0 if config["is_battery"] else 5,
+                danmu_msg=config["danmu_msg"],
+                context_type=1,
+                parent_area_id=parent_area_id,
+                area_id=area_id,
+                duration=config["duration"],
+                battery_info=config["battery_info"]
+            )
+            logger.info(f"发送红包成功 [{room_real_id}]: {result}")
+            return True
+        except Exception as e:
+            if attempt < 2:
+                logger.warning(f"发送红包失败 [{room_real_id}]，第 {attempt + 1} 次重试: {e}")
+                await asyncio.sleep(0.5)
+            else:
+                logger.error(f"发送红包失败 [{room_real_id}]，已重试 3 次: {e}")
+                return False
+
+
+async def _send_red_pocket_loop(room_real_id: int, config: dict):
+    """
+    红包发送循环（后台任务）
+    发送一个红包 → 等待红包持续时间结束 → 发送下一个 → 直到达到上限或下播
+    """
+    stop_event = ROOM_STOP_EVENTS[room_real_id]
+    max_count = config["max_count"]
+    duration = config["duration"]
+    sent_count = 0
+
+    limit_str = "无上限" if max_count == 0 else str(max_count)
+    logger.info(f"启动红包发送循环 [{room_real_id}]，发送上限: {limit_str}，红包时长: {duration}秒")
+
+    try:
+        while not stop_event.is_set():
+            if max_count > 0 and sent_count >= max_count:
+                logger.info(f"[{room_real_id}] 已达到发送上限 ({max_count}个)，停止发送")
+                break
+
+            ok = await _send_one_red_pocket(room_real_id, config)
+            if not ok:
+                logger.error(f"[{room_real_id}] 红包发送失败，停止发送循环")
+                break
+
+            sent_count += 1
+            progress = f"{sent_count}/{max_count}" if max_count > 0 else f"{sent_count}/∞"
+            logger.info(f"[{room_real_id}] 已发送 {progress} 个红包，等待 {duration} 秒后发送下一个...")
+
+            # 等待红包持续时间结束（+5秒缓冲），再发下一个
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=duration + 5)
+                logger.info(f"[{room_real_id}] 收到停止信号，停止发送循环")
+                break
+            except asyncio.TimeoutError:
+                # 红包持续时间结束，继续发送下一个
+                continue
+    finally:
+        # 清理状态（确保无论任务被取消还是正常结束都执行）
+        ROOM_SEND_TASKS.pop(room_real_id, None)
+        ROOM_STOP_EVENTS.pop(room_real_id, None)
+        logger.info(f"红包发送循环已结束 [{room_real_id}]，共发送 {sent_count} 个红包")
+
+
+async def _start_room_red_pocket_loop(room_real_id: int, config: dict):
+    """启动某个房间的红包发送循环（如已有则跳过）"""
+    if room_real_id in ROOM_SEND_TASKS and not ROOM_SEND_TASKS[room_real_id].done():
+        logger.info(f"[{room_real_id}] 已有发送循环在运行，跳过")
+        return
+
+    stop_event = asyncio.Event()
+    ROOM_STOP_EVENTS[room_real_id] = stop_event
+    task = asyncio.create_task(_send_red_pocket_loop(room_real_id, config))
+    ROOM_SEND_TASKS[room_real_id] = task
+
+
+async def _stop_room_red_pocket_loop(room_real_id: int):
+    """停止某个房间的红包发送循环"""
+    if room_real_id in ROOM_STOP_EVENTS:
+        ROOM_STOP_EVENTS[room_real_id].set()
+    if room_real_id in ROOM_SEND_TASKS:
+        task = ROOM_SEND_TASKS[room_real_id]
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+
+# ---- 事件处理器 ----
 
 async def on_verification_success(event):
     """验证成功事件"""
@@ -81,8 +256,9 @@ async def on_verification_success(event):
     except Exception as e:
         logger.error(f"验证成功后获取分区信息失败 [{room_real_id}]: {e}", exc_info=True)
 
+
 async def on_live(event):
-    """开播事件，收到开播事件后发送红包"""
+    """开播事件：启动红包发送循环"""
     room_real_id = event["room_real_id"]
     logger.info(f"开播事件: [{room_real_id}]")
 
@@ -90,100 +266,28 @@ async def on_live(event):
         logger.warning(f"[{room_real_id}] 缺少live_time，跳过")
         return
 
-    try:
-        # 查找该房间是否需要发送红包
-        target_config = None
-        for room_config in WATCH_ROOMS:
-            if room_config[0] == room_real_id:
-                target_config = room_config
-                break
+    target_config = _find_room_config(room_real_id)
+    if target_config is None:
+        logger.debug(f"[{room_real_id}] 不在发送列表，跳过")
+        return
 
-        if target_config is None:
-            logger.debug(f"[{room_real_id}] 不在发送列表，跳过")
-            return
+    config = _parse_room_config(target_config)
+    await _start_room_red_pocket_loop(room_real_id, config)
 
-        if len(target_config) >= 4:
-            room_id = target_config[0]
-            red_pocket_id = target_config[1]
-            duration = target_config[2] if len(target_config) >= 3 else 300
-            count = target_config[3] if len(target_config) >= 4 else 1
-            danmu_msg = target_config[4] if len(target_config) >= 5 else "老板大气！点点红包抽礼物"
-        elif len(target_config) >= 3:
-            room_id = target_config[0]
-            red_pocket_id = target_config[1]
-            duration = target_config[2] if len(target_config) >= 3 else 300
-            count = 1
-            danmu_msg = target_config[3] if len(target_config) >= 4 else "老板大气！点点红包抽礼物"
-        else:
-            room_id, red_pocket_id, danmu_msg = target_config
-            duration = 300
-            count = 1
-        logger.info(f"检测到目标房间 [{room_id}] 开播，准备发送人气红包，时长: {duration}秒，数量: {count}")
-
-        # 优先从缓存获取房间和分区信息
-        cached = ROOM_AREA_CACHE.get(room_real_id, {})
-        target_uid = cached.get("target_uid")
-        parent_area_id = cached.get("parent_area_id", 0)
-        area_id = cached.get("area_id", 0)
-
-        # 兜底：缓存未命中时实时获取
-        if target_uid is None:
-            live_room = LiveRoom(room_real_id)
-            room_info = await live_room.get_room_play_info()
-            target_uid = room_info["uid"]
-            logger.info(f"缓存未命中，实时获取房间信息: room_id={room_real_id}, target_uid={target_uid}")
-
-            params = {"uids[]": target_uid}
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    "https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids",
-                    params=params,
-                    headers=settings.BROWSER_HEADERS
-                )
-                data = response.json()
-                if data.get("code") == 0 and str(target_uid) in data["data"]:
-                    parent_area_id = data["data"][str(target_uid)]["area_v2_parent_id"]
-                    area_id = data["data"][str(target_uid)]["area_v2_id"]
-                    logger.info(f"实时获取分区信息成功: parent_area_id={parent_area_id}, area_id={area_id}")
-
-        # 发送红包
-        credential = get_credential()
-        gift_live_room = LiveRoom(room_real_id, credential)
-        for i in range(count):
-            for attempt in range(3):
-                try:
-                    result = await gift_live_room.send_red_pocket(
-                        red_pocket_id=red_pocket_id,
-                        danmu_id=5,
-                        danmu_msg=danmu_msg,
-                        context_type=1,
-                        parent_area_id=parent_area_id,
-                        area_id=area_id,
-                        duration=duration
-                    )
-                    logger.info(f"发送红包成功 [{i+1}/{count}]: {result}")
-                    break
-                except Exception as e:
-                    if attempt < 2:
-                        logger.warning(f"发送红包失败 [{i+1}/{count}]，第 {attempt + 1} 次重试: {e}")
-                        await asyncio.sleep(0.5)
-                    else:
-                        logger.error(f"发送红包失败 [{i+1}/{count}]，已重试 3 次: {e}")
-                        raise
-        logger.info(f"全部 {count} 个红包发送完成")
-
-    except Exception as e:
-        logger.error(f"发送红包失败 [{room_real_id}]: {e}", exc_info=True)
 
 async def on_preparing(event):
-    """下播事件"""
-    logger.info(f"下播事件: [{event['room_real_id']}]")
+    """下播事件：停止发送循环"""
+    room_real_id = event["room_real_id"]
+    logger.info(f"下播事件: [{room_real_id}]")
+    await _stop_room_red_pocket_loop(room_real_id)
+
 
 async def register_event_handlers(connector):
     """注册事件处理器"""
     connector._UpConnector__room.on("VERIFICATION_SUCCESSFUL")(on_verification_success)
     connector._UpConnector__room.on("LIVE")(on_live)
     connector._UpConnector__room.on("PREPARING")(on_preparing)
+
 
 async def add_connector(uid, room_id, connectors):
     """添加连接器"""
@@ -198,23 +302,33 @@ async def add_connector(uid, room_id, connectors):
         logger.error(f"添加主播监听失败 UID={uid} (房间 {room_id}): {e}", exc_info=True)
     return False
 
+
 async def close_all_connectors(connectors):
     """关闭所有连接器"""
     logger.info("正在停止所有连接...")
     for uid, connector in connectors.items():
         await connector.disconnect()
 
+
 async def init_resources():
     """初始化资源"""
     bilibili_config = settings.BILIBILI_CONFIG
+    sessdata = bilibili_config.get('sessdata')
+    bili_jct = bilibili_config.get('bili_jct')
+    buvid3 = bilibili_config.get('buvid3')
+    if not buvid3:
+        # 生成默认 buvid3，避免 Credential 缺失该字段
+        import uuid
+        buvid3 = str(uuid.uuid4()).upper()
     config.set_credential(
-        sessdata=bilibili_config.get('sessdata'),
-        bili_jct=bilibili_config.get('bili_jct'),
-        buvid3=bilibili_config.get('buvid3')
+        sessdata=sessdata,
+        bili_jct=bili_jct,
+        buvid3=buvid3
     )
     config.set("LOGIN_UID", bilibili_config.get('login_uid'))
 
     logger.info("BLiveListen凭证已设置。")
+
 
 async def main():
     await init_resources()
@@ -223,11 +337,21 @@ async def main():
     try:
         logger.info(f"开始连接需要监听的直播间: {WATCH_ROOMS}")
 
-        for room_id, *_ in WATCH_ROOMS:
+        for room_config in WATCH_ROOMS:
+            room_id = room_config[0]
             live_room = LiveRoom(room_id)
             room_info = await live_room.get_room_play_info()
             uid = room_info["uid"]
+            live_status = room_info.get("live_status", 0)
+
             await add_connector(uid, room_id, connectors)
+
+            # 如果直播间已在直播中，立即启动红包发送循环
+            if live_status == 1:
+                logger.info(f"直播间 [{room_id}] 当前正在直播，启动红包发送循环")
+                config = _parse_room_config(room_config)
+                await _start_room_red_pocket_loop(room_id, config)
+
             await asyncio.sleep(2)
 
         logger.info(f"所有直播间已连接并运行，当前监听 {len(connectors)} 个主播。")
@@ -244,8 +368,12 @@ async def main():
     except Exception as e:
         logger.critical(f"主程序中发生未处理的错误: {e}", exc_info=True)
     finally:
+        # 停止所有发送循环
+        for room_id in list(ROOM_SEND_TASKS.keys()):
+            await _stop_room_red_pocket_loop(room_id)
         await close_all_connectors(connectors)
         logger.info("所有资源已关闭。程序已终止。")
+
 
 if __name__ == '__main__':
     try:

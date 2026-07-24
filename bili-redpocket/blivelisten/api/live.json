@@ -387,10 +387,11 @@
         "live_statistics": "str: 直播统计数据",
         "statistics": "str: 统计数据",
         "duration": "int: 持续时间",
+        "battery_info": "str(JSON): 电池红包信息，示例：{\"total_battery\":52000,\"award_num\":50,\"join_requirement\":1}",
         "csrf,csrf_token": "要给两个",
         "visit_id": "str: 访问id"
       },
-      "comment": "发送人气红包"
+      "comment": "发送人气红包，当red_pocket_id=0时为电池红包，需传入battery_info"
     }
   }
 }

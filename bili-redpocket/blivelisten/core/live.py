@@ -617,7 +617,8 @@ class LiveRoom:
                               duration: int = 300,
                               platform: str = "pc",
                               build: int = 0,
-                              visit_id: str = ""):
+                              visit_id: str = "",
+                              battery_info: dict = None):
         """
         发送人气红包
 
@@ -632,6 +633,7 @@ class LiveRoom:
             platform: 平台，默认 "pc"
             build: 版本号，默认 0
             visit_id: 访问ID，默认为空
+            battery_info: 电池红包信息，如 {"total_battery": 52000, "award_num": 50, "join_requirement": 1}
         """
         self.credential.raise_for_no_sessdata()
         self.credential.raise_for_no_bili_jct()
@@ -655,6 +657,8 @@ class LiveRoom:
             "duration": duration,
             "visit_id": visit_id
         }
+        if battery_info is not None:
+            data["battery_info"] = json.dumps(battery_info)
         return await request(api['method'], api["url"], data=data, credential=self.credential)
 
 

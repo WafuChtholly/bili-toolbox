@@ -88,6 +88,31 @@ _auto_run_lock = threading.Lock()  # 防止 run_once 并发执行
 AUTO_CONFIG_DIR = ROOT / "data"
 AUTO_CONFIG_FILE = AUTO_CONFIG_DIR / "auto_config.yaml"
 
+# player / redpocket 配置统一放到 data 目录，避免 cookie 泄露在源码目录
+CONFIG_DIR = ROOT / "data"
+PLAYER_CONFIG = CONFIG_DIR / "player_config.yaml"
+PLAYER_OLD_CONFIG = ROOT / "bili-player" / "config.yaml"
+REDPOCKET_CONFIG = CONFIG_DIR / "redpocket_config.yaml"
+REDPOCKET_OLD_CONFIG = ROOT / "bili-redpocket" / "config.yaml"
+
+
+def _ensure_player_config():
+    """迁移 player 旧配置到 data 目录"""
+    if not PLAYER_CONFIG.exists() and PLAYER_OLD_CONFIG.exists():
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.move(str(PLAYER_OLD_CONFIG), str(PLAYER_CONFIG))
+        print(f"[PLAYER] 已迁移旧配置到: {PLAYER_CONFIG}")
+
+
+def _ensure_redpocket_config():
+    """迁移 redpocket 旧配置到 data 目录"""
+    if not REDPOCKET_CONFIG.exists() and REDPOCKET_OLD_CONFIG.exists():
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.move(str(REDPOCKET_OLD_CONFIG), str(REDPOCKET_CONFIG))
+        print(f"[REDPOCKET] 已迁移旧配置到: {REDPOCKET_CONFIG}")
+
 
 def _load_auto_config():
     import yaml
@@ -805,15 +830,22 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
                     if booster_tasks.get(task_id, {}).get("status") == "cancelled":
                         return
                     buf = log_buffers.get(task_id)
-                    if buf is not None:
-                        text = ''.join(buf)
-                        lines = text.splitlines()
-                        if lines:
-                            lines[-1] = f'[BOOSTER] {line}'
-                        else:
-                            lines = [f'[BOOSTER] {line}']
-                        buf.clear()
-                        buf.append('\n'.join(lines) + '\n')
+                    if buf is None:
+                        return
+                    text = ''.join(buf)
+                    lines = text.splitlines()
+                    if not lines:
+                        buf.append(f'[BOOSTER] {line}\n')
+                        return
+                    # 只替换上一个进度条行，避免覆盖普通日志
+                    for i in range(len(lines) - 1, -1, -1):
+                        if lines[i].startswith('[BOOSTER] [PROGRESS]'):
+                            lines[i] = f'[BOOSTER] {line}'
+                            buf.clear()
+                            buf.append('\n'.join(lines) + '\n')
+                            return
+                    # 没有可替换的进度条行时作为新行追加
+                    buf.append(f'[BOOSTER] {line}\n')
             def write(self, s):
                 self.original_stdout.write(s)
                 self._buffer += s
@@ -1131,37 +1163,101 @@ def player_my_videos():
 
 
 PLAYER_DIR = str(ROOT / "bili-player")
-PLAYER_CONFIG = os.path.join(PLAYER_DIR, "config.yaml")
 
 
-def _update_player_config(sessdata, bili_jct, buvid3, login_uid):
+def _migrate_legacy_player_account(cfg: dict) -> dict:
+    """把旧版单账号 bilibili 配置迁移到 bilibili_accounts 列表。"""
+    legacy = cfg.get("bilibili")
+    if legacy and isinstance(legacy, dict):
+        accounts = cfg.setdefault("bilibili_accounts", [])
+        login_uid = str(legacy.get("login_uid", ""))
+        if not any(str(a.get("login_uid", "")) == login_uid for a in accounts):
+            accounts.append({
+                "sessdata": legacy.get("sessdata", ""),
+                "bili_jct": legacy.get("bili_jct", ""),
+                "buvid3": legacy.get("buvid3", ""),
+                "login_uid": login_uid,
+            })
+        cfg.pop("bilibili", None)
+    return cfg
+
+
+def _add_player_account(sessdata, bili_jct, buvid3, login_uid):
+    _ensure_player_config()
     import yaml
     cfg = {}
     if os.path.exists(PLAYER_CONFIG):
         with open(PLAYER_CONFIG, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
-    cfg.setdefault("bilibili", {}).update({
+
+    cfg = _migrate_legacy_player_account(cfg)
+    login_uid = str(login_uid) if login_uid else ""
+    accounts = cfg.setdefault("bilibili_accounts", [])
+
+    account = {
         "sessdata": sessdata,
         "bili_jct": bili_jct,
-        "login_uid": int(login_uid) if login_uid else 0,
-    })
+        "login_uid": login_uid,
+    }
     if buvid3:
-        cfg["bilibili"]["buvid3"] = buvid3
+        account["buvid3"] = buvid3
+
+    existing_idx = None
+    for i, acc in enumerate(accounts):
+        if str(acc.get("login_uid", "")) == login_uid:
+            existing_idx = i
+            break
+
+    if existing_idx is not None:
+        accounts[existing_idx] = account
+    else:
+        accounts.append(account)
+
     with open(PLAYER_CONFIG, "w", encoding="utf-8") as f:
         yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
 
 
 @app.route("/api/player/config")
 def player_config():
+    _ensure_player_config()
     import yaml
     if os.path.exists(PLAYER_CONFIG):
         with open(PLAYER_CONFIG, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
+        cfg = _migrate_legacy_player_account(cfg)
+        accounts = cfg.get("bilibili_accounts", [])
         return jsonify({
-            "sessdata": cfg.get("bilibili", {}).get("sessdata", ""),
-            "login_uid": cfg.get("bilibili", {}).get("login_uid", ""),
+            "accounts": [
+                {
+                    "login_uid": str(a.get("login_uid", "")),
+                    "has_sessdata": bool(a.get("sessdata")),
+                }
+                for a in accounts
+            ],
         })
-    return jsonify({"sessdata": "", "login_uid": ""})
+    return jsonify({"accounts": []})
+
+
+@app.route("/api/player/accounts/<login_uid>", methods=["DELETE"])
+def player_delete_account(login_uid):
+    _ensure_player_config()
+    import yaml
+    cfg = {}
+    if os.path.exists(PLAYER_CONFIG):
+        with open(PLAYER_CONFIG, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+
+    cfg = _migrate_legacy_player_account(cfg)
+    accounts = cfg.get("bilibili_accounts", [])
+    target = str(login_uid)
+    new_accounts = [a for a in accounts if str(a.get("login_uid", "")) != target]
+    if len(new_accounts) == len(accounts):
+        return jsonify({"success": False, "message": "账号不存在"})
+
+    cfg["bilibili_accounts"] = new_accounts
+    with open(PLAYER_CONFIG, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+    return jsonify({"success": True, "message": "已删除"})
 
 
 @app.route("/api/player/login/qrcode")
@@ -1220,7 +1316,7 @@ def player_poll(qrcode_key):
             buvid3 = cookies.get("buvid3", "")
             login_uid = cookies.get("DedeUserID", "")
 
-            _update_player_config(sessdata, bili_jct, buvid3, login_uid)
+            _add_player_account(sessdata, bili_jct, buvid3, login_uid)
             return jsonify({"success": True, "message": "登录成功", "login_uid": login_uid})
         elif code == 86038:
             return jsonify({"success": False, "message": "二维码已过期"})
@@ -1357,12 +1453,13 @@ def _read_watch_rooms():
     rooms = []
     pattern = (
         r"\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,"
-        r'\s*"([^"]+)"\s*'
+        r'\s*"([^"]*)"\s*'
         r'(?:,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*)?'
+        r'(?:,\s*"battery"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*)?'
         r"\)"
     )
     for m in re.finditer(pattern, rooms_text):
-        rooms.append({
+        room = {
             "room_id": int(m.group(1)),
             "red_pocket_id": int(m.group(2)),
             "duration": int(m.group(3)),
@@ -1373,7 +1470,13 @@ def _read_watch_rooms():
             "face": m.group(8) or "",
             "uid": int(m.group(9)) if m.group(9) else 0,
             "cover_from_user": m.group(10) or "",
-        })
+        }
+        # 电池红包额外字段
+        if m.group(11) is not None:
+            room["total_battery"] = int(m.group(11))
+            room["award_num"] = int(m.group(12))
+            room["join_requirement"] = int(m.group(13))
+        rooms.append(room)
     return rooms
 
 
@@ -1396,6 +1499,12 @@ def _write_watch_rooms(rooms):
         if r.get("uname"):
             parts += [f'"{r["uname"]}"', f'"{r.get("title", "")}"', f'"{r.get("face", "")}"',
                        str(r.get("uid", 0)), f'"{r.get("cover_from_user", "")}"']
+        # 电池红包：red_pocket_id=0 且包含 battery 字段
+        if r.get("red_pocket_id") == 0 or r.get("total_battery") is not None:
+            # 确保有基础 metadata 字段
+            if not r.get("uname"):
+                parts += ['""', '""', '""', '0', '""']
+            parts += ['"battery"', str(r.get("total_battery", 20)), str(r.get("award_num", 10)), str(r.get("join_requirement", 0))]
         lines.append("    (" + ", ".join(parts) + ")")
 
     new_block = "WATCH_ROOMS = [\n" + ",\n".join(lines) + "\n]"
@@ -1412,8 +1521,7 @@ def redpocket_rooms():
 @app.route("/api/redpocket/room", methods=["POST"])
 def redpocket_add_room():
     data = request.json
-    rooms = _read_watch_rooms()
-    rooms.append({
+    room = {
         "room_id": int(data["room_id"]),
         "red_pocket_id": int(data.get("red_pocket_id", 189)),
         "duration": int(data.get("duration", 600)),
@@ -1424,7 +1532,15 @@ def redpocket_add_room():
         "face": data.get("face", ""),
         "uid": int(data.get("uid", 0)),
         "cover_from_user": data.get("cover_from_user", ""),
-    })
+    }
+    # 电池红包
+    if int(data.get("red_pocket_id", 189)) == 0:
+        room["danmu_msg"] = ""
+        room["total_battery"] = int(data.get("total_battery", 20))
+        room["award_num"] = int(data.get("award_num", 10))
+        room["join_requirement"] = int(data.get("join_requirement", 0))
+    rooms = _read_watch_rooms()
+    rooms.append(room)
     _write_watch_rooms(rooms)
     return jsonify({"success": True, "rooms": rooms})
 
@@ -1445,13 +1561,25 @@ def redpocket_update_room(index):
     if not (0 <= index < len(rooms)):
         return jsonify({"success": False, "message": "索引无效"}), 400
     data = request.json
+    red_pocket_id = int(data.get("red_pocket_id", rooms[index]["red_pocket_id"]))
     rooms[index].update({
         "room_id": int(data.get("room_id", rooms[index]["room_id"])),
-        "red_pocket_id": int(data.get("red_pocket_id", rooms[index]["red_pocket_id"])),
+        "red_pocket_id": red_pocket_id,
         "duration": int(data.get("duration", rooms[index].get("duration", 600))),
         "count": int(data.get("count", rooms[index].get("count", 1))),
         "danmu_msg": data.get("danmu_msg", rooms[index].get("danmu_msg", "")),
     })
+    # 电池红包字段
+    if red_pocket_id == 0:
+        rooms[index]["danmu_msg"] = ""
+        rooms[index]["total_battery"] = int(data.get("total_battery", rooms[index].get("total_battery", 20)))
+        rooms[index]["award_num"] = int(data.get("award_num", rooms[index].get("award_num", 10)))
+        rooms[index]["join_requirement"] = int(data.get("join_requirement", rooms[index].get("join_requirement", 0)))
+    else:
+        # 非电池红包，移除电池字段
+        rooms[index].pop("total_battery", None)
+        rooms[index].pop("award_num", None)
+        rooms[index].pop("join_requirement", None)
     _write_watch_rooms(rooms)
     return jsonify({"success": True, "rooms": rooms})
 
@@ -1527,9 +1655,10 @@ def redpocket_poll(qrcode_key):
 
 
 def _update_redpocket_config(sessdata, bili_jct, buvid3, login_uid):
+    _ensure_redpocket_config()
     import yaml
 
-    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    config_path = REDPOCKET_CONFIG
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
@@ -1554,9 +1683,10 @@ def _update_redpocket_config(sessdata, bili_jct, buvid3, login_uid):
 
 @app.route("/api/redpocket/config")
 def redpocket_config():
+    _ensure_redpocket_config()
     import yaml
 
-    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    config_path = REDPOCKET_CONFIG
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
@@ -1641,9 +1771,10 @@ def _livehelper_running():
 
 
 def _read_livehelper_config():
-    """读取 config.yaml 中的 livehelper 配置"""
+    """读取 redpocket 配置中的 livehelper 配置"""
+    _ensure_redpocket_config()
     import yaml
-    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    config_path = REDPOCKET_CONFIG
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
@@ -1652,9 +1783,10 @@ def _read_livehelper_config():
 
 
 def _write_livehelper_config(lh_cfg):
-    """更新 config.yaml 中的 livehelper 配置"""
+    """更新 redpocket 配置中的 livehelper 配置"""
+    _ensure_redpocket_config()
     import yaml
-    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    config_path = REDPOCKET_CONFIG
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
@@ -1737,8 +1869,9 @@ def livehelper_stop():
 
 @app.route("/api/livehelper/config", methods=["GET"])
 def livehelper_config_get():
+    _ensure_redpocket_config()
     import yaml
-    config_path = os.path.join(REDPOCKET_DIR, "config.yaml")
+    config_path = REDPOCKET_CONFIG
     cfg = {"enabled": True, "room_id": "", "interval_seconds": 60,
            "interval_jitter_seconds": 10, "skip_duplicate": True,
            "force_qr_login": False, "credential_file": "bilibili.json", "quotes": []}
