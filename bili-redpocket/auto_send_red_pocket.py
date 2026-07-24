@@ -8,8 +8,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
 from typing import *
+from pathlib import Path
 from loguru import logger
 import httpx
+import yaml
 
 from blivelisten.connect import UpConnector
 from blivelisten.core.live import LiveRoom
@@ -39,14 +41,50 @@ logger.add(
     format='{time:YYYY-MM-DD HH:mm:ss.SSS} | [REDPOCKET] {level: <8} | {name}:{function}:{line} - {message}'
 )
 
-# 需要监听并自动发红包的直播间配置
-# 格式: [(room_id, red_pocket_id, duration, max_count, danmu_msg, ...), ...]
-#   max_count: 发送上限，0=无上限
-# 人气红包: (room_id, red_pocket_id, duration, max_count, danmu_msg, uname, title, face, uid, cover)
-# 电池红包: (room_id, 0, duration, max_count, "", uname, title, face, uid, cover, "battery", total_battery, award_num, join_requirement)
-WATCH_ROOMS = [
-    (1991380721, 0, 600, 2, "", "华芙喵wafu", "看会好妹妹", "https://i0.hdslb.com/bfs/face/357323aa1f445222ceed5946122c9fb4633ad0ce.jpg", 3546857487731451, "https://i0.hdslb.com/bfs/live/new_room_cover/21819a6ccfb7e54857450332f3cde3b4f2f23a68.jpg", "battery", 20, 10, 0)
-]
+# 需要监听并自动发红包的直播间配置，存储在 data/redpocket_rooms.yaml
+ROOMS_CONFIG_FILE = Path(__file__).resolve().parent.parent / "data" / "redpocket_rooms.yaml"
+
+
+def _load_watch_rooms() -> list:
+    """从配置文件加载 WATCH_ROOMS，返回元组列表"""
+    try:
+        if not ROOMS_CONFIG_FILE.exists():
+            logger.warning(f"未找到房间配置文件: {ROOMS_CONFIG_FILE}")
+            return []
+        with open(ROOMS_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        rooms = []
+        for r in data.get("rooms", []):
+            room_id = int(r["room_id"])
+            red_pocket_id = int(r.get("red_pocket_id", 189))
+            duration = int(r.get("duration", 600))
+            count = int(r.get("count", 1))
+            danmu_msg = r.get("danmu_msg", "")
+            uname = r.get("uname", "")
+            title = r.get("title", "")
+            face = r.get("face", "")
+            uid = int(r.get("uid", 0))
+            cover = r.get("cover_from_user", "")
+
+            is_battery = red_pocket_id == 0 or r.get("total_battery") is not None
+            if is_battery:
+                danmu_msg = ""
+                tb = int(r.get("total_battery", 20))
+                an = int(r.get("award_num", 10))
+                jr = int(r.get("join_requirement", 0))
+                t = (room_id, red_pocket_id, duration, count, danmu_msg,
+                     uname, title, face, uid, cover, "battery", tb, an, jr)
+            else:
+                t = (room_id, red_pocket_id, duration, count, danmu_msg,
+                     uname, title, face, uid, cover)
+            rooms.append(t)
+        return rooms
+    except Exception as e:
+        logger.error(f"加载房间配置文件失败: {e}")
+        return []
+
+
+WATCH_ROOMS = _load_watch_rooms()
 
 ROOM_AREA_CACHE = {}
 

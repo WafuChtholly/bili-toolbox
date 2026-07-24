@@ -95,46 +95,10 @@ def fetch_plaintext_proxy_list(log, url, label, req_timeout=15):
         return []
 
 
-def fetch_from_shiftytr(log):
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt',
-        'ShiftyTR GitHub list', 15)
-
-
-def fetch_from_roosterkid(log):
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt',
-        'roosterkid GitHub list', 15)
-
-
-def fetch_from_mmpx12(log):
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/mmpx12/proxy-list/master/http.txt',
-        'mmpx12 GitHub list', 15)
-
-
 def fetch_from_monosans(log):
     return fetch_plaintext_proxy_list(log,
         'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
         'monosans GitHub list', 8)
-
-
-def fetch_from_clarketm(log):
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt',
-        'clarketm GitHub list', 8)
-
-
-def fetch_from_proxy4parsing(log):
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt',
-        'proxy4parsing GitHub list', 8)
-
-
-def fetch_from_zevtyardt(log):
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt',
-        'zevtyardt GitHub list', 8)
 
 
 def fetch_from_scdnio(log, max_count=100):
@@ -283,13 +247,7 @@ def get_total_proxies(log, stop_event=None):
         ('89ip', fetch_from_89ip),
         ('zdopen', fetch_from_zdopen),
         ('scdnio', fetch_from_scdnio),
-        ('mmpx12', fetch_from_mmpx12),
-        ('shiftytr', fetch_from_shiftytr),
-        ('roosterkid', fetch_from_roosterkid),
-        ('proxy4parsing', fetch_from_proxy4parsing),
-        ('zevtyardt', fetch_from_zevtyardt),
         ('monosans', fetch_from_monosans),
-        ('clarketm', fetch_from_clarketm),
         ('geonode', fetch_from_geonode),
     ]
     all_proxies = set()
@@ -322,7 +280,7 @@ def time_fmt(seconds):
 def pbar(n, total):
     progress = '\u2501' * int(n / total * 50)
     blank = ' ' * (50 - len(progress))
-    return f'\r{n}/{total} {progress}{blank}'
+    return f'{n}/{total} {progress}{blank}'
 
 
 # =========================================================================
@@ -398,14 +356,15 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
     bv = video['bvid']
     info = video['info']
 
-    random.shuffle(total_proxies)
+    proxies = list(total_proxies)
+    random.shuffle(proxies)
 
     active_proxies = []
     count = [0]
 
-    def filter_worker(proxies):
-        total = len(total_proxies)
-        for proxy in proxies:
+    def filter_worker(proxies_slice):
+        total = len(proxies)
+        for proxy in proxies_slice:
             if stop_event and stop_event.is_set():
                 return
             if probe_once(proxy, bv):
@@ -413,16 +372,16 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
             count[0] += 1
             n = count[0]
             if n % 50 == 0 or n == total:
-                print(f'{pbar(n, total)} {100*n/total:.1f}% [valid: {len(active_proxies)}]   ', end='')
+                print(f'\r[PROGRESS] {pbar(n, total)} {100*n/total:.1f}% [valid: {len(active_proxies)}]   ', end='')
 
-    log(f'  filtering {len(total_proxies)} proxies for {bv}...')
+    log(f'  filtering {len(proxies)} proxies for {bv}...')
     start_filter = datetime.now()
-    thread_proxy_num = len(total_proxies) // thread_num
+    thread_proxy_num = len(proxies) // thread_num
     threads = []
     for i in range(thread_num):
         start = i * thread_proxy_num
         end = start + thread_proxy_num if i < (thread_num - 1) else None
-        t = threading.Thread(target=filter_worker, args=(total_proxies[start:end],))
+        t = threading.Thread(target=filter_worker, args=(proxies[start:end],))
         t.start()
         threads.append(t)
     for t in threads:
@@ -456,6 +415,30 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
 #  四、主入口（webui 原始循环 + log_fn / stop_event / logger_name）
 # =========================================================================
 
+def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, video_lock):
+    """单个视频的 boost 任务，供多视频并发调用。"""
+    if stop_event and stop_event.is_set():
+        return
+    if v['current'] >= target:
+        log(f'  {v["bvid"]} already at target ({v["current"]}), skipping')
+        return
+
+    log(f'--- boosting {v["bvid"]} (current: {v["current"]}, target: {target}) ---')
+    hits = boost_video_once(v, total_proxies, round_num, log, stop_event=stop_event)
+    with video_lock:
+        v['total_hits'] += hits
+
+    try:
+        fresh = fetch_video_info(v['bvid'])
+        with video_lock:
+            v['current'] = fresh['stat']['view']
+        gap = max(0, target - v['current'])
+        log(f'  {v["bvid"]} views: {v["current"]} (+{v["current"] - v["initial"]})')
+        log(f'[RESULT] video|{v["bvid"]}|{v["current"]}|{v["current"] - v["initial"]}|{v["total_hits"]}|{gap}')
+    except Exception as e:
+        log(f'  failed to check views: {e}')
+
+
 def main(bv_input, target_input, stop_event=None):
     """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。"""
     log = print
@@ -482,7 +465,9 @@ def main(bv_input, target_input, stop_event=None):
                 'current': info['stat']['view'],
                 'total_hits': 0,
             })
+            gap = max(0, target - info['stat']['view'])
             log(f'  {info["bvid"]}: initial views = {info["stat"]["view"]}')
+            log(f'[RESULT] video|{info["bvid"]}|{info["stat"]["view"]}|0|0|{gap}')
         except Exception as e:
             log(f'  failed: {e}')
 
@@ -528,25 +513,18 @@ def main(bv_input, target_input, stop_event=None):
             log('代理列表为空，跳过本轮')
             continue
 
-        for v in videos:
+        # 多视频完全并发执行
+        video_lock = threading.Lock()
+        pending = [v for v in videos if v['current'] < target]
+        threads = []
+        for v in pending:
             if stop_event and stop_event.is_set():
                 break
-            if v['current'] >= target:
-                log(f'\n  {v["bvid"]} already at target ({v["current"]}), skipping')
-                continue
-
-            log(f'\n--- boosting {v["bvid"]} (current: {v["current"]}, target: {target}) ---')
-            hits = boost_video_once(v, total_proxies, round_num, log, stop_event=stop_event)
-            v['total_hits'] += hits
-
-            try:
-                fresh = fetch_video_info(v['bvid'])
-                v['current'] = fresh['stat']['view']
-                log(f'  {v["bvid"]} views: {v["current"]} (+{v["current"] - v["initial"]})')
-            except Exception as e:
-                log(f'  failed to check views: {e}')
-
-            sleep(random.uniform(1, 3))
+            t = threading.Thread(target=_boost_single_video, args=(v, total_proxies, round_num, target, log, stop_event, video_lock))
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
 
         # check if any video grew this round
         any_growth = False
@@ -564,14 +542,20 @@ def main(bv_input, target_input, stop_event=None):
                 log(f'  no growth for {no_growth_streak} consecutive rounds, stopping')
                 break
 
+        reached = sum(1 for v in videos if v['current'] >= target)
+        total_clicks = sum(v['total_hits'] for v in videos)
+        total_growth = sum(v['current'] - v['initial'] for v in videos)
         log(f'\n========== ROUND {round_num} SUMMARY ==========')
         for v in videos:
             log(f'  {v["bvid"]}: {v["current"]} (+{v["current"] - v["initial"]}) | hits: {v["total_hits"]}')
+        log(f'[RESULT] round|{round_num}|{len(videos)}|{reached}|{total_clicks}|{total_growth}')
 
     log(f'\nFinish at {datetime.now().strftime("%H:%M:%S")}')
     log(f'Final Statistics:')
     for v in videos:
+        gap = max(0, target - v['current'])
         log(f'  {v["bvid"]}: {v["initial"]} -> {v["current"]} (+{v["current"] - v["initial"]}) | total hits: {v["total_hits"]}')
+        log(f'[RESULT] video|{v["bvid"]}|{v["current"]}|{v["current"] - v["initial"]}|{v["total_hits"]}|{gap}')
 
 
 if __name__ == '__main__':

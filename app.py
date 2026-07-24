@@ -1336,6 +1336,7 @@ def player_poll(qrcode_key):
 
 REDPOCKET_DIR = str(ROOT / "bili-redpocket")
 REDPOCKET_SCRIPT = os.path.join(REDPOCKET_DIR, "auto_send_red_pocket.py")
+REDPOCKET_ROOMS_CONFIG = CONFIG_DIR / "redpocket_rooms.yaml"
 REDPOCKET_WEBUI = os.path.join(REDPOCKET_DIR, "web_ui.py")
 
 redpocket_process = None
@@ -1438,79 +1439,28 @@ def redpocket_stop():
         return jsonify({"success": False, "message": str(e)})
 
 
-# ---- 红包房间管理（直接读写源文件中的 WATCH_ROOMS） ----
+# ---- 红包房间管理（读写 data/redpocket_rooms.yaml） ----
 
 def _read_watch_rooms():
-    """解析 auto_send_red_pocket.py 中的 WATCH_ROOMS"""
-    if not os.path.exists(REDPOCKET_SCRIPT):
+    """从 redpocket_rooms.yaml 中读取监听房间列表"""
+    import yaml
+    if not REDPOCKET_ROOMS_CONFIG.exists():
         return []
-    with open(REDPOCKET_SCRIPT, "r", encoding="utf-8") as f:
-        content = f.read()
-    match = re.search(r"WATCH_ROOMS\s*=\s*\[(.*?)\]", content, re.DOTALL)
-    if not match:
+    try:
+        with open(REDPOCKET_ROOMS_CONFIG, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("rooms", [])
+    except Exception as e:
+        print(f"[REDPOCKET] 读取房间配置失败: {e}")
         return []
-    rooms_text = match.group(1)
-    rooms = []
-    pattern = (
-        r"\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,"
-        r'\s*"([^"]*)"\s*'
-        r'(?:,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*(\d+)\s*,\s*"([^"]*)"\s*)?'
-        r'(?:,\s*"battery"\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*)?'
-        r"\)"
-    )
-    for m in re.finditer(pattern, rooms_text):
-        room = {
-            "room_id": int(m.group(1)),
-            "red_pocket_id": int(m.group(2)),
-            "duration": int(m.group(3)),
-            "count": int(m.group(4)),
-            "danmu_msg": m.group(5) or "",
-            "uname": m.group(6) or "",
-            "title": m.group(7) or "",
-            "face": m.group(8) or "",
-            "uid": int(m.group(9)) if m.group(9) else 0,
-            "cover_from_user": m.group(10) or "",
-        }
-        # 电池红包额外字段
-        if m.group(11) is not None:
-            room["total_battery"] = int(m.group(11))
-            room["award_num"] = int(m.group(12))
-            room["join_requirement"] = int(m.group(13))
-        rooms.append(room)
-    return rooms
 
 
 def _write_watch_rooms(rooms):
-    """将 WATCH_ROOMS 写回 auto_send_red_pocket.py"""
-    if not os.path.exists(REDPOCKET_SCRIPT):
-        return
-    with open(REDPOCKET_SCRIPT, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    lines = []
-    for r in rooms:
-        parts = [
-            str(r["room_id"]),
-            str(r["red_pocket_id"]),
-            str(r.get("duration", 600)),
-            str(r.get("count", 1)),
-            f'"{r.get("danmu_msg", "")}"',
-        ]
-        if r.get("uname"):
-            parts += [f'"{r["uname"]}"', f'"{r.get("title", "")}"', f'"{r.get("face", "")}"',
-                       str(r.get("uid", 0)), f'"{r.get("cover_from_user", "")}"']
-        # 电池红包：red_pocket_id=0 且包含 battery 字段
-        if r.get("red_pocket_id") == 0 or r.get("total_battery") is not None:
-            # 确保有基础 metadata 字段
-            if not r.get("uname"):
-                parts += ['""', '""', '""', '0', '""']
-            parts += ['"battery"', str(r.get("total_battery", 20)), str(r.get("award_num", 10)), str(r.get("join_requirement", 0))]
-        lines.append("    (" + ", ".join(parts) + ")")
-
-    new_block = "WATCH_ROOMS = [\n" + ",\n".join(lines) + "\n]"
-    content = re.sub(r"WATCH_ROOMS\s*=\s*\[(.*?)\]", new_block, content, flags=re.DOTALL)
-    with open(REDPOCKET_SCRIPT, "w", encoding="utf-8") as f:
-        f.write(content)
+    """将监听房间列表写入 redpocket_rooms.yaml"""
+    import yaml
+    REDPOCKET_ROOMS_CONFIG.parent.mkdir(parents=True, exist_ok=True)
+    with open(REDPOCKET_ROOMS_CONFIG, "w", encoding="utf-8") as f:
+        yaml.dump({"rooms": rooms}, f, allow_unicode=True, default_flow_style=False)
 
 
 @app.route("/api/redpocket/rooms")
