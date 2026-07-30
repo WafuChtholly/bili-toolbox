@@ -2165,23 +2165,20 @@ def collection_orphan_videos():
         # 4) 筛选初步散落稿件（不在任何合集中的）
         prelim_orphans = [v for v in normal_videos if v["aid"] not in season_aids]
 
-        # 4b) 对散落稿件并发调用视频详情 API，检查 state 和 is_cooperation
-        #     空间 API 的 vlist 不含 state 字段，必须逐个查
+        # 4b) 对散落稿件并发调用视频详情 API，检查 state（仅自己可见等）
+        #     联投过滤已在 3b 通过 mid 判断：mid==自己 的是发起人，保留；mid!=自己 的是参与者，已过滤
         from bilibili_api.video import Video as BiliVideo
         hidden_count = 0
-        coop_count2 = 0
 
         async def _check_video_state(v):
-            """返回 (aid, state, is_cooperation)"""
+            """返回 (aid, state)"""
             try:
                 vid = BiliVideo(aid=v["aid"], credential=credential)
                 info = await vid.get_info()
                 _state = info.get("state", 0)
-                _rights = info.get("rights", {})
-                _is_coop = _rights.get("is_cooperation", 0)
-                return (v["aid"], _state, _is_coop)
+                return (v["aid"], _state)
             except Exception:
-                return (v["aid"], 0, 0)
+                return (v["aid"], 0)
 
         loop3 = asyncio.new_event_loop()
         try:
@@ -2196,18 +2193,14 @@ def collection_orphan_videos():
         finally:
             loop3.close()
 
-        # 根据检查结果过滤
+        # 根据检查结果过滤（仅过滤不可见稿件）
         exclude_aids = set()
-        for aid, state, is_coop in results:
-            if is_coop in (1, True, "1"):
-                exclude_aids.add(aid)
-                coop_count2 += 1
-            elif state != 0:
+        for aid, state in results:
+            if state != 0:
                 exclude_aids.add(aid)
                 hidden_count += 1
 
         orphans = [v for v in prelim_orphans if v["aid"] not in exclude_aids]
-        coop_count += coop_count2
 
         # debug
         debug_orphan_samples = []
