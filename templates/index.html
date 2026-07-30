@@ -275,6 +275,28 @@ select.form-input option {
 }
 textarea.form-input { min-height: 80px; resize: vertical; }
 
+/* 关键词 Tag Chips */
+.coll-kw-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px 3px 12px;
+  background: rgba(251,114,153,0.12);
+  border: 1px solid rgba(251,114,153,0.25);
+  border-radius: 20px;
+  font-size: 13px; color: var(--pink-hover);
+  animation: chipIn 0.15s ease-out;
+  transition: background var(--transition), border-color var(--transition);
+}
+.coll-kw-chip:hover { background: rgba(251,114,153,0.2); border-color: rgba(251,114,153,0.4); }
+.coll-kw-text { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coll-kw-x {
+  cursor: pointer; font-size: 15px; line-height: 1;
+  color: rgba(251,114,153,0.5); margin-left: 2px;
+  transition: color var(--transition);
+}
+.coll-kw-x:hover { color: var(--pink); }
+#coll-kw-tags:focus-within { border-color: var(--pink); box-shadow: 0 0 0 3px rgba(251,114,153,0.1); }
+@keyframes chipIn { from { opacity:0; transform:scale(0.85); } to { opacity:1; transform:scale(1); } }
+
 .checkbox-row { display: flex; gap: 16px; flex-wrap: wrap; }
 .checkbox-item {
   display: flex; align-items: center; gap: 6px;
@@ -1506,7 +1528,18 @@ textarea.form-input { min-height: 80px; resize: vertical; }
       <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">
         当合集因不可抗力解散后，稿件会散落在投稿列表中。本工具自动检测散落稿件，智能匹配目标合集，一键归位。
       </p>
-      <button class="btn btn-primary" id="coll-scan-btn" onclick="collScan()" style="width:100%">🔍 一键扫描散落稿件</button>
+      <div class="form-group" style="margin-bottom:14px">
+        <label class="form-label" style="font-size:13px;display:flex;align-items:center;gap:6px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          自定义分组关键词
+          <span style="color:var(--text-tertiary);font-weight:normal;font-size:12px">标题含该关键词的稿件归为一组</span>
+        </label>
+        <div id="coll-kw-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px 10px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm);transition:border-color var(--transition);cursor:text" onclick="document.getElementById('coll-kw-input').focus()">
+          <input id="coll-kw-input" type="text" placeholder="输入关键词后按回车添加" style="flex:1;min-width:120px;border:none;background:transparent;color:var(--text-primary);font-size:13px;outline:none;padding:2px 0" onkeydown="collKwKeydown(event)">
+        </div>
+        <input type="hidden" id="coll-user-keywords">
+      </div>
+      <button class="btn btn-primary" id="coll-scan-btn" onclick="collScan()" style="width:100%">🔍 扫描散落稿件并智能分组</button>
     </div>
   </div>
 
@@ -3362,6 +3395,35 @@ function collLoadStatus(){
   }).catch(()=>{});
 }
 
+/* ---- 关键词 Tag 输入 ---- */
+function collKwKeydown(e){
+  if(e.key==='Enter'||e.key===','){
+    e.preventDefault();
+    const inp=document.getElementById('coll-kw-input');
+    const val=inp.value.trim().replace(/,$/,'');
+    if(val.length>=2) collKwAddTag(val);
+    inp.value='';
+  } else if(e.key==='Backspace'&&!e.target.value){
+    const tags=document.querySelectorAll('#coll-kw-tags .coll-kw-chip');
+    if(tags.length) tags[tags.length-1].remove();
+  }
+}
+function collKwAddTag(text){
+  const container=document.getElementById('coll-kw-tags');
+  const inp=document.getElementById('coll-kw-input');
+  // 去重
+  const existing=[...container.querySelectorAll('.coll-kw-chip')].map(c=>c.dataset.kw);
+  if(existing.includes(text)) return;
+  const chip=document.createElement('span');
+  chip.className='coll-kw-chip';
+  chip.dataset.kw=text;
+  chip.innerHTML=`<span class="coll-kw-text">${text}</span><span class="coll-kw-x" onclick="this.parentElement.remove()">&times;</span>`;
+  container.insertBefore(chip,inp);
+}
+function collKwGetTags(){
+  return [...document.querySelectorAll('#coll-kw-tags .coll-kw-chip')].map(c=>c.dataset.kw);
+}
+
 function collScan(){
   const btn=document.getElementById('coll-scan-btn');
   btn.disabled=true;
@@ -3370,9 +3432,16 @@ function collScan(){
   document.getElementById('coll-results').style.display='none';
   document.getElementById('coll-exec-result-card').style.display='none';
 
-  fetch('/api/collection/orphan-videos').then(r=>r.json()).then(d=>{
+  // 收集用户自定义关键词（从 tag chips 读取）
+  const userKeywords=collKwGetTags();
+
+  fetch('/api/collection/orphan-videos',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({user_keywords:userKeywords})
+  }).then(r=>r.json()).then(d=>{
     btn.disabled=false;
-    btn.textContent='🔍 一键扫描散落稿件';
+    btn.textContent='🔍 扫描散落稿件并智能分组';
     document.getElementById('coll-progress-card').style.display='none';
 
     if(!d.success){
@@ -3432,7 +3501,7 @@ function collScan(){
     collRenderSeasons(d.seasons);
   }).catch(e=>{
     btn.disabled=false;
-    btn.textContent='🔍 一键扫描散落稿件';
+    btn.textContent='🔍 扫描散落稿件并智能分组';
     document.getElementById('coll-progress-card').style.display='none';
     alert('请求失败: '+e);
   });

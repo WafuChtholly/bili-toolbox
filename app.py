@@ -1987,7 +1987,7 @@ def collection_season_sections(season_id):
         return jsonify({"success": False, "message": str(e)})
 
 
-@app.route("/api/collection/orphan-videos")
+@app.route("/api/collection/orphan-videos", methods=["GET", "POST"])
 def collection_orphan_videos():
     """检测散落稿件：获取全部投稿，对比所有合集内稿件，找出不在任何合集中的视频，并智能匹配。
     使用 bilibili_api 公开 API (api.bilibili.com) 获取合集内视频，避免 member.bilibili.com 认证问题。
@@ -1995,6 +1995,15 @@ def collection_orphan_videos():
     sessdata, bili_jct, mid = _coll_cred()
     if not sessdata or not mid:
         return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
+
+    # 获取用户自定义分组关键词
+    user_keywords = []
+    if request.method == "POST":
+        body = request.json or {}
+        user_keywords = [kw for kw in (body.get("user_keywords") or []) if isinstance(kw, str) and len(kw) >= 2]
+    if user_keywords:
+        print(f"[COLLECTION] 用户自定义关键词: {user_keywords}")
+
     try:
         from bilibili_api import Credential
         from bilibili_api.user import User, VideoOrder
@@ -2209,7 +2218,7 @@ def collection_orphan_videos():
             })
 
         # 5) 智能匹配
-        matches = _smart_match(orphans, seasons)
+        matches = _smart_match(orphans, seasons, user_keywords)
 
         return jsonify({
             "success": True,
@@ -2228,7 +2237,7 @@ def collection_orphan_videos():
         return jsonify({"success": False, "message": f"{e}\n{traceback.format_exc()}"})
 
 
-def _smart_match(orphans: list[dict], seasons: list[dict]) -> list[dict]:
+def _smart_match(orphans: list[dict], seasons: list[dict], user_keywords: list[str] = None) -> list[dict]:
     """智能匹配散落稿件到合集。
 
     匹配策略：
@@ -2300,7 +2309,7 @@ def _smart_match(orphans: list[dict], seasons: list[dict]) -> list[dict]:
             unmatched.append(v)
 
     # 对未匹配稿件按标题前缀分组，建议新建合集
-    groups = _group_by_prefix(unmatched)
+    groups = _group_by_prefix(unmatched, user_keywords)
     for g in groups:
         matches.append({
             "video": None,
@@ -2332,17 +2341,36 @@ def _extract_tags(title: str) -> set:
     return set(t for t in raw if t not in _GENERIC_TAGS)
 
 
-def _group_by_prefix(videos: list[dict]) -> list[dict]:
-    """按标题相似度分组：先按共享括号标记，再按公共前缀。"""
+def _group_by_prefix(videos: list[dict], user_keywords: list[str] = None) -> list[dict]:
+    """按标题相似度分组：先按用户关键词，再按共享括号标记，最后按公共前缀。"""
     if not videos:
         return []
+
+    result = []  # 最终结果列表
+    used = [False] * len(videos)
+
+    # 策略0：按用户自定义关键词分组（最高优先级）
+    if user_keywords:
+        for kw in user_keywords:
+            group = []
+            for i in range(len(videos)):
+                if not used[i] and kw in videos[i]["title"]:
+                    group.append(videos[i])
+                    used[i] = True
+            if len(group) >= 2:
+                result.append({"name": kw, "videos": group})
+            elif len(group) == 1:
+                # 单个匹配的不强制成组，回退给后续策略
+                for i in range(len(videos)):
+                    if used[i] and videos[i] is group[0]:
+                        used[i] = False
+                        break
 
     # 提取每个视频的非通用括号标记
     vid_info = [(_extract_tags(v["title"]), v) for v in videos]
 
     # 策略1：按共享括号标记贪心分组
-    groups = []
-    used = [False] * len(vid_info)
+    auto_groups = []  # 自动分组（需要后续命名）
 
     for i in range(len(vid_info)):
         if used[i] or not vid_info[i][0]:
@@ -2357,7 +2385,7 @@ def _group_by_prefix(videos: list[dict]) -> list[dict]:
                 group.append(vid_info[j][1])
                 used[j] = True
         if len(group) >= 2:
-            groups.append(group)
+            auto_groups.append(group)
         else:
             used[i] = False  # 单个不算组，回退
 
@@ -2371,15 +2399,13 @@ def _group_by_prefix(videos: list[dict]) -> list[dict]:
             if len(prefix.strip()) >= 3:
                 current_group.append(v)
             else:
-                groups.append(current_group)
+                auto_groups.append(current_group)
                 current_group = [v]
-        groups.append(current_group)
+        auto_groups.append(current_group)
 
-    # 构建结果
-    result = []
-    for g in groups:
+    # 为自动分组生成名称
+    for g in auto_groups:
         if len(g) >= 2:
-            # 建议名称：优先取共享括号标记，否则取公共前缀
             tag_sets = [_extract_tags(v["title"]) for v in g]
             shared = tag_sets[0]
             for ts in tag_sets[1:]:
@@ -2529,24 +2555,24 @@ def collection_add_to_season():
                 "charging_pay": 0,
             })
 
-        # 分批添加（每批最多 20 个）
+        # 分批添加（每批最多 20 个），批次间冷却 2 秒
+        import time as _time
         added = 0
         errors = []
         for i in range(0, len(episodes), 20):
             batch = episodes[i:i + 20]
-            resp = httpx.post(
+            rdata = _coll_post_with_retry(
                 "https://member.bilibili.com/x2/creative/web/season/section/episodes/add",
-                params={"csrf": bili_jct},
-                json={"sectionId": section_id, "episodes": batch},
-                headers={**COLL_HEADERS, "Content-Type": "application/json"},
-                cookies=cookies, timeout=30,
+                cookies, {"sectionId": section_id, "episodes": batch}, bili_jct,
             )
-            rdata = resp.json()
             print(f"[COLLECTION] add batch {i//20+1}: code={rdata.get('code')} msg={rdata.get('message')}")
             if rdata.get("code") == 0:
                 added += len(batch)
             else:
                 errors.append(f"批次 {i // 20 + 1}: {rdata.get('message', '未知错误')}")
+            # 批次间冷却
+            if i + 20 < len(episodes):
+                _time.sleep(2)
 
         return jsonify({
             "success": len(errors) == 0,
@@ -2628,25 +2654,23 @@ def collection_create_and_add():
             if not v.get("cid"):
                 v["cid"] = _fetch_cid(v["aid"], sessdata)
 
-        # 添加稿件
+        # 添加稿件，批次间冷却 2 秒
         episodes = [{"aid": v["aid"], "cid": v.get("cid", 0),
                       "title": v.get("title", ""), "charging_pay": 0} for v in videos]
         added = 0
         errors = []
         for i in range(0, len(episodes), 20):
             batch = episodes[i:i + 20]
-            add_resp = httpx.post(
+            add_data = _coll_post_with_retry(
                 "https://member.bilibili.com/x2/creative/web/season/section/episodes/add",
-                params={"csrf": bili_jct},
-                json={"sectionId": section_id, "episodes": batch},
-                headers={**COLL_HEADERS, "Content-Type": "application/json"},
-                cookies=cookies, timeout=30,
+                cookies, {"sectionId": section_id, "episodes": batch}, bili_jct,
             )
-            add_data = add_resp.json()
             if add_data.get("code") == 0:
                 added += len(batch)
             else:
                 errors.append(f"批次 {i // 20 + 1}: {add_data.get('message', '未知错误')}")
+            if i + 20 < len(episodes):
+                _time.sleep(2)
 
         return jsonify({
             "success": True,
@@ -2658,6 +2682,30 @@ def collection_create_and_add():
         })
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
+
+
+def _coll_post_with_retry(url, cookies, json_body, bili_jct, max_retries=3, cooldown=3):
+    """合集写操作封装：遇到 20111（编辑过于频繁）自动等待重试。"""
+    import httpx, time as _time
+    for attempt in range(max_retries + 1):
+        resp = httpx.post(
+            url,
+            params={"csrf": bili_jct},
+            json=json_body,
+            headers={**COLL_HEADERS, "Content-Type": "application/json"},
+            cookies=cookies, timeout=30,
+        )
+        rdata = resp.json()
+        code = rdata.get("code")
+        if code == 0:
+            return rdata
+        if code == 20111 and attempt < max_retries:
+            wait = cooldown * (attempt + 1)
+            print(f"[COLLECTION] 编辑过于频繁，等待 {wait}s 后重试 (第{attempt+1}次)")
+            _time.sleep(wait)
+            continue
+        return rdata
+    return rdata
 
 
 def _fetch_cid(aid: int, sessdata: str) -> int:
@@ -2696,8 +2744,9 @@ def collection_batch_execute():
     if not actions:
         return jsonify({"success": False, "message": "没有要执行的操作"})
 
+    import time as _time
     results = []
-    for act in actions:
+    for idx, act in enumerate(actions):
         if act["type"] == "add":
             # 内部调用添加逻辑
             _add_payload = {"season_id": act["season_id"], "videos": act["videos"]}
@@ -2716,6 +2765,9 @@ def collection_batch_execute():
             ):
                 resp = collection_create_and_add()
                 results.append(resp.get_json())
+        # 操作间冷却 3 秒，避免编辑过于频繁
+        if idx < len(actions) - 1:
+            _time.sleep(3)
 
     ok_count = sum(1 for r in results if r.get("success"))
     return jsonify({
@@ -2748,6 +2800,7 @@ def collection_resort_season():
         # 1) 先从 seasons 列表 API 获取该合集的 section 信息
         #    同时打印所有合集的 id -> title 映射，方便调试
         sec_titles = {}   # sectionId -> title
+        sec_types = {}    # sectionId -> type
         sec_ids = []      # 该合集的所有 section_id
         all_seasons_map = {}  # season_id -> title (调试用)
         _pn = 1
@@ -2778,6 +2831,7 @@ def collection_resort_season():
                         _sec_list = []
                     for _sc in _sec_list:
                         sec_titles[_sc["id"]] = _sc.get("title", "正片")
+                        sec_types[_sc["id"]] = _sc.get("type", 1)
                         sec_ids.append(_sc["id"])
                     # 也从 part_episodes 补充 sectionId
                     _peps = _s.get("part_episodes") or []
@@ -2800,10 +2854,11 @@ def collection_resort_season():
         # 2) 对每个 section_id，调用 season/section API 获取该小节的视频列表
         #    season/section API 的 id 参数实际上是 section_id
         from collections import defaultdict
-        all_videos = []  # (section_id, section_title, episode_id, aid)
+        all_videos = []  # (section_id, section_title, section_type, episode_id, aid)
 
         for _sec_id in sec_ids:
             _sec_title = sec_titles.get(_sec_id, "正片")
+            _sec_type = sec_types.get(_sec_id, 1)
             resp = httpx.get(
                 "https://member.bilibili.com/x2/creative/web/season/section",
                 params={"id": _sec_id},
@@ -2822,7 +2877,7 @@ def collection_resort_season():
                 ep_id = ep.get("id")
                 aid = ep.get("aid")
                 if ep_id and aid:
-                    all_videos.append((_sec_id, _sec_title, ep_id, aid))
+                    all_videos.append((_sec_id, _sec_title, _sec_type, ep_id, aid))
 
         if not all_videos:
             return jsonify({"success": False, "message": "合集内没有视频，无需排序"})
@@ -2839,15 +2894,15 @@ def collection_resort_season():
         )
 
         async def _get_pubdate(item):
-            sec_id, sec_title, ep_id, aid = item
+            sec_id, sec_title, sec_type, ep_id, aid = item
             try:
                 vid = BiliVideo(aid=aid, credential=credential)
                 info = await vid.get_info()
                 pubdate = info.get("pubdate", 0) or info.get("ctime", 0)
-                return (sec_id, sec_title, ep_id, aid, pubdate)
+                return (sec_id, sec_title, sec_type, ep_id, aid, pubdate)
             except Exception as e:
                 print(f"[COLLECTION-RESORT] get_info failed for aid={aid}: {e}")
-                return (sec_id, sec_title, ep_id, aid, 0)
+                return (sec_id, sec_title, sec_type, ep_id, aid, 0)
 
         loop = asyncio.new_event_loop()
         try:
@@ -2863,16 +2918,17 @@ def collection_resort_season():
 
         # 打印排序前的投稿时间
         from datetime import datetime
-        for sec_id, sec_title, ep_id, aid, pubdate in results:
+        for sec_id, sec_title, sec_type, ep_id, aid, pubdate in results:
             ts = datetime.fromtimestamp(pubdate).strftime("%Y-%m-%d %H:%M:%S") if pubdate else "unknown"
             print(f"[COLLECTION-RESORT]   aid={aid} ep_id={ep_id} pubdate={pubdate} ({ts})")
 
         # 3) 按小节分组，每组内按投稿时间排序
         reverse = (order == "pub_desc")
         from collections import defaultdict
-        section_groups = defaultdict(lambda: {"title": "", "videos": []})
-        for sec_id, sec_title, ep_id, aid, pubdate in results:
+        section_groups = defaultdict(lambda: {"title": "", "type": 1, "videos": []})
+        for sec_id, sec_title, sec_type, ep_id, aid, pubdate in results:
             section_groups[sec_id]["title"] = sec_title
+            section_groups[sec_id]["type"] = sec_type
             section_groups[sec_id]["videos"].append((ep_id, aid, pubdate))
 
         # 对每个小节排序并调用 edit API
@@ -2881,33 +2937,50 @@ def collection_resort_season():
         for sec_id, grp in section_groups.items():
             eps = grp["videos"]
             sec_title = grp["title"]
+            sec_type = grp["type"]
             eps.sort(key=lambda x: x[2], reverse=reverse)
             sorts = [{"id": ep_id, "sort": i} for i, (ep_id, _, _) in enumerate(eps, 1)]
             total_sorted += len(sorts)
 
-            print(f"[COLLECTION-RESORT] submitting section {sec_id} ({sec_title}): {len(sorts)} sorts")
+            print(f"[COLLECTION-RESORT] submitting section {sec_id} ({sec_title}) type={sec_type}: {len(sorts)} sorts")
             for s in sorts:
                 print(f"[COLLECTION-RESORT]   sort: id={s['id']} sort={s['sort']}")
 
-            resp = httpx.post(
+            rdata = _coll_post_with_retry(
                 "https://member.bilibili.com/x2/creative/web/season/section/edit",
-                params={"csrf": bili_jct},
-                json={
+                cookies, {
                     "section": {
                         "id": sec_id,
-                        "type": 1,
+                        "type": sec_type,
                         "seasonId": season_id,
                         "title": sec_title,
                     },
                     "sorts": sorts,
-                },
-                headers={**COLL_HEADERS, "Content-Type": "application/json"},
-                cookies=cookies, timeout=30,
+                }, bili_jct,
             )
-            rdata = resp.json()
             print(f"[COLLECTION-RESORT] edit response: code={rdata.get('code')} msg={rdata.get('message')} data={rdata.get('data')}")
+            # 20081: 正片分组冲突，尝试用 type=0 重试
+            if rdata.get("code") == 20081 and sec_type != 0:
+                print(f"[COLLECTION-RESORT] 20081 冲突，尝试 type=0 重试")
+                rdata = _coll_post_with_retry(
+                    "https://member.bilibili.com/x2/creative/web/season/section/edit",
+                    cookies, {
+                        "section": {
+                            "id": sec_id,
+                            "type": 0,
+                            "seasonId": season_id,
+                            "title": sec_title,
+                        },
+                        "sorts": sorts,
+                    }, bili_jct,
+                )
+                print(f"[COLLECTION-RESORT] retry type=0 response: code={rdata.get('code')} msg={rdata.get('message')}")
             if rdata.get("code") != 0:
                 errors.append(f"小节{sec_id}: {rdata.get('message', '未知错误')}")
+            # 多小节间冷却
+            if len(section_groups) > 1:
+                import time as _time
+                _time.sleep(2)
 
         if errors:
             return jsonify({"success": False, "message": f"部分排序失败: {'; '.join(errors)}"})
