@@ -48,7 +48,8 @@ class Danmaku:
                  font_size: FontSize = FontSize.NORMAL,
                  is_sub: bool = False,
                  pool: int = -1,
-                 attr: int = -1):
+                 attr: int = -1,
+                 dm_type: int = 0):
         """
         Args:
             text: 弹幕文本
@@ -65,6 +66,7 @@ class Danmaku:
             is_sub: 是否为字幕弹幕。默认：False
             pool: 暂不清楚。默认：-1
             attr: 暂不清楚。默认：-1
+            dm_type: 弹幕类型，0=文字，1=表情。默认：0
         """
         self.text = text
         self.dm_time = dm_time
@@ -80,6 +82,7 @@ class Danmaku:
         self.is_sub = is_sub
         self.pool = pool
         self.attr = attr
+        self.dm_type = dm_type
 
         self.uid = None
 

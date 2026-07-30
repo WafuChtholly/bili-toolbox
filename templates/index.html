@@ -672,6 +672,63 @@ textarea.form-input { min-height: 80px; resize: vertical; }
   flex-shrink: 0;
 }
 
+.spinner {
+  width: 20px; height: 20px;
+  border: 2px solid var(--input-border);
+  border-top-color: var(--pink);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.coll-match-group {
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.coll-match-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--card-border);
+  cursor: pointer;
+}
+.coll-match-header:hover { background: rgba(255,255,255,0.05); }
+.coll-match-videos {
+  padding: 8px 14px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.coll-vid-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.coll-vid-item:last-child { border-bottom: none; }
+.coll-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.coll-badge-high { background: rgba(34,197,94,0.15); color: var(--success); }
+.coll-badge-medium { background: rgba(245,158,11,0.15); color: var(--warn); }
+.coll-badge-low { background: rgba(239,68,68,0.15); color: var(--danger); }
+.coll-badge-suggest { background: rgba(59,130,246,0.15); color: var(--info); }
+.coll-season-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
 </style>
 </head>
 <body>
@@ -690,6 +747,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
     </div>
     <button class="tab-btn" onclick="switchTab('redpocket')">红包助手</button>
     <button class="tab-btn" onclick="switchTab('livehelper')">弹幕助手</button>
+    <button class="tab-btn" onclick="switchTab('collection')">合集助手</button>
   </div>
 </div>
 
@@ -1431,6 +1489,142 @@ textarea.form-input { min-height: 80px; resize: vertical; }
 
 </div>
 
+
+<!-- ============================================================ -->
+<!--  TAB 6: 合集助手                                              -->
+<!-- ============================================================ -->
+<div id="panel-collection" class="panel">
+
+  <!-- 登录状态 -->
+  <div class="card">
+    <div class="card-head pink">合集助手 — 散落稿件智能归位</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span id="coll-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
+        <span style="font-size:12px;color:var(--text-tertiary)">复用「自动互动」的登录凭证</span>
+      </div>
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">
+        当合集因不可抗力解散后，稿件会散落在投稿列表中。本工具自动检测散落稿件，智能匹配目标合集，一键归位。
+      </p>
+      <button class="btn btn-primary" id="coll-scan-btn" onclick="collScan()" style="width:100%">🔍 一键扫描散落稿件</button>
+    </div>
+  </div>
+
+  <!-- 扫描进度 -->
+  <div class="card" id="coll-progress-card" style="display:none">
+    <div class="card-head blue">扫描中</div>
+    <div class="card-body">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div class="spinner" id="coll-spinner"></div>
+        <span id="coll-progress-text" style="color:var(--text-secondary)">正在获取合集与投稿数据，请稍候...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 扫描结果 -->
+  <div id="coll-results" style="display:none">
+
+    <!-- 统计概览 -->
+    <div class="card">
+      <div class="card-head green">扫描结果</div>
+      <div class="card-body">
+        <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:16px">
+          <div style="text-align:center;flex:1;min-width:100px">
+            <div id="coll-stat-total" style="font-size:28px;font-weight:700;color:var(--text-primary)">0</div>
+            <div style="font-size:12px;color:var(--text-secondary)">全部投稿</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:100px">
+            <div id="coll-stat-seasons" style="font-size:28px;font-weight:700;color:var(--info)">0</div>
+            <div style="font-size:12px;color:var(--text-secondary)">现有合集</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:100px">
+            <div id="coll-stat-orphan" style="font-size:28px;font-weight:700;color:var(--warn)">0</div>
+            <div style="font-size:12px;color:var(--text-secondary)">散落稿件</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:100px">
+            <div id="coll-stat-matched" style="font-size:28px;font-weight:700;color:var(--success)">0</div>
+            <div style="font-size:12px;color:var(--text-secondary)">智能匹配</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:100px" id="coll-stat-coop-wrap">
+            <div id="coll-stat-coop" style="font-size:28px;font-weight:700;color:var(--text-tertiary)">0</div>
+            <div style="font-size:12px;color:var(--text-secondary)">联合投稿(跳过)</div>
+          </div>
+          <div style="text-align:center;flex:1;min-width:100px" id="coll-stat-hidden-wrap">
+            <div id="coll-stat-hidden" style="font-size:28px;font-weight:700;color:var(--text-tertiary)">0</div>
+            <div style="font-size:12px;color:var(--text-secondary)">仅自己可见(跳过)</div>
+          </div>
+        </div>
+        <div id="coll-no-orphan" style="display:none;text-align:center;padding:20px;color:var(--success)">
+          ✅ 所有稿件均已在合集中，无需处理
+        </div>
+      </div>
+    </div>
+
+    <!-- 智能匹配结果 -->
+    <div class="card" id="coll-match-card" style="display:none">
+      <div class="card-head pink">智能匹配建议</div>
+      <div class="card-body">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <label class="checkbox-item"><input type="checkbox" id="coll-select-all" checked onchange="collToggleAll()"> 全选</label>
+          <div style="display:flex;align-items:center;gap:8px">
+            <label style="font-size:13px;color:var(--text-secondary);white-space:nowrap">排序:</label>
+            <select id="coll-sort-order" class="form-input" style="padding:4px 8px;font-size:13px;min-width:130px">
+              <option value="default">默认顺序</option>
+              <option value="pub_asc">投稿时间 ↑ 正序</option>
+              <option value="pub_desc">投稿时间 ↓ 倒序</option>
+            </select>
+            <button class="btn btn-primary btn-sm" id="coll-exec-btn" onclick="collExecute()">⚡ 执行移动</button>
+          </div>
+        </div>
+        <div id="coll-match-list"></div>
+      </div>
+    </div>
+
+    <!-- 执行结果 -->
+    <div class="card" id="coll-exec-result-card" style="display:none">
+      <div class="card-head green">执行结果</div>
+      <div class="card-body">
+        <div id="coll-exec-result" class="log-box" style="max-height:300px"></div>
+      </div>
+    </div>
+
+    <!-- 手动操作 -->
+    <div class="card">
+      <div class="card-head blue">手动操作</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">创建新合集</label>
+          <div style="display:flex;gap:8px">
+            <input class="form-input" id="coll-new-name" placeholder="新合集名称" style="flex:1">
+            <button class="btn btn-outline btn-sm" onclick="collCreateSeason()">创建</button>
+          </div>
+        </div>
+        <div id="coll-season-list" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- 合集重排序 -->
+    <div class="card">
+      <div class="card-head orange">合集重排序</div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">选择合集后，按投稿时间重新排列合集内稿件顺序。</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="coll-resort-season" class="form-input" style="flex:1;min-width:200px;padding:6px 10px;font-size:13px">
+            <option value="">-- 选择合集 --</option>
+          </select>
+          <select id="coll-resort-order" class="form-input" style="padding:6px 10px;font-size:13px;min-width:140px">
+            <option value="pub_asc">投稿时间 ↑ 正序</option>
+            <option value="pub_desc">投稿时间 ↓ 倒序</option>
+          </select>
+          <button class="btn btn-primary btn-sm" id="coll-resort-btn" onclick="collResortSeason()">🔄 重排序</button>
+        </div>
+        <div id="coll-resort-result" style="margin-top:10px;font-size:13px;color:var(--text-secondary)"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
 </div><!-- /main -->
 
 <script>
@@ -1465,6 +1659,7 @@ function switchTab(name){
   if(name==='player'){plLoadConfig()}
   if(name==='auto'){autoLoadConfig()}
   if(name==='livehelper'){lhLoadConfig()}
+  if(name==='collection'){collLoadStatus()}
 }
 
 /* ===== BV 动态列表 ===== */
@@ -3148,8 +3343,421 @@ function lhStartPoll(){
   },3000);
 }
 
+/* ===== 合集助手 ===== */
+let collMatchData = [];  // 保存扫描结果
+let collSeasons = [];    // 保存合集列表，供下拉框使用
+
+function collLoadStatus(){
+  fetch('/api/collection/status').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('coll-login-info');
+    if(d.logged_in){
+      el.innerHTML='已登录 <b>UID: '+d.mid+'</b>';
+      el.style.color='var(--success)';
+      document.getElementById('coll-scan-btn').disabled=false;
+    }else{
+      el.textContent='未登录 — 请先在「自动互动」页面扫码登录';
+      el.style.color='var(--danger)';
+      document.getElementById('coll-scan-btn').disabled=true;
+    }
+  }).catch(()=>{});
+}
+
+function collScan(){
+  const btn=document.getElementById('coll-scan-btn');
+  btn.disabled=true;
+  btn.textContent='扫描中...';
+  document.getElementById('coll-progress-card').style.display='block';
+  document.getElementById('coll-results').style.display='none';
+  document.getElementById('coll-exec-result-card').style.display='none';
+
+  fetch('/api/collection/orphan-videos').then(r=>r.json()).then(d=>{
+    btn.disabled=false;
+    btn.textContent='🔍 一键扫描散落稿件';
+    document.getElementById('coll-progress-card').style.display='none';
+
+    if(!d.success){
+      alert('扫描失败: '+d.message);
+      return;
+    }
+
+    // debug: 在控制台输出散落稿件的原始联合投稿字段
+    if(d.debug_orphan_samples && d.debug_orphan_samples.length > 0){
+      console.log('[合集助手] 散落稿件 debug 信息（前5个）:', d.debug_orphan_samples);
+      console.log('[合集助手] 联合投稿跳过:', d.coop_count, ' 仅自己可见跳过:', d.hidden_count,
+                  ' 合集内稿件:', d.debug_season_aids_count);
+    }
+
+    document.getElementById('coll-results').style.display='block';
+    document.getElementById('coll-stat-total').textContent=d.total_videos;
+    document.getElementById('coll-stat-seasons').textContent=d.seasons.length;
+    document.getElementById('coll-stat-orphan').textContent=d.orphan_count;
+
+    // 联合投稿统计
+    const coopWrap=document.getElementById('coll-stat-coop-wrap');
+    if(d.coop_count>0){
+      coopWrap.style.display='block';
+      document.getElementById('coll-stat-coop').textContent=d.coop_count;
+    }else{
+      coopWrap.style.display='none';
+    }
+    // 仅自己可见统计
+    const hiddenWrap=document.getElementById('coll-stat-hidden-wrap');
+    if(d.hidden_count>0){
+      hiddenWrap.style.display='block';
+      document.getElementById('coll-stat-hidden').textContent=d.hidden_count;
+    }else{
+      hiddenWrap.style.display='none';
+    }
+
+    collSeasons=d.seasons||[];
+    collMatchData=d.matches||[];
+    // 填充重排序下拉框
+    const resortSel=document.getElementById('coll-resort-season');
+    resortSel.innerHTML='<option value="">-- 选择合集 --</option>';
+    collSeasons.forEach(s=>{
+      resortSel.innerHTML+='<option value="'+s.season_id+'">'+collEsc(s.title)+'</option>';
+    });
+    const matchedCount=collMatchData.filter(m=>!m.is_new_group).length;
+    document.getElementById('coll-stat-matched').textContent=matchedCount;
+
+    if(d.orphan_count===0){
+      document.getElementById('coll-no-orphan').style.display='block';
+      document.getElementById('coll-match-card').style.display='none';
+    }else{
+      document.getElementById('coll-no-orphan').style.display='none';
+      collRenderMatches();
+    }
+
+    // 渲染合集列表
+    collRenderSeasons(d.seasons);
+  }).catch(e=>{
+    btn.disabled=false;
+    btn.textContent='🔍 一键扫描散落稿件';
+    document.getElementById('coll-progress-card').style.display='none';
+    alert('请求失败: '+e);
+  });
+}
+
+function collRenderMatches(){
+  const container=document.getElementById('coll-match-list');
+  container.innerHTML='';
+
+  if(collMatchData.length===0){
+    document.getElementById('coll-match-card').style.display='none';
+    return;
+  }
+  document.getElementById('coll-match-card').style.display='block';
+
+  // 按目标合集分组（已有合集的匹配）
+  const seasonGroups={};
+  const newGroups=[];
+  collMatchData.forEach((m,idx)=>{
+    if(m.is_new_group){
+      newGroups.push({data:m,idx});
+    }else{
+      const sid=m.season.season_id;
+      if(!seasonGroups[sid]) seasonGroups[sid]={season:m.season,items:[]};
+      seasonGroups[sid].items.push({data:m,idx});
+    }
+  });
+
+  let html='';
+
+  // 渲染已有合集匹配组
+  for(const sid in seasonGroups){
+    const g=seasonGroups[sid];
+    const bestConf=g.items.reduce((a,b)=>{
+      const order={high:3,medium:2,low:1};
+      return (order[b.data.confidence]||0)>(order[a]||0)?b.data.confidence:a;
+    },'low');
+    html+='<div class="coll-match-group">';
+    html+='<div class="coll-match-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">';
+    html+='<input type="checkbox" class="coll-group-cb" data-type="season" data-sid="'+sid+'" checked onclick="event.stopPropagation();collToggleSeasonGroup(this)">';
+    html+='<span style="flex:1;font-weight:600">📁 '+collEsc(g.season.title)+'</span>';
+    html+='<span class="coll-badge coll-badge-'+bestConf+'">'+g.items.length+' 个稿件</span>';
+    html+='<span style="color:var(--text-tertiary);font-size:12px">▾</span>';
+    html+='</div>';
+    html+='<div class="coll-match-videos">';
+    g.items.forEach(it=>{
+      const v=it.data.video;
+      html+='<div class="coll-vid-item">';
+      html+='<input type="checkbox" class="coll-vid-cb" data-idx="'+it.idx+'" checked onchange="collSyncSeasonGroupCb(this)">';
+      html+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+collEsc(v.title)+'">'+collEsc(v.title)+'</span>';
+      html+='<span class="coll-badge coll-badge-'+it.data.confidence+'">'+Math.round(it.data.score*100)+'%</span>';
+      html+='</div>';
+    });
+    html+='</div></div>';
+  }
+
+  // 渲染新建合集建议组
+  newGroups.forEach(ng=>{
+    const m=ng.data;
+    // 构建下拉框选项：新建 + 所有现有合集
+    let selectOpts='<option value="__new__">🆕 新建合集</option>';
+    collSeasons.forEach(s=>{
+      selectOpts+='<option value="'+s.season_id+'">📁 '+collEsc(s.title)+'</option>';
+    });
+    html+='<div class="coll-match-group">';
+    html+='<div class="coll-match-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">';
+    html+='<input type="checkbox" class="coll-group-cb" data-type="new" data-idx="'+ng.idx+'" checked onclick="event.stopPropagation();collToggleNewGroup(this)">';
+    html+='<span style="font-weight:600;white-space:nowrap">操作: </span>';
+    html+='<select class="form-input coll-new-group-mode" data-idx="'+ng.idx+'" style="padding:4px 8px;font-size:13px;min-width:120px;flex:0 0 auto;width:auto" onclick="event.stopPropagation()" onchange="collOnNewGroupModeChange(this)">'+selectOpts+'</select>';
+    html+='<input class="form-input coll-new-group-name" data-idx="'+ng.idx+'" value="'+collEsc(m.suggested_name)+'" style="flex:1;padding:4px 8px;font-size:13px" onclick="event.stopPropagation()" placeholder="新合集名称">';
+    html+='<span class="coll-badge coll-badge-suggest">'+m.videos.length+' 个稿件</span>';
+    html+='<span style="color:var(--text-tertiary);font-size:12px">▾</span>';
+    html+='</div>';
+    html+='<div class="coll-match-videos">';
+    m.videos.forEach((v,vi)=>{
+      html+='<div class="coll-vid-item">';
+      html+='<input type="checkbox" class="coll-vid-cb-new" data-gidx="'+ng.idx+'" data-vidx="'+vi+'" checked onchange="collSyncNewGroupCb(this)">';
+      html+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+collEsc(v.title)+'">'+collEsc(v.title)+'</span>';
+      html+='</div>';
+    });
+    html+='</div></div>';
+  });
+
+  container.innerHTML=html;
+}
+
+function collToggleAll(){
+  const checked=document.getElementById('coll-select-all').checked;
+  document.querySelectorAll('.coll-group-cb').forEach(cb=>cb.checked=checked);
+  document.querySelectorAll('.coll-vid-cb').forEach(cb=>cb.checked=checked);
+  document.querySelectorAll('.coll-vid-cb-new').forEach(cb=>cb.checked=checked);
+}
+
+function collToggleNewGroup(gcb){
+  const idx=gcb.dataset.idx;
+  const checked=gcb.checked;
+  document.querySelectorAll('.coll-vid-cb-new[data-gidx="'+idx+'"]').forEach(cb=>cb.checked=checked);
+}
+
+function collToggleSeasonGroup(gcb){
+  const group=gcb.closest('.coll-match-group');
+  const checked=gcb.checked;
+  group.querySelectorAll('.coll-vid-cb').forEach(cb=>cb.checked=checked);
+}
+
+function collSyncNewGroupCb(vcb){
+  // 单个 checkbox 变化时，同步组级 checkbox
+  const gidx=vcb.dataset.gidx;
+  const anyChecked=document.querySelectorAll('.coll-vid-cb-new[data-gidx="'+gidx+'"]:checked').length>0;
+  const gcb=document.querySelector('.coll-group-cb[data-type="new"][data-idx="'+gidx+'"]');
+  if(gcb) gcb.checked=anyChecked;
+}
+
+function collSyncSeasonGroupCb(vcb){
+  // 单个 checkbox 变化时，同步组级 checkbox
+  const group=vcb.closest('.coll-match-group');
+  const anyChecked=group.querySelectorAll('.coll-vid-cb:checked').length>0;
+  const gcb=group.querySelector('.coll-group-cb');
+  if(gcb) gcb.checked=anyChecked;
+}
+
+function collOnNewGroupModeChange(sel){
+  // 切换"新建合集"和"移入现有合集"时，控制名称输入框的显示
+  const nameInput=sel.parentElement.querySelector('.coll-new-group-name');
+  if(!nameInput) return;
+  if(sel.value==='__new__'){
+    nameInput.style.display='';
+    nameInput.placeholder='新合集名称';
+  }else{
+    nameInput.style.display='none';
+  }
+}
+
+function collExecute(){
+  const actions=[];
+
+  // 收集已有合集的匹配
+  const seasonVids={};
+  document.querySelectorAll('.coll-group-cb[data-type="season"]').forEach(gcb=>{
+    if(!gcb.checked) return;
+    const sid=parseInt(gcb.dataset.sid);
+    const group=gcb.closest('.coll-match-group');
+    group.querySelectorAll('.coll-vid-cb:checked').forEach(vcb=>{
+      const idx=parseInt(vcb.dataset.idx);
+      const m=collMatchData[idx];
+      if(!m||!m.video) return;
+      if(!seasonVids[sid]) seasonVids[sid]=[];
+      seasonVids[sid].push({aid:m.video.aid, cid:0, title:m.video.title, pic:m.video.pic, created:m.video.created||0});
+    });
+  });
+  for(const sid in seasonVids){
+    if(seasonVids[sid].length>0){
+      // 查找 section_id
+      const sObj=collSeasons.find(s=>s.season_id==sid);
+      const secId=sObj?sObj.section_id:null;
+      actions.push({type:'add',season_id:parseInt(sid),section_id:secId,videos:seasonVids[sid]});
+    }
+  }
+
+  // 收集新建/移入合集的匹配
+  document.querySelectorAll('.coll-group-cb[data-type="new"]').forEach(gcb=>{
+    if(!gcb.checked) return;
+    const idx=parseInt(gcb.dataset.idx);
+    const m=collMatchData[idx];
+    if(!m||!m.videos) return;
+    const modeSelect=document.querySelector('.coll-new-group-mode[data-idx="'+idx+'"]');
+    const mode=modeSelect?modeSelect.value:'__new__';
+    // 只收集勾选的单个稿件
+    const vids=[];
+    document.querySelectorAll('.coll-vid-cb-new[data-gidx="'+idx+'"]:checked').forEach(vcb=>{
+      const vi=parseInt(vcb.dataset.vidx);
+      const v=m.videos[vi];
+      if(v) vids.push({aid:v.aid,cid:0,title:v.title,pic:v.pic,created:v.created||0});
+    });
+    if(vids.length===0) return;
+
+    if(mode==='__new__'){
+      // 新建合集
+      const nameInput=document.querySelector('.coll-new-group-name[data-idx="'+idx+'"]');
+      const title=nameInput?nameInput.value.trim():m.suggested_name;
+      if(!title) return;
+      actions.push({type:'create',title:title,videos:vids});
+    }else{
+      // 移入现有合集
+      const sid=parseInt(mode);
+      const sObj2=collSeasons.find(s=>s.season_id==sid);
+      const secId2=sObj2?sObj2.section_id:null;
+      // 合并到 seasonVids 中（如果已有同 season_id 的操作则追加）
+      const existIdx=actions.findIndex(a=>a.type==='add'&&a.season_id===sid);
+      if(existIdx>=0){
+        actions[existIdx].videos=actions[existIdx].videos.concat(vids);
+      }else{
+        actions.push({type:'add',season_id:sid,section_id:secId2,videos:vids});
+      }
+    }
+  });
+
+  if(actions.length===0){
+    alert('没有选中任何操作');
+    return;
+  }
+
+  // 按排序选项对每个 action 的 videos 排序
+  const sortOrder=document.getElementById('coll-sort-order').value;
+  if(sortOrder==='pub_asc'||sortOrder==='pub_desc'){
+    const dir=sortOrder==='pub_asc'?1:-1;
+    actions.forEach(a=>{
+      if(a.videos&&a.videos.length>1){
+        a.videos.sort((x,y)=>(x.created-y.created)*dir);
+      }
+    });
+  }
+
+  const btn=document.getElementById('coll-exec-btn');
+  btn.disabled=true;
+  btn.textContent='执行中...';
+  document.getElementById('coll-exec-result-card').style.display='block';
+  document.getElementById('coll-exec-result').textContent='正在执行 '+actions.length+' 个操作...\n';
+
+  fetch('/api/collection/batch-execute',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({actions})
+  }).then(r=>r.json()).then(d=>{
+    btn.disabled=false;
+    btn.textContent='⚡ 执行移动';
+    const logEl=document.getElementById('coll-exec-result');
+    if(d.success){
+      let log='执行完成: '+d.message+'\n\n';
+      (d.results||[]).forEach((r,i)=>{
+        log+=(r.success?'✅':'❌')+' 操作'+(i+1)+': '+(r.message||'')+'\n';
+        if(r.errors&&r.errors.length) log+='   错误: '+r.errors.join('; ')+'\n';
+      });
+      logEl.textContent=log;
+      logEl.style.color='var(--success)';
+    }else{
+      logEl.textContent='执行失败: '+d.message;
+      logEl.style.color='var(--danger)';
+    }
+  }).catch(e=>{
+    btn.disabled=false;
+    btn.textContent='⚡ 执行移动';
+    document.getElementById('coll-exec-result').textContent='请求失败: '+e;
+  });
+}
+
+function collRenderSeasons(seasons){
+  const el=document.getElementById('coll-season-list');
+  if(!seasons||seasons.length===0){
+    el.innerHTML='<p style="color:var(--text-tertiary);font-size:13px">暂无合集</p>';
+    return;
+  }
+  let html='<label class="form-label" style="font-size:12px;color:var(--text-secondary)">现有合集列表</label>';
+  seasons.forEach(s=>{
+    const stateText=s.state===0?'正常':s.state===-6?'审核中':'状态'+s.state;
+    html+='<div class="coll-season-item">';
+    html+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 '+collEsc(s.title)+'</span>';
+    html+='<span style="color:var(--text-tertiary);font-size:12px;margin:0 8px">'+s.video_count+' 个稿件</span>';
+    html+='<span class="coll-badge '+(s.state===0?'coll-badge-high':'coll-badge-medium')+'">'+stateText+'</span>';
+    html+='</div>';
+  });
+  el.innerHTML=html;
+}
+
+function collCreateSeason(){
+  const name=document.getElementById('coll-new-name').value.trim();
+  if(!name){alert('请输入合集名称');return;}
+  if(!confirm('确定创建合集「'+name+'」？\n创建后需要等待B站审核。')) return;
+
+  fetch('/api/collection/create-and-add',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:name,desc:'',videos:[]})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success){
+      alert(d.message);
+      document.getElementById('coll-new-name').value='';
+      collScan();
+    }else{
+      alert('创建失败: '+d.message);
+    }
+  }).catch(e=>alert('请求失败: '+e));
+}
+
+function collResortSeason(){
+  const seasonId=document.getElementById('coll-resort-season').value;
+  const order=document.getElementById('coll-resort-order').value;
+  if(!seasonId){alert('请先选择合集');return;}
+  const sObj=collSeasons.find(s=>s.season_id==seasonId);
+  const sName=sObj?sObj.title:seasonId;
+  if(!confirm('确定将合集「'+sName+'」按'+(order==='pub_asc'?'投稿时间正序':'投稿时间倒序')+'重排？')) return;
+
+  const btn=document.getElementById('coll-resort-btn');
+  const resultEl=document.getElementById('coll-resort-result');
+  btn.disabled=true;
+  btn.textContent='排序中...';
+  resultEl.textContent='正在获取合集视频并排序...';
+
+  fetch('/api/collection/resort-season',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({season_id:parseInt(seasonId),order:order})
+  }).then(r=>r.json()).then(d=>{
+    btn.disabled=false;
+    btn.textContent='🔄 重排序';
+    if(d.success){
+      resultEl.innerHTML='<span style="color:#4ade80">✅ '+d.message+'</span>';
+    }else{
+      resultEl.innerHTML='<span style="color:#f87171">❌ '+d.message+'</span>';
+    }
+  }).catch(e=>{
+    btn.disabled=false;
+    btn.textContent='🔄 重排序';
+    resultEl.innerHTML='<span style="color:#f87171">请求失败: '+e+'</span>';
+  });
+}
+
+function collEsc(s){
+  const d=document.createElement('div');
+  d.textContent=s||'';
+  return d.innerHTML;
+}
+
 // 初始加载
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();lhLoadConfig();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();lhLoadConfig();collLoadStatus();
 </script>
 </body>
 </html>

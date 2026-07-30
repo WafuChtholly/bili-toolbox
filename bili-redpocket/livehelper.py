@@ -7,6 +7,7 @@ LiveHelper — 扫码登录 → 链接直播间 → 开播后定时发送随机�
 import asyncio
 import os
 import random
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,6 +18,7 @@ from blivelisten.core.live import LiveDanmaku, LiveRoom
 from blivelisten.utils import config as blivelisten_config
 from blivelisten.utils.Danmaku import Danmaku
 from blivelisten.utils.utils import get_credential
+from blivelisten.utils.network import request as bili_request
 from config import settings
 
 if sys.platform == 'win32':
@@ -66,12 +68,75 @@ def init_credential(settings_obj=None):
         return False
 
 
-async def send_danmaku(live_room: LiveRoom, text: str):
+EMOJI_TAG_RE = re.compile(r'\[.+?_.+?\]')
+
+
+def _detect_dm_type(text: str) -> int:
+    """自动检测弹幕类型：如果文本是粉丝团表情标签格式，返回 1（表情），否则返回 0（文字）"""
+    return 1 if EMOJI_TAG_RE.fullmatch(text.strip()) else 0
+
+
+# 表情映射缓存：{text_tag -> "room_rid_eid"}
+_emoji_cache: dict = {}
+_emoji_cache_cred_key: str = ""
+
+
+async def _fetch_emoji_mapping(credential) -> dict:
+    """获取用户的表情面板，建立 text_tag -> room_rid_eid 映射"""
+    url = "https://api.bilibili.com/x/emote/user/panel/web"
+    params = {"business": "live"}
+    try:
+        resp = await bili_request("GET", url, params=params, credential=credential, no_csrf=True)
+        mapping = {}
+        packages = resp.get("packages", []) if resp else []
+        for pkg in packages:
+            room_id = pkg.get("room_id", 0)
+            emotes = pkg.get("emotes", []) or []
+            for emote in emotes:
+                text = emote.get("text", "")
+                emoji_id = emote.get("id", 0)
+                if text and emoji_id and room_id:
+                    tag = f"[{text}]"
+                    mapping[tag] = f"room_{room_id}_{emoji_id}"
+        logger.info(f"获取到 {len(mapping)} 个表情映射")
+        return mapping
+    except Exception as e:
+        logger.error(f"获取表情面板失败: {e}")
+        return {}
+
+
+async def _get_emoji_msg(text: str, credential) -> str:
+    """将文本标签（如 [薰风花海_打call]）转换为表情 msg 格式（如 room_80397_22386）"""
+    global _emoji_cache, _emoji_cache_cred_key
+    cache_key = f"{credential.bili_jct}_{credential.sessdata}" if credential else ""
+
+    if not _emoji_cache or _emoji_cache_cred_key != cache_key:
+        _emoji_cache = await _fetch_emoji_mapping(credential)
+        _emoji_cache_cred_key = cache_key
+
+    emoji_msg = _emoji_cache.get(text.strip())
+    if emoji_msg:
+        return emoji_msg
+
+    logger.warning(f"未找到表情 [{text.strip()}] 的映射，尝试直接发送文本标签")
+    return text.strip()
+
+
+async def send_danmaku(live_room: LiveRoom, text: str, dm_type: int = None):
     """发送一条弹幕"""
     try:
-        danmaku = Danmaku(text=text)
+        if dm_type is None:
+            dm_type = _detect_dm_type(text)
+
+        if dm_type == 1:
+            credential = get_credential()
+            msg = await _get_emoji_msg(text.strip(), credential)
+        else:
+            msg = text
+
+        danmaku = Danmaku(text=msg, dm_type=dm_type)
         await live_room.send_danmaku(danmaku)
-        logger.info(f"发送弹幕成功: {text}")
+        logger.info(f"发送弹幕成功: {text} (dm_type={dm_type})")
         return True
     except Exception as e:
         logger.error(f"发送弹幕失败 [{text}]: {e}")
