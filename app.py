@@ -2313,36 +2313,86 @@ def _smart_match(orphans: list[dict], seasons: list[dict]) -> list[dict]:
     return matches
 
 
+# 通用括号标记，不作为分组依据
+_GENERIC_TAGS = {
+    '高清', '完整版', '修复', '翻唱', 'cover', 'COVER', 'Cover',
+    'MV', 'PV', '4K', '1080P', '1080p', '720P', '720p', '480P',
+    'AI', 'AI修复', 'AI上色', '彩色修复', '字幕', '中字',
+    '双语字幕', '中英字幕', '无损', 'FLAC', 'flac', 'HQ', 'hq',
+    'Live', 'live', '现场', '演唱会', '官方', 'official',
+    '重制', 'remaster', 'Remaster', 'REMIX', 'remix', 'Remix',
+    '低质量', '低质量版', '高质量', '高质量版', '录像带', 'LD',
+    'DVD', 'VHS', '转录', '数字化', '自调色', '音频修复',
+}
+
+
+def _extract_tags(title: str) -> set:
+    """提取标题中所有非通用括号标记内容。"""
+    raw = re.findall(r'[【\[（(]([^】\]）)]{2,})[】\]）)]', title)
+    return set(t for t in raw if t not in _GENERIC_TAGS)
+
+
 def _group_by_prefix(videos: list[dict]) -> list[dict]:
-    """按标题公共前缀将视频分组，建议新合集名称。"""
+    """按标题相似度分组：先按共享括号标记，再按公共前缀。"""
     if not videos:
         return []
 
-    # 按标题排序
-    sorted_vids = sorted(videos, key=lambda v: v["title"])
+    # 提取每个视频的非通用括号标记
+    vid_info = [(_extract_tags(v["title"]), v) for v in videos]
+
+    # 策略1：按共享括号标记贪心分组
     groups = []
-    current_group = [sorted_vids[0]]
+    used = [False] * len(vid_info)
 
-    for v in sorted_vids[1:]:
-        prefix = _common_prefix(current_group[0]["title"], v["title"])
-        # 公共前缀至少 3 个字符才认为是一组
-        if len(prefix.strip()) >= 3:
-            current_group.append(v)
+    for i in range(len(vid_info)):
+        if used[i] or not vid_info[i][0]:
+            continue
+        tags_i = vid_info[i][0]
+        group = [vid_info[i][1]]
+        used[i] = True
+        for j in range(i + 1, len(vid_info)):
+            if used[j] or not vid_info[j][0]:
+                continue
+            if tags_i & vid_info[j][0]:  # 有共享标记
+                group.append(vid_info[j][1])
+                used[j] = True
+        if len(group) >= 2:
+            groups.append(group)
         else:
-            groups.append(current_group)
-            current_group = [v]
-    groups.append(current_group)
+            used[i] = False  # 单个不算组，回退
 
+    # 策略2：未分组的用公共前缀匹配
+    ungrouped = [vid_info[i][1] for i in range(len(vid_info)) if not used[i]]
+    if ungrouped:
+        sorted_vids = sorted(ungrouped, key=lambda v: v["title"])
+        current_group = [sorted_vids[0]]
+        for v in sorted_vids[1:]:
+            prefix = _common_prefix(current_group[0]["title"], v["title"])
+            if len(prefix.strip()) >= 3:
+                current_group.append(v)
+            else:
+                groups.append(current_group)
+                current_group = [v]
+        groups.append(current_group)
+
+    # 构建结果
     result = []
     for g in groups:
         if len(g) >= 2:
-            # 取公共前缀作为建议名称
-            name = g[0]["title"]
-            for v in g[1:]:
-                name = _common_prefix(name, v["title"])
-            name = name.strip().rstrip("EPep第期集话回 partPartPART -_|·/\\【】[]()（）")
-            if not name or len(name) < 2:
-                name = g[0]["title"][:15]
+            # 建议名称：优先取共享括号标记，否则取公共前缀
+            tag_sets = [_extract_tags(v["title"]) for v in g]
+            shared = tag_sets[0]
+            for ts in tag_sets[1:]:
+                shared = shared & ts
+            if shared:
+                name = ' / '.join(sorted(shared))
+            else:
+                name = g[0]["title"]
+                for v in g[1:]:
+                    name = _common_prefix(name, v["title"])
+                name = name.strip().rstrip("EPep第期集话回 partPartPART -_|·/\\【】[]()（）《》〈〉")
+                if not name or len(name) < 2:
+                    name = g[0]["title"][:15]
             result.append({"name": name, "videos": g})
         else:
             result.append({"name": g[0]["title"][:20], "videos": g})

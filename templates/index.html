@@ -1565,7 +1565,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
       <div class="card-head pink">智能匹配建议</div>
       <div class="card-body">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <label class="checkbox-item"><input type="checkbox" id="coll-select-all" checked onchange="collToggleAll()"> 全选</label>
+          <label class="checkbox-item"><input type="checkbox" id="coll-select-all" onchange="collToggleAll()"> 全选</label>
           <div style="display:flex;align-items:center;gap:8px">
             <label style="font-size:13px;color:var(--text-secondary);white-space:nowrap">排序:</label>
             <select id="coll-sort-order" class="form-input" style="padding:4px 8px;font-size:13px;min-width:130px">
@@ -1588,21 +1588,6 @@ textarea.form-input { min-height: 80px; resize: vertical; }
       </div>
     </div>
 
-    <!-- 手动操作 -->
-    <div class="card">
-      <div class="card-head blue">手动操作</div>
-      <div class="card-body">
-        <div class="form-group">
-          <label class="form-label">创建新合集</label>
-          <div style="display:flex;gap:8px">
-            <input class="form-input" id="coll-new-name" placeholder="新合集名称" style="flex:1">
-            <button class="btn btn-outline btn-sm" onclick="collCreateSeason()">创建</button>
-          </div>
-        </div>
-        <div id="coll-season-list" style="margin-top:12px"></div>
-      </div>
-    </div>
-
     <!-- 合集重排序 -->
     <div class="card">
       <div class="card-head orange">合集重排序</div>
@@ -1619,6 +1604,21 @@ textarea.form-input { min-height: 80px; resize: vertical; }
           <button class="btn btn-primary btn-sm" id="coll-resort-btn" onclick="collResortSeason()">🔄 重排序</button>
         </div>
         <div id="coll-resort-result" style="margin-top:10px;font-size:13px;color:var(--text-secondary)"></div>
+      </div>
+    </div>
+
+    <!-- 手动操作 -->
+    <div class="card">
+      <div class="card-head blue">手动操作</div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">创建新合集</label>
+          <div style="display:flex;gap:8px">
+            <input class="form-input" id="coll-new-name" placeholder="新合集名称" style="flex:1">
+            <button class="btn btn-outline btn-sm" onclick="collCreateSeason()">创建</button>
+          </div>
+        </div>
+        <div id="coll-season-list" style="margin-top:12px"></div>
       </div>
     </div>
   </div>
@@ -3472,7 +3472,7 @@ function collRenderMatches(){
     },'low');
     html+='<div class="coll-match-group">';
     html+='<div class="coll-match-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">';
-    html+='<input type="checkbox" class="coll-group-cb" data-type="season" data-sid="'+sid+'" checked onclick="event.stopPropagation();collToggleSeasonGroup(this)">';
+    html+='<input type="checkbox" class="coll-group-cb" data-type="season" data-sid="'+sid+'" onclick="event.stopPropagation();collToggleSeasonGroup(this)">';
     html+='<span style="flex:1;font-weight:600">📁 '+collEsc(g.season.title)+'</span>';
     html+='<span class="coll-badge coll-badge-'+bestConf+'">'+g.items.length+' 个稿件</span>';
     html+='<span style="color:var(--text-tertiary);font-size:12px">▾</span>';
@@ -3481,7 +3481,7 @@ function collRenderMatches(){
     g.items.forEach(it=>{
       const v=it.data.video;
       html+='<div class="coll-vid-item">';
-      html+='<input type="checkbox" class="coll-vid-cb" data-idx="'+it.idx+'" checked onchange="collSyncSeasonGroupCb(this)">';
+      html+='<input type="checkbox" class="coll-vid-cb" data-idx="'+it.idx+'" onchange="collSyncSeasonGroupCb(this)">';
       html+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+collEsc(v.title)+'">'+collEsc(v.title)+'</span>';
       html+='<span class="coll-badge coll-badge-'+it.data.confidence+'">'+Math.round(it.data.score*100)+'%</span>';
       html+='</div>';
@@ -3499,7 +3499,7 @@ function collRenderMatches(){
     });
     html+='<div class="coll-match-group">';
     html+='<div class="coll-match-header" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display===\'none\'?\'block\':\'none\'">';
-    html+='<input type="checkbox" class="coll-group-cb" data-type="new" data-idx="'+ng.idx+'" checked onclick="event.stopPropagation();collToggleNewGroup(this)">';
+    html+='<input type="checkbox" class="coll-group-cb" data-type="new" data-idx="'+ng.idx+'" onclick="event.stopPropagation();collToggleNewGroup(this)">';
     html+='<span style="font-weight:600;white-space:nowrap">操作: </span>';
     html+='<select class="form-input coll-new-group-mode" data-idx="'+ng.idx+'" style="padding:4px 8px;font-size:13px;min-width:120px;flex:0 0 auto;width:auto" onclick="event.stopPropagation()" onchange="collOnNewGroupModeChange(this)">'+selectOpts+'</select>';
     html+='<input class="form-input coll-new-group-name" data-idx="'+ng.idx+'" value="'+collEsc(m.suggested_name)+'" style="flex:1;padding:4px 8px;font-size:13px" onclick="event.stopPropagation()" placeholder="新合集名称">';
@@ -3509,7 +3509,7 @@ function collRenderMatches(){
     html+='<div class="coll-match-videos">';
     m.videos.forEach((v,vi)=>{
       html+='<div class="coll-vid-item">';
-      html+='<input type="checkbox" class="coll-vid-cb-new" data-gidx="'+ng.idx+'" data-vidx="'+vi+'" checked onchange="collSyncNewGroupCb(this)">';
+      html+='<input type="checkbox" class="coll-vid-cb-new" data-gidx="'+ng.idx+'" data-vidx="'+vi+'" onchange="collSyncNewGroupCb(this)">';
       html+='<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+collEsc(v.title)+'">'+collEsc(v.title)+'</span>';
       html+='</div>';
     });
