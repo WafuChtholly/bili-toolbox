@@ -116,14 +116,21 @@ def _save_credential(cred) -> None:
     注意：QrCodeLogin 从 URL query 提取的 SESSDATA 已经是 URL 编码的（%2C, %2A），
     直接使用即可，不要再次编码。
     """
+    sessdata = cred.sessdata or ""
+    bili_jct = cred.bili_jct or ""
+    dedeuserid = getattr(cred, "dedeuserid", "") or ""
+    # 关键字段为空时不覆盖已有凭证
+    if not sessdata and CREDENTIAL_FILE.exists():
+        logger.warning("登录返回的 sessdata 为空，跳过保存以保护已有凭证")
+        return
     CREDENTIAL_FILE.parent.mkdir(parents=True, exist_ok=True)
     data = {
-        "sessdata": cred.sessdata,
-        "bili_jct": cred.bili_jct,
+        "sessdata": sessdata,
+        "bili_jct": bili_jct,
         "ac_time_value": cred.ac_time_value or "",
         "buvid3": "",
         "buvid4": "",
-        "dedeuserid": getattr(cred, "dedeuserid", "") or "",
+        "dedeuserid": dedeuserid,
         "saved_at": _time.time(),
     }
     CREDENTIAL_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
