@@ -3012,7 +3012,7 @@ def collection_resort_season():
 #  七、标签搜索助手
 # =========================================================================
 
-_TAG_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_cache.json")
+_TAG_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tag_cache.json")
 
 # B站 tid_v2 -> 一级分区名称映射（新版分区体系）
 _V2_TID_MAP = {
@@ -3111,6 +3111,7 @@ def _load_tag_cache() -> dict:
 
 
 def _save_tag_cache(cache: dict):
+    os.makedirs(os.path.dirname(_TAG_CACHE_FILE), exist_ok=True)
     with open(_TAG_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
