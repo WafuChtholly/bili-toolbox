@@ -294,7 +294,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
   transition: color var(--transition);
 }
 .coll-kw-x:hover { color: var(--pink); }
-#coll-kw-tags:focus-within { border-color: var(--pink); box-shadow: 0 0 0 3px rgba(251,114,153,0.1); }
+#coll-kw-tags:focus-within, #ts-search-tags:focus-within { border-color: var(--pink); box-shadow: 0 0 0 3px rgba(251,114,153,0.1); }
 @keyframes chipIn { from { opacity:0; transform:scale(0.85); } to { opacity:1; transform:scale(1); } }
 
 .checkbox-row { display: flex; gap: 16px; flex-wrap: wrap; }
@@ -770,6 +770,7 @@ textarea.form-input { min-height: 80px; resize: vertical; }
     <button class="tab-btn" onclick="switchTab('redpocket')">红包助手</button>
     <button class="tab-btn" onclick="switchTab('livehelper')">弹幕助手</button>
     <button class="tab-btn" onclick="switchTab('collection')">合集助手</button>
+    <button class="tab-btn" onclick="switchTab('tagsearch')">标签助手</button>
   </div>
 </div>
 
@@ -1658,6 +1659,78 @@ textarea.form-input { min-height: 80px; resize: vertical; }
 </div>
 
 
+<!-- ============================================================ -->
+<!--  TAB 7: 标签助手                                              -->
+<!-- ============================================================ -->
+<div id="panel-tagsearch" class="panel">
+
+  <!-- 缓存状态 -->
+  <div class="card">
+    <div class="card-head pink">标签助手 — 按标签快速定位投稿</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span id="ts-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
+        <span style="font-size:12px;color:var(--text-tertiary)">复用「自动互动」的登录凭证</span>
+      </div>
+      <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px">
+        首次使用需扫描全部投稿的标签并缓存到本地，之后搜索即时响应。支持增量刷新（仅扫描新投稿）。
+      </p>
+
+      <!-- 缓存信息 + 操作按钮 -->
+      <div id="ts-cache-info" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:var(--input-bg);border-radius:var(--radius-sm);border:1px solid var(--input-border)">
+        <span style="font-size:13px;color:var(--text-secondary)">缓存: <b id="ts-video-count">0</b> 个视频 / <b id="ts-tag-count">0</b> 个标签</span>
+        <span style="font-size:12px;color:var(--text-tertiary)" id="ts-last-scan">未扫描</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px">
+        <button class="btn btn-primary btn-sm" id="ts-scan-inc-btn" onclick="tsScan('incremental')">增量扫描</button>
+        <button class="btn btn-outline btn-sm" id="ts-scan-full-btn" onclick="tsScan('full')">全量扫描</button>
+        <span id="ts-scan-progress" style="font-size:12px;color:var(--text-tertiary);line-height:28px"></span>
+      </div>
+
+      <!-- 搜索区 -->
+      <div class="form-group" style="margin-bottom:14px">
+        <label class="form-label" style="font-size:13px;display:flex;align-items:center;gap:6px">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          搜索标签
+          <span style="color:var(--text-tertiary);font-weight:normal;font-size:12px">输入标签名按回车添加，支持多标签筛选</span>
+        </label>
+        <div style="position:relative">
+          <div id="ts-search-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px 10px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm);transition:border-color var(--transition);cursor:text" onclick="document.getElementById('ts-search-input').focus()">
+            <input id="ts-search-input" type="text" placeholder="输入标签名后按回车添加" style="flex:1;min-width:120px;border:none;background:transparent;color:var(--text-primary);font-size:13px;outline:none;padding:2px 0" onkeydown="tsSearchKeydown(event)" oninput="tsSearchAutocomplete()">
+          </div>
+          <!-- 联想下拉 -->
+          <div id="ts-autocomplete" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:200px;overflow-y:auto;background:#1e1e2e;border:1px solid var(--input-border);border-radius:var(--radius-sm);box-shadow:0 4px 16px rgba(0,0,0,0.5);margin-top:2px"></div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;margin-top:8px">
+          <label class="checkbox-item" style="font-size:12px"><input type="radio" name="ts-mode" value="and" checked> 交集（同时包含所有标签）</label>
+          <label class="checkbox-item" style="font-size:12px"><input type="radio" name="ts-mode" value="or"> 并集（包含任一标签）</label>
+          <button class="btn btn-pink btn-sm" onclick="tsDoSearch()" style="margin-left:auto">搜索</button>
+        </div>
+      </div>
+
+      <!-- 搜索结果 -->
+      <div id="ts-results-area" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <label class="checkbox-item" style="font-size:13px"><input type="checkbox" id="ts-select-all" onchange="tsToggleAll()"> 全选</label>
+            <span style="font-size:13px;color:var(--text-secondary)">搜索结果: <b id="ts-result-count">0</b> 个视频</span>
+          </div>
+          <button class="btn btn-pink btn-sm" id="ts-stats-btn" onclick="tsCalcStats()">📊 统计选中</button>
+        </div>
+        <div id="ts-results-list" style="display:flex;flex-direction:column;gap:6px;max-height:500px;overflow-y:auto"></div>
+        <!-- 统计汇总 -->
+        <div id="ts-stats-summary" style="display:none;margin-top:14px;padding:12px 16px;background:rgba(251,114,153,0.06);border:1px solid rgba(251,114,153,0.2);border-radius:var(--radius-sm)">
+          <div style="font-size:13px;font-weight:600;color:var(--pink);margin-bottom:8px">📊 选中视频数据汇总</div>
+          <div id="ts-stats-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px"></div>
+          <div id="ts-stats-detail" style="margin-top:10px;max-height:200px;overflow-y:auto;font-size:12px;color:var(--text-secondary)"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
 </div><!-- /main -->
 
 <script>
@@ -1693,6 +1766,7 @@ function switchTab(name){
   if(name==='auto'){autoLoadConfig()}
   if(name==='livehelper'){lhLoadConfig()}
   if(name==='collection'){collLoadStatus()}
+  if(name==='tagsearch'){tsLoadStatus()}
 }
 
 /* ===== BV 动态列表 ===== */
@@ -3825,8 +3899,210 @@ function collEsc(s){
   return d.innerHTML;
 }
 
+/* ============================================================
+   TAB 7: 标签助手
+   ============================================================ */
+function _escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+let _tsAllTags = []; // 缓存所有标签名用于联想
+
+function tsLoadStatus(){
+  fetch('/api/tag-search/status').then(r=>r.json()).then(d=>{
+    if(d.logged_in){
+      document.getElementById('ts-login-info').innerHTML='已登录 <b>UID: '+d.mid+'</b>';
+    } else {
+      document.getElementById('ts-login-info').innerHTML='<span style="color:var(--warn)">未登录，请先在「自动互动」页面扫码登录</span>';
+    }
+    document.getElementById('ts-video-count').textContent=d.video_count||0;
+    document.getElementById('ts-tag-count').textContent=d.tag_count||0;
+    if(d.last_scan){
+      const dt=new Date(d.last_scan);
+      document.getElementById('ts-last-scan').textContent='上次扫描: '+dt.toLocaleString();
+    }
+    // 加载标签联想数据
+    if(d.video_count>0) tsLoadAllTags();
+  });
+}
+
+function tsLoadAllTags(){
+  fetch('/api/tag-search/all-tags').then(r=>r.json()).then(d=>{
+    if(d.success) _tsAllTags=d.tags||[];
+  });
+}
+
+function tsScan(mode){
+  const incBtn=document.getElementById('ts-scan-inc-btn');
+  const fullBtn=document.getElementById('ts-scan-full-btn');
+  const prog=document.getElementById('ts-scan-progress');
+  incBtn.disabled=true; fullBtn.disabled=true;
+  prog.textContent= mode==='full'?'全量扫描中，请稍候...':'增量扫描中，请稍候...';
+  fetch('/api/tag-search/scan',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({mode})
+  }).then(r=>r.json()).then(d=>{
+    incBtn.disabled=false; fullBtn.disabled=false;
+    if(d.success){
+      prog.textContent=d.message;
+      tsLoadStatus();
+    } else {
+      prog.textContent='扫描失败: '+(d.message||'');
+    }
+  }).catch(e=>{
+    incBtn.disabled=false; fullBtn.disabled=false;
+    prog.textContent='请求失败: '+e;
+  });
+}
+
+/* ---- 搜索标签 Tag 输入 ---- */
+function tsSearchKeydown(e){
+  if(e.key==='Enter'||e.key===','){
+    e.preventDefault();
+    const inp=document.getElementById('ts-search-input');
+    const val=inp.value.replace(/,/g,'').trim();
+    if(val.length>=1) tsSearchAddTag(val);
+    inp.value='';
+    tsHideAutocomplete();
+  } else if(e.key==='Backspace'&&!e.target.value){
+    const tags=document.querySelectorAll('#ts-search-tags .ts-chip');
+    if(tags.length) tags[tags.length-1].remove();
+  }
+}
+
+function tsSearchAddTag(text){
+  const container=document.getElementById('ts-search-tags');
+  const inp=document.getElementById('ts-search-input');
+  // 去重
+  const existing=[...container.querySelectorAll('.ts-chip')].map(c=>c.dataset.tag.toLowerCase());
+  if(existing.includes(text.toLowerCase())) return;
+  const chip=document.createElement('span');
+  chip.className='coll-kw-chip ts-chip';
+  chip.dataset.tag=text;
+  chip.innerHTML=`<span>${_escHtml(text)}</span><span class="coll-kw-x" onclick="this.parentElement.remove()">&times;</span>`;
+  container.insertBefore(chip,inp);
+}
+
+function tsGetSearchTags(){
+  return [...document.querySelectorAll('#ts-search-tags .ts-chip')].map(c=>c.dataset.tag);
+}
+
+/* ---- 联想补全 ---- */
+function tsSearchAutocomplete(){
+  const inp=document.getElementById('ts-search-input');
+  const val=inp.value.trim().toLowerCase();
+  const box=document.getElementById('ts-autocomplete');
+  if(!val||_tsAllTags.length===0){tsHideAutocomplete();return;}
+  const existing=new Set(tsGetSearchTags().map(t=>t.toLowerCase()));
+  const matches=_tsAllTags.filter(t=>t.name.toLowerCase().includes(val)&&!existing.has(t.name.toLowerCase())).slice(0,20);
+  if(!matches.length){tsHideAutocomplete();return;}
+  box.innerHTML=matches.map((t,i)=>`<div class="ts-ac-item" data-tag="${_escHtml(t.name)}" style="padding:6px 12px;cursor:pointer;font-size:13px;color:var(--text-primary);border-bottom:1px solid var(--input-border)" onmouseenter="this.style.background='var(--input-bg)'" onmouseleave="this.style.background='transparent'">${_escHtml(t.name)} <span style="color:var(--text-tertiary);font-size:11px">(${t.count})</span></div>`).join('');
+  box.querySelectorAll('.ts-ac-item').forEach(el=>{el.onclick=()=>{tsSearchAddTag(el.dataset.tag);document.getElementById('ts-search-input').value='';tsHideAutocomplete();};});
+  box.style.display='block';
+}
+
+function tsHideAutocomplete(){document.getElementById('ts-autocomplete').style.display='none';}
+document.addEventListener('click',e=>{if(!e.target.closest('#ts-search-tags')&&!e.target.closest('#ts-autocomplete'))tsHideAutocomplete();});
+
+/* ---- 执行搜索 ---- */
+function tsDoSearch(){
+  const tags=tsGetSearchTags();
+  if(!tags.length){alert('请至少输入一个标签');return;}
+  const mode=document.querySelector('input[name="ts-mode"]:checked').value;
+  const area=document.getElementById('ts-results-area');
+  const list=document.getElementById('ts-results-list');
+  area.style.display='block';
+  document.getElementById('ts-stats-summary').style.display='none';
+  document.getElementById('ts-select-all').checked=false;
+  list.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-tertiary)">搜索中...</div>';
+  fetch('/api/tag-search/search',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({tags,mode})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.success){list.innerHTML='<div style="color:var(--warn)">'+d.message+'</div>';return;}
+    document.getElementById('ts-result-count').textContent=d.count;
+    if(!d.videos||!d.videos.length){list.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-tertiary)">没有匹配的视频</div>';return;}
+    list.innerHTML='';
+    d.videos.forEach(v=>{
+      const date=new Date(v.created*1000);
+      const dateStr=date.getFullYear()+'-'+(date.getMonth()+1).toString().padStart(2,'0')+'-'+date.getDate().toString().padStart(2,'0')+' '+date.getHours().toString().padStart(2,'0')+':'+date.getMinutes().toString().padStart(2,'0');
+      const tagsHtml=(v.tags||[]).map(t=>`<span style="display:inline-block;padding:1px 6px;font-size:11px;background:rgba(251,114,153,0.12);color:var(--pink);border-radius:3px;margin-right:4px">${_escHtml(t)}</span>`).join('');
+      const item=document.createElement('label');
+      item.className='video-pick-item';
+      item.style.cursor='pointer';
+      item.innerHTML=`
+        <input type="checkbox" value="${v.aid}" style="width:16px;height:16px;accent-color:var(--pink);flex-shrink:0" onchange="this.closest('.video-pick-item').classList.toggle('selected',this.checked)">
+        <img class="video-pick-thumb" src="${v.pic}@160w_90h.webp" loading="lazy" onerror="this.style.display='none'">
+        <div class="video-pick-info">
+          <div class="video-pick-title">${_escHtml(v.title)}</div>
+          <div class="video-pick-meta">${v.bvid} · ${dateStr}</div>
+          <div style="margin-top:4px">${tagsHtml}</div>
+        </div>`;
+      list.appendChild(item);
+    });
+  }).catch(e=>{list.innerHTML='<div style="color:var(--warn)">请求失败: '+e+'</div>';});
+}
+
+function tsToggleAll(){
+  const checked=document.getElementById('ts-select-all').checked;
+  document.querySelectorAll('#ts-results-list input[type="checkbox"]').forEach(cb=>{
+    cb.checked=checked;
+    cb.closest('.video-pick-item').classList.toggle('selected',checked);
+  });
+}
+
+function _fmtNum(n){
+  if(n>=10000) return (n/10000).toFixed(1)+'万';
+  return n.toLocaleString();
+}
+
+function tsCalcStats(){
+  const checks=document.querySelectorAll('#ts-results-list input[type="checkbox"]:checked');
+  if(!checks.length){alert('请先勾选要统计的视频');return;}
+  const aids=[...checks].map(cb=>cb.value);
+  const btn=document.getElementById('ts-stats-btn');
+  const summary=document.getElementById('ts-stats-summary');
+  const grid=document.getElementById('ts-stats-grid');
+  const detail=document.getElementById('ts-stats-detail');
+  btn.disabled=true;btn.textContent='统计中...';
+  summary.style.display='block';
+  grid.innerHTML='<div style="color:var(--text-tertiary)">正在获取数据...</div>';
+  detail.innerHTML='';
+  fetch('/api/tag-search/stats',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({aids})
+  }).then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📊 统计选中';
+    if(!d.success){grid.innerHTML='<div style="color:var(--warn)">'+d.message+'</div>';return;}
+    const t=d.total;
+    const items=[
+      {label:'播放',val:t.view,icon:'▶'},
+      {label:'点赞',val:t.like,icon:'👍'},
+      {label:'投币',val:t.coin,icon:'🪙'},
+      {label:'收藏',val:t.favorite,icon:'⭐'},
+      {label:'转发',val:t.share,icon:'🔗'},
+      {label:'弹幕',val:t.danmaku,icon:'💬'},
+      {label:'评论',val:t.reply,icon:'📝'},
+    ];
+    grid.innerHTML=items.map(i=>`<div style="text-align:center;padding:8px;background:var(--input-bg);border-radius:6px"><div style="font-size:18px;font-weight:700;color:var(--text-primary)">${_fmtNum(i.val)}</div><div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">${i.icon} ${i.label}</div></div>`).join('');
+    // 明细表
+    if(d.videos&&d.videos.length){
+      let html='<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="color:var(--text-tertiary);border-bottom:1px solid var(--input-border)"><th style="text-align:left;padding:4px 6px">标题</th><th style="padding:4px 6px">分区</th><th style="padding:4px 6px">播放</th><th style="padding:4px 6px">点赞</th><th style="padding:4px 6px">投币</th><th style="padding:4px 6px">收藏</th><th style="padding:4px 6px">转发</th></tr></thead><tbody>';
+      d.videos.forEach(v=>{
+        if(v.error) return;
+        html+=`<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px 6px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_escHtml(v.title)}">${_escHtml(v.title)}</td><td style="text-align:center;padding:4px 6px;white-space:nowrap"><span style="padding:1px 6px;font-size:11px;background:rgba(251,114,153,0.12);color:var(--pink);border-radius:3px">${_escHtml(v.tname||'')}</span></td><td style="text-align:center;padding:4px 6px">${_fmtNum(v.view)}</td><td style="text-align:center;padding:4px 6px">${_fmtNum(v.like)}</td><td style="text-align:center;padding:4px 6px">${_fmtNum(v.coin)}</td><td style="text-align:center;padding:4px 6px">${_fmtNum(v.favorite)}</td><td style="text-align:center;padding:4px 6px">${_fmtNum(v.share)}</td></tr>`;
+      });
+      html+='</tbody></table>';
+      detail.innerHTML=html;
+    }
+  }).catch(e=>{
+    btn.disabled=false;btn.textContent='📊 统计选中';
+    grid.innerHTML='<div style="color:var(--warn)">请求失败: '+e+'</div>';
+  });
+}
+
 // 初始加载
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();lhLoadConfig();collLoadStatus();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();lhLoadConfig();collLoadStatus();tsLoadStatus();
 </script>
 </body>
 </html>

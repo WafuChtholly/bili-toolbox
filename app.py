@@ -2844,10 +2844,12 @@ def collection_resort_season():
         if not sec_ids:
             return jsonify({"success": False, "message": f"在创作中心找不到 season_id={season_id} 的合集"})
 
-        # 2) 对每个 section_id，调用 season/section API 获取该小节的视频列表
-        #    season/section API 的 id 参数实际上是 section_id
+        # 2) 对每个 section_id，调用 season/section API 获取视频列表
+        #    用 episode 自带的 sectionId 确定归属（API 可能返回整个合集的视频）
+        #    加去重，避免同一视频被多次添加
         from collections import defaultdict
         all_videos = []  # (section_id, section_title, section_type, episode_id, aid)
+        seen_ep_ids = set()
 
         for _sec_id in sec_ids:
             _sec_title = sec_titles.get(_sec_id, "正片")
@@ -2869,8 +2871,21 @@ def collection_resort_season():
             for ep in raw_episodes:
                 ep_id = ep.get("id")
                 aid = ep.get("aid")
-                if ep_id and aid:
-                    all_videos.append((_sec_id, _sec_title, _sec_type, ep_id, aid))
+                if not ep_id or not aid:
+                    continue
+                if ep_id in seen_ep_ids:
+                    continue
+                seen_ep_ids.add(ep_id)
+                # 用 episode 自带的 sectionId 确定真实归属
+                ep_sec_id = ep.get("sectionId") or _sec_id
+                ep_sec_title = sec_titles.get(ep_sec_id, _sec_title)
+                ep_sec_type = sec_types.get(ep_sec_id, _sec_type)
+                # 如果发现了新的 section_id，补充到 sec_titles/sec_types
+                if ep_sec_id not in sec_titles:
+                    sec_titles[ep_sec_id] = ep_sec_title
+                    sec_types[ep_sec_id] = ep_sec_type
+                    sec_ids.append(ep_sec_id)
+                all_videos.append((ep_sec_id, ep_sec_title, ep_sec_type, ep_id, aid))
 
         if not all_videos:
             return jsonify({"success": False, "message": "合集内没有视频，无需排序"})
@@ -2923,6 +2938,11 @@ def collection_resort_season():
             section_groups[sec_id]["title"] = sec_title
             section_groups[sec_id]["type"] = sec_type
             section_groups[sec_id]["videos"].append((ep_id, aid, pubdate))
+
+        # 打印分组结果
+        print(f"[COLLECTION-RESORT] 分组结果: {len(section_groups)} 个小节")
+        for _sid, _grp in section_groups.items():
+            print(f"[COLLECTION-RESORT]   小节 {_sid} ({_grp['title']}): {len(_grp['videos'])} 个视频")
 
         # 对每个小节排序并调用 edit API
         total_sorted = 0
@@ -2989,7 +3009,451 @@ def collection_resort_season():
 
 
 # =========================================================================
-#  六、前端入口
+#  七、标签搜索助手
+# =========================================================================
+
+_TAG_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tag_cache.json")
+
+# B站 tid_v2 -> 一级分区名称映射（新版分区体系）
+_V2_TID_MAP = {
+    # 主分区
+    1001:"影视", 1002:"娱乐", 1003:"音乐", 1004:"舞蹈", 1005:"动画",
+    1006:"番剧", 1007:"鬼畜", 1008:"游戏", 1009:"国创", 1010:"知识",
+    1011:"人工智能", 1012:"科技", 1013:"运动", 1014:"汽车", 1015:"家装房产",
+    1016:"生活", 1017:"美食", 1018:"动物圈", 1019:"时尚", 1020:"资讯",
+    1021:"小剧场", 1022:"纪录片", 1023:"电影", 1024:"电视剧",
+    # 影视子分区
+    2001:"影视", 2002:"影视", 2003:"影视", 2004:"影视", 2005:"影视",
+    2006:"影视", 2007:"影视", 2008:"影视",
+    # 娱乐子分区
+    2009:"娱乐", 2010:"娱乐", 2011:"娱乐", 2012:"娱乐", 2013:"娱乐",
+    2014:"娱乐", 2015:"娱乐",
+    # 音乐子分区
+    2016:"音乐", 2017:"音乐", 2018:"音乐", 2019:"音乐", 2020:"音乐",
+    2021:"音乐", 2022:"音乐", 2023:"音乐", 2024:"音乐", 2025:"音乐",
+    2026:"音乐", 2027:"音乐",
+    # 舞蹈子分区
+    2028:"舞蹈", 2029:"舞蹈", 2030:"舞蹈", 2031:"舞蹈", 2032:"舞蹈",
+    2033:"舞蹈", 2034:"舞蹈", 2035:"舞蹈", 2036:"舞蹈",
+    # 动画子分区
+    2037:"动画", 2038:"动画", 2039:"动画", 2040:"动画", 2041:"动画",
+    2042:"动画", 2043:"动画", 2044:"动画", 2045:"动画", 2046:"动画",
+    2047:"动画", 2048:"动画", 2049:"动画", 2050:"动画", 2051:"动画",
+    2052:"动画", 2053:"动画", 2054:"动画",
+    # 鬼畜子分区
+    2059:"鬼畜", 2060:"鬼畜", 2061:"鬼畜", 2062:"鬼畜", 2063:"鬼畜",
+    # 游戏子分区
+    2064:"游戏", 2065:"游戏", 2066:"游戏", 2067:"游戏", 2068:"游戏",
+    2069:"游戏", 2070:"游戏", 2071:"游戏", 2072:"游戏", 2073:"游戏",
+    2074:"游戏", 2075:"游戏", 2076:"游戏", 2077:"游戏", 2078:"游戏",
+    2079:"游戏",
+    # 知识子分区
+    2084:"知识", 2085:"知识", 2086:"知识", 2087:"知识", 2088:"知识",
+    2089:"知识", 2090:"知识", 2091:"知识", 2092:"知识", 2093:"知识",
+    2094:"知识", 2095:"知识",
+    # 科技子分区
+    2096:"科技", 2097:"科技", 2098:"科技", 2099:"科技",
+    # 生活子分区
+    2100:"生活", 2101:"生活", 2102:"生活", 2103:"生活", 2104:"生活",
+    2105:"生活", 2106:"生活", 2107:"生活", 2108:"生活", 2109:"生活",
+    2110:"生活", 2111:"生活", 2112:"生活", 2113:"生活",
+    # 美食子分区
+    2114:"美食", 2115:"美食", 2116:"美食", 2117:"美食", 2118:"美食",
+    2119:"美食", 2120:"美食",
+    # 动物圈子分区
+    2121:"动物圈", 2122:"动物圈", 2123:"动物圈", 2124:"动物圈",
+    2125:"动物圈", 2126:"动物圈",
+    # 时尚子分区
+    2127:"时尚", 2128:"时尚", 2129:"时尚", 2130:"时尚", 2131:"时尚",
+    2132:"时尚", 2133:"时尚", 2134:"时尚",
+    # 运动子分区
+    2135:"运动", 2136:"运动", 2137:"运动", 2138:"运动", 2139:"运动",
+    2140:"运动", 2141:"运动", 2142:"运动", 2143:"运动",
+    # 汽车子分区
+    2144:"汽车", 2145:"汽车", 2146:"汽车", 2147:"汽车", 2148:"汽车",
+    2149:"汽车", 2150:"汽车", 2151:"汽车", 2152:"汽车", 2153:"汽车",
+}
+
+# 旧版 tid -> 一级分区名称映射（兜底）
+_TID_MAP = {
+    24:"动画",25:"动画",47:"动画",27:"动画",210:"动画",86:"动画",
+    32:"番剧",33:"番剧",51:"番剧",152:"番剧",
+    153:"国创",168:"国创",169:"国创",195:"国创",170:"国创",
+    28:"音乐",31:"音乐",30:"音乐",29:"音乐",130:"音乐",193:"音乐",194:"音乐",59:"音乐",
+    20:"舞蹈",154:"舞蹈",156:"舞蹈",164:"舞蹈",
+    17:"游戏",171:"游戏",172:"游戏",65:"游戏",173:"游戏",
+    201:"知识",124:"知识",122:"知识",39:"知识",208:"知识",209:"知识",228:"知识",207:"知识",
+    95:"科技",230:"科技",231:"科技",232:"科技",233:"科技",
+    235:"运动",249:"运动",250:"运动",245:"运动",246:"运动",247:"运动",248:"运动",
+    223:"汽车",240:"汽车",227:"汽车",229:"汽车",
+    21:"生活",161:"生活",162:"生活",163:"生活",254:"生活",253:"生活",252:"生活",251:"生活",239:"生活",138:"生活",
+    76:"美食",212:"美食",213:"美食",214:"美食",215:"美食",216:"美食",
+    218:"动物圈",219:"动物圈",220:"动物圈",221:"动物圈",222:"动物圈",75:"动物圈",
+    22:"鬼畜",26:"鬼畜",126:"鬼畜",127:"鬼畜",
+    157:"时尚",158:"时尚",159:"时尚",192:"时尚",
+    202:"资讯",203:"资讯",204:"资讯",205:"资讯",206:"资讯",
+    71:"娱乐",137:"娱乐",131:"娱乐",
+    182:"影视",183:"影视",85:"影视",184:"影视",
+    37:"纪录片",178:"纪录片",
+    147:"电影",145:"电影",146:"电影",
+    185:"电视剧",187:"电视剧",
+}
+
+
+def _load_tag_cache() -> dict:
+    if os.path.exists(_TAG_CACHE_FILE):
+        try:
+            with open(_TAG_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"last_scan": None, "videos": {}}
+
+
+def _save_tag_cache(cache: dict):
+    with open(_TAG_CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+@app.route("/api/tag-search/status")
+def tag_search_status():
+    """返回缓存状态：视频数、标签数、上次扫描时间。"""
+    sessdata, bili_jct, mid = _coll_cred()
+    cache = _load_tag_cache()
+    all_tags = set()
+    for v in cache.get("videos", {}).values():
+        all_tags.update(v.get("tags", []))
+    return jsonify({
+        "success": True,
+        "logged_in": bool(sessdata and mid),
+        "mid": mid,
+        "video_count": len(cache.get("videos", {})),
+        "tag_count": len(all_tags),
+        "last_scan": cache.get("last_scan"),
+    })
+
+
+@app.route("/api/tag-search/scan", methods=["POST"])
+def tag_search_scan():
+    """扫描投稿标签并缓存。
+    Body: {"mode": "incremental" | "full"}
+    增量模式只扫描缓存中没有的新投稿。
+    """
+    sessdata, bili_jct, mid = _coll_cred()
+    if not sessdata or not mid:
+        return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
+
+    body = request.json or {}
+    mode = body.get("mode", "incremental")
+
+    try:
+        from bilibili_api import Credential
+        from bilibili_api.user import User, VideoOrder
+        from bilibili_api.video import Video as BiliVideo
+
+        credential = Credential(
+            sessdata=sessdata, bili_jct=bili_jct,
+            dedeuserid=str(mid), ac_time_value="",
+        )
+        u = User(int(mid), credential=credential)
+
+        # 1) 拉取全部投稿 aid 列表（快速，不查标签）
+        loop = asyncio.new_event_loop()
+        try:
+            async def _fetch_all_videos():
+                all_vids = []
+                pn = 1
+                while True:
+                    page = await u.get_videos(pn=pn, ps=50, order=VideoOrder.PUBDATE)
+                    vlist = page.get("list", {}).get("vlist", [])
+                    if not vlist:
+                        break
+                    all_vids.extend(vlist)
+                    if len(vlist) < 50:
+                        break
+                    pn += 1
+                return all_vids
+
+            all_vids = loop.run_until_complete(_fetch_all_videos())
+        finally:
+            loop.close()
+
+        print(f"[TAG-SEARCH] 空间投稿总数: {len(all_vids)}")
+
+        # 2) 加载缓存，确定需要扫描的 aid
+        cache = _load_tag_cache()
+        cached_videos = cache.get("videos", {})
+
+        if mode == "full":
+            to_scan = all_vids
+        else:
+            to_scan = [v for v in all_vids if str(v.get("aid")) not in cached_videos]
+
+        print(f"[TAG-SEARCH] 模式={mode}, 需扫描: {len(to_scan)}")
+
+        if not to_scan:
+            from datetime import datetime
+            cache["last_scan"] = datetime.now().isoformat()
+            _save_tag_cache(cache)
+            return jsonify({
+                "success": True,
+                "message": "没有新投稿需要扫描",
+                "scanned": 0,
+                "total_cached": len(cached_videos),
+            })
+
+        # 3) 并发获取标签
+        loop2 = asyncio.new_event_loop()
+        try:
+            async def _fetch_tags_batch(vids):
+                sem = asyncio.Semaphore(15)
+                results = []
+
+                async def _one(v):
+                    async with sem:
+                        aid = v.get("aid")
+                        bvid = v.get("bvid", "")
+                        title = v.get("title", "")
+                        pic = v.get("pic", "")
+                        created = v.get("created", 0)
+                        tags = []
+                        try:
+                            vid = BiliVideo(aid=aid, credential=credential)
+                            tag_list = await vid.get_tags()
+                            if tag_list:
+                                tags = [t.get("tag_name", "") for t in tag_list if t.get("tag_name")]
+                        except Exception as e:
+                            print(f"[TAG-SEARCH] aid={aid} get_tags 失败: {e}")
+                        return {
+                            "aid": str(aid),
+                            "bvid": bvid,
+                            "title": title,
+                            "pic": pic,
+                            "created": created,
+                            "tags": tags,
+                        }
+
+                tasks = [_one(v) for v in vids]
+                # 分批执行，每批 50 个，避免内存爆
+                batch_size = 50
+                for i in range(0, len(tasks), batch_size):
+                    batch_results = await asyncio.gather(*tasks[i:i+batch_size])
+                    results.extend(batch_results)
+                    print(f"[TAG-SEARCH] 进度: {min(i+batch_size, len(tasks))}/{len(tasks)}")
+                return results
+
+            scan_results = loop2.run_until_complete(_fetch_tags_batch(to_scan))
+        finally:
+            loop2.close()
+
+        # 4) 写入缓存
+        from datetime import datetime
+        for item in scan_results:
+            cached_videos[item["aid"]] = item
+        cache["videos"] = cached_videos
+        cache["last_scan"] = datetime.now().isoformat()
+        _save_tag_cache(cache)
+
+        # 统计
+        all_tags = set()
+        for v in cached_videos.values():
+            all_tags.update(v.get("tags", []))
+
+        return jsonify({
+            "success": True,
+            "message": f"扫描完成：新增 {len(scan_results)} 个视频的标签",
+            "scanned": len(scan_results),
+            "total_cached": len(cached_videos),
+            "total_tags": len(all_tags),
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"[TAG-SEARCH] 扫描异常: {traceback.format_exc()}")
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/tag-search/search", methods=["POST"])
+def tag_search_search():
+    """根据标签搜索视频。
+    Body: {"tags": ["tag1", "tag2"], "mode": "and" | "or"}
+    """
+    body = request.json or {}
+    search_tags = [t.strip().lower() for t in (body.get("tags") or []) if t.strip()]
+    mode = body.get("mode", "and")  # and=交集, or=并集
+
+    if not search_tags:
+        return jsonify({"success": False, "message": "请输入至少一个标签"})
+
+    cache = _load_tag_cache()
+    videos = cache.get("videos", {})
+    results = []
+
+    for aid, v in videos.items():
+        v_tags_lower = [t.lower() for t in v.get("tags", [])]
+        if mode == "and":
+            match = all(st in v_tags_lower for st in search_tags)
+        else:
+            match = any(st in v_tags_lower for st in search_tags)
+        if match:
+            results.append(v)
+
+    # 按投稿时间倒序
+    results.sort(key=lambda x: x.get("created", 0), reverse=True)
+
+    return jsonify({
+        "success": True,
+        "count": len(results),
+        "videos": results,
+    })
+
+
+@app.route("/api/tag-search/all-tags")
+def tag_search_all_tags():
+    """返回缓存中所有标签名及其出现次数，用于联想补全。"""
+    cache = _load_tag_cache()
+    tag_counts = {}
+    for v in cache.get("videos", {}).values():
+        for t in v.get("tags", []):
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+    # 按出现次数降序
+    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+    return jsonify({"success": True, "tags": [{"name": n, "count": c} for n, c in sorted_tags]})
+
+
+@app.route("/api/tag-search/refresh-one", methods=["POST"])
+def tag_search_refresh_one():
+    """刷新单个视频的标签缓存。
+    Body: {"aid": int}
+    """
+    sessdata, bili_jct, mid = _coll_cred()
+    if not sessdata or not mid:
+        return jsonify({"success": False, "message": "未登录"})
+
+    body = request.json or {}
+    aid = body.get("aid")
+    if not aid:
+        return jsonify({"success": False, "message": "缺少 aid"})
+
+    try:
+        from bilibili_api import Credential
+        from bilibili_api.video import Video as BiliVideo
+
+        credential = Credential(
+            sessdata=sessdata, bili_jct=bili_jct,
+            dedeuserid=str(mid), ac_time_value="",
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            async def _do():
+                vid = BiliVideo(aid=int(aid), credential=credential)
+                tag_list = await vid.get_tags()
+                return [t.get("tag_name", "") for t in (tag_list or []) if t.get("tag_name")]
+            tags = loop.run_until_complete(_do())
+        finally:
+            loop.close()
+
+        cache = _load_tag_cache()
+        aid_str = str(aid)
+        if aid_str in cache.get("videos", {}):
+            cache["videos"][aid_str]["tags"] = tags
+            _save_tag_cache(cache)
+
+        return jsonify({"success": True, "tags": tags})
+
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/tag-search/stats", methods=["POST"])
+def tag_search_stats():
+    """批量获取视频统计数据（播放/点赞/投币/收藏/转发）。
+    Body: {"aids": [123, 456, ...]}
+    """
+    sessdata, bili_jct, mid = _coll_cred()
+    if not sessdata or not mid:
+        return jsonify({"success": False, "message": "未登录"})
+
+    body = request.json or {}
+    aids = body.get("aids", [])
+    if not aids:
+        return jsonify({"success": False, "message": "未选择视频"})
+
+    # 限制一次最多 100 个
+    aids = aids[:100]
+
+    try:
+        from bilibili_api import Credential
+        from bilibili_api.video import Video as BiliVideo
+
+        credential = Credential(
+            sessdata=sessdata, bili_jct=bili_jct,
+            dedeuserid=str(mid), ac_time_value="",
+        )
+
+        loop = asyncio.new_event_loop()
+        try:
+            async def _fetch_stats():
+                sem = asyncio.Semaphore(10)
+                results = []
+
+                async def _one(aid):
+                    async with sem:
+                        try:
+                            vid = BiliVideo(aid=int(aid), credential=credential)
+                            info = await vid.get_info()
+                            stat = info.get("stat", {})
+                            _tid = info.get("tid", 0)
+                            _tid_v2 = info.get("tid_v2", 0)
+                            _tname = info.get("tname", "") or info.get("tname_v2", "") or _V2_TID_MAP.get(_tid_v2, "") or _TID_MAP.get(_tid, str(_tid) if _tid else "")
+                            return {
+                                "aid": str(aid),
+                                "bvid": info.get("bvid", ""),
+                                "title": info.get("title", ""),
+                                "tname": _tname,
+                                "view": stat.get("view", 0),
+                                "like": stat.get("like", 0),
+                                "coin": stat.get("coin", 0),
+                                "favorite": stat.get("favorite", 0),
+                                "share": stat.get("share", 0),
+                                "danmaku": stat.get("danmaku", 0),
+                                "reply": stat.get("reply", 0),
+                            }
+                        except Exception as e:
+                            print(f"[TAG-SEARCH] stats aid={aid} 失败: {e}")
+                            return {"aid": str(aid), "error": str(e)}
+
+                tasks = [_one(a) for a in aids]
+                results = await asyncio.gather(*tasks)
+                return results
+
+            stats_list = loop.run_until_complete(_fetch_stats())
+        finally:
+            loop.close()
+
+        # 汇总
+        total = {"view": 0, "like": 0, "coin": 0, "favorite": 0, "share": 0, "danmaku": 0, "reply": 0}
+        for s in stats_list:
+            if "error" not in s:
+                for k in total:
+                    total[k] += s.get(k, 0)
+
+        return jsonify({
+            "success": True,
+            "count": len(stats_list),
+            "total": total,
+            "videos": stats_list,
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"[TAG-SEARCH] stats 异常: {traceback.format_exc()}")
+        return jsonify({"success": False, "message": str(e)})
+
+
+# =========================================================================
+#  八、前端入口
 # =========================================================================
 
 @app.route("/")
