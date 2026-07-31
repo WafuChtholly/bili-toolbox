@@ -52,6 +52,94 @@ import time as _time
 _qr_login_instances: dict[str, object] = {}
 
 
+# ---- Monkey-patch: 修复 B站新版 crossDomain 扫码登录 ----
+def _patch_qr_login():
+    """修补 bilibili_api QrCodeLogin.check_state，支持 crossDomain ticket 流程。"""
+    try:
+        from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents, QrCodeLoginChannel
+        from bilibili_api.utils.network import Api, Credential
+        from bilibili_api.utils.utils import get_api
+        import httpx
+
+        API = get_api("login")
+        _original_check_state = QrCodeLogin.check_state
+
+        async def _patched_check_state(self):
+            platform = getattr(self, "_QrCodeLogin__platform", None)
+            if platform != QrCodeLoginChannel.WEB:
+                return await _original_check_state(self)
+
+            api = API["qrcode"]["web"]["get_events"]
+            qr_key = getattr(self, "_QrCodeLogin__qr_key", "")
+            params = {"qrcode_key": qr_key}
+            events = (
+                await Api(credential=Credential(), **api).update_params(**params).result
+            )
+            code = events["code"]
+            if code == 86101:
+                return QrCodeLoginEvents.SCAN
+            elif code == 86090:
+                return QrCodeLoginEvents.CONF
+            elif code == 86038:
+                return QrCodeLoginEvents.TIMEOUT
+            else:
+                cred_url = events["url"]
+                ac_time_value = events["refresh_token"]
+                sessdata = ""
+                bili_jct = ""
+                dedeuserid = ""
+                if "crossDomain" in cred_url and "ticket=" in cred_url:
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                        "Referer": "https://passport.bilibili.com/",
+                        "Origin": "https://passport.bilibili.com",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    }
+                    try:
+                        client = httpx.Client(headers=headers, follow_redirects=False, timeout=10)
+                        url = cred_url
+                        for _ in range(5):
+                            resp = client.get(url)
+                            for cookie in resp.cookies.jar:
+                                if cookie.name == "SESSDATA":
+                                    sessdata = cookie.value
+                                elif cookie.name == "bili_jct":
+                                    bili_jct = cookie.value
+                                elif cookie.name.upper() == "DEDEUSERID":
+                                    dedeuserid = cookie.value
+                            if resp.status_code in (301, 302, 303, 307, 308):
+                                url = str(resp.headers.get("location", ""))
+                                if not url:
+                                    break
+                            else:
+                                break
+                        client.close()
+                    except Exception as e:
+                        logger.warning("crossDomain 请求失败: %s", e)
+                else:
+                    cookies_list = cred_url.split("?")[1].split("&") if "?" in cred_url else []
+                    for cookie in cookies_list:
+                        if cookie[:8] == "SESSDATA":
+                            sessdata = cookie[9:]
+                        if cookie[:8] == "bili_jct":
+                            bili_jct = cookie[9:]
+                        if cookie[:11].upper() == "DEDEUSERID=":
+                            dedeuserid = cookie[11:]
+                cred = Credential(
+                    sessdata=sessdata, bili_jct=bili_jct,
+                    dedeuserid=dedeuserid, ac_time_value=ac_time_value,
+                )
+                setattr(self, "_QrCodeLogin__credential", cred)
+                return QrCodeLoginEvents.DONE
+
+        QrCodeLogin.check_state = _patched_check_state
+        logger.info("QR 登录 crossDomain 补丁已应用")
+    except Exception as e:
+        logger.warning("QR 登录补丁应用失败: %s", e)
+
+_patch_qr_login()
+
+
 # ---- QR 登录 (WebUI 调用) ----
 async def qr_generate() -> dict:
     """生成 QR 登录二维码，返回 {session_id, qrcode_key, qr_image (base64 PNG)}。"""
