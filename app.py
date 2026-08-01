@@ -3164,37 +3164,75 @@ def _save_tag_cache(cache: dict):
         json.dump(cache, f, ensure_ascii=False, indent=2)
 
 
+# ---- 标签扫描后台任务状态 ----
+_ts_scan_lock = threading.Lock()
+_ts_scan_state = {"running": False, "progress": "", "done": 0, "total": 0, "error": None, "result": None}
+
+
+def _ts_log(msg):
+    """安全日志，不依赖 stdout。"""
+    try:
+        print(msg)
+    except Exception:
+        pass
+
+
 @app.route("/api/tag-search/status")
 def tag_search_status():
     """返回缓存状态：视频数、标签数、上次扫描时间。"""
-    sessdata, bili_jct, mid = _coll_cred()
-    cache = _load_tag_cache()
-    all_tags = set()
-    for v in cache.get("videos", {}).values():
-        all_tags.update(v.get("tags", []))
-    return jsonify({
-        "success": True,
-        "logged_in": bool(sessdata and mid),
-        "mid": mid,
-        "video_count": len(cache.get("videos", {})),
-        "tag_count": len(all_tags),
-        "last_scan": cache.get("last_scan"),
-    })
+    try:
+        sessdata, bili_jct, mid = _coll_cred()
+        cache = _load_tag_cache()
+        all_tags = set()
+        for v in cache.get("videos", {}).values():
+            all_tags.update(v.get("tags", []))
+        return jsonify({
+            "success": True,
+            "logged_in": bool(sessdata and mid),
+            "mid": mid,
+            "video_count": len(cache.get("videos", {})),
+            "tag_count": len(all_tags),
+            "last_scan": cache.get("last_scan"),
+        })
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
 
 
 @app.route("/api/tag-search/scan", methods=["POST"])
 def tag_search_scan():
-    """扫描投稿标签并缓存。
-    Body: {"mode": "incremental" | "full"}
-    增量模式只扫描缓存中没有的新投稿。
-    """
-    sessdata, bili_jct, mid = _coll_cred()
-    if not sessdata or not mid:
-        return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
+    """启动后台扫描任务，立即返回。前端通过 /scan-status 轮询进度。"""
+    try:
+        sessdata, bili_jct, mid = _coll_cred()
+        if not sessdata or not mid:
+            return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
 
-    body = request.json or {}
-    mode = body.get("mode", "incremental")
+        with _ts_scan_lock:
+            if _ts_scan_state["running"]:
+                return jsonify({"success": False, "message": "扫描任务正在进行中，请稍候"})
 
+        body = request.json or {}
+        mode = body.get("mode", "incremental")
+
+        with _ts_scan_lock:
+            _ts_scan_state.update(running=True, progress="准备中...", done=0, total=0, error=None, result=None)
+
+        t = threading.Thread(target=_ts_scan_worker, args=(sessdata, bili_jct, mid, mode), daemon=True)
+        t.start()
+        return jsonify({"success": True, "message": "扫描任务已启动"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/tag-search/scan-status")
+def tag_search_scan_status():
+    """轮询扫描进度。"""
+    with _ts_scan_lock:
+        s = dict(_ts_scan_state)
+    return jsonify(s)
+
+
+def _ts_scan_worker(sessdata, bili_jct, mid, mode):
+    """后台线程：执行标签扫描。"""
     try:
         from bilibili_api import Credential
         from bilibili_api.user import User, VideoOrder
@@ -3206,7 +3244,9 @@ def tag_search_scan():
         )
         u = User(int(mid), credential=credential)
 
-        # 1) 拉取全部投稿 aid 列表（快速，不查标签）
+        # 1) 拉取全部投稿
+        with _ts_scan_lock:
+            _ts_scan_state["progress"] = "正在获取投稿列表..."
         loop = asyncio.new_event_loop()
         try:
             async def _fetch_all_videos():
@@ -3222,34 +3262,34 @@ def tag_search_scan():
                         break
                     pn += 1
                 return all_vids
-
             all_vids = loop.run_until_complete(_fetch_all_videos())
         finally:
             loop.close()
 
-        print(f"[TAG-SEARCH] 空间投稿总数: {len(all_vids)}")
+        _ts_log(f"[TAG-SEARCH] 空间投稿总数: {len(all_vids)}")
 
-        # 2) 加载缓存，确定需要扫描的 aid
+        # 2) 确定需扫描的 aid
         cache = _load_tag_cache()
         cached_videos = cache.get("videos", {})
-
         if mode == "full":
             to_scan = all_vids
         else:
             to_scan = [v for v in all_vids if str(v.get("aid")) not in cached_videos]
 
-        print(f"[TAG-SEARCH] 模式={mode}, 需扫描: {len(to_scan)}")
+        _ts_log(f"[TAG-SEARCH] 模式={mode}, 需扫描: {len(to_scan)}")
 
         if not to_scan:
             from datetime import datetime
             cache["last_scan"] = datetime.now().isoformat()
             _save_tag_cache(cache)
-            return jsonify({
-                "success": True,
-                "message": "没有新投稿需要扫描",
-                "scanned": 0,
-                "total_cached": len(cached_videos),
-            })
+            with _ts_scan_lock:
+                _ts_scan_state.update(running=False, progress="没有新投稿需要扫描",
+                                      result={"scanned": 0, "total_cached": len(cached_videos)})
+            return
+
+        with _ts_scan_lock:
+            _ts_scan_state["total"] = len(to_scan)
+            _ts_scan_state["progress"] = f"正在获取标签 0/{len(to_scan)}..."
 
         # 3) 并发获取标签
         loop2 = asyncio.new_event_loop()
@@ -3257,8 +3297,10 @@ def tag_search_scan():
             async def _fetch_tags_batch(vids):
                 sem = asyncio.Semaphore(15)
                 results = []
+                done_count = 0
 
                 async def _one(v):
+                    nonlocal done_count
                     async with sem:
                         aid = v.get("aid")
                         bvid = v.get("bvid", "")
@@ -3271,24 +3313,23 @@ def tag_search_scan():
                             tag_list = await vid.get_tags()
                             if tag_list:
                                 tags = [t.get("tag_name", "") for t in tag_list if t.get("tag_name")]
-                        except Exception as e:
-                            print(f"[TAG-SEARCH] aid={aid} get_tags 失败: {e}")
+                        except Exception:
+                            pass
+                        done_count += 1
+                        if done_count % 20 == 0 or done_count == len(vids):
+                            with _ts_scan_lock:
+                                _ts_scan_state["done"] = done_count
+                                _ts_scan_state["progress"] = f"正在获取标签 {done_count}/{len(vids)}..."
                         return {
-                            "aid": str(aid),
-                            "bvid": bvid,
-                            "title": title,
-                            "pic": pic,
-                            "created": created,
-                            "tags": tags,
+                            "aid": str(aid), "bvid": bvid, "title": title,
+                            "pic": pic, "created": created, "tags": tags,
                         }
 
                 tasks = [_one(v) for v in vids]
-                # 分批执行，每批 50 个，避免内存爆
                 batch_size = 50
                 for i in range(0, len(tasks), batch_size):
                     batch_results = await asyncio.gather(*tasks[i:i+batch_size])
                     results.extend(batch_results)
-                    print(f"[TAG-SEARCH] 进度: {min(i+batch_size, len(tasks))}/{len(tasks)}")
                 return results
 
             scan_results = loop2.run_until_complete(_fetch_tags_batch(to_scan))
@@ -3303,88 +3344,82 @@ def tag_search_scan():
         cache["last_scan"] = datetime.now().isoformat()
         _save_tag_cache(cache)
 
-        # 统计
         all_tags = set()
         for v in cached_videos.values():
             all_tags.update(v.get("tags", []))
 
-        return jsonify({
-            "success": True,
-            "message": f"扫描完成：新增 {len(scan_results)} 个视频的标签",
-            "scanned": len(scan_results),
-            "total_cached": len(cached_videos),
-            "total_tags": len(all_tags),
-        })
+        with _ts_scan_lock:
+            _ts_scan_state.update(
+                running=False,
+                progress=f"扫描完成：新增 {len(scan_results)} 个视频的标签",
+                done=len(to_scan), total=len(to_scan),
+                result={"scanned": len(scan_results), "total_cached": len(cached_videos), "total_tags": len(all_tags)},
+            )
 
     except Exception as e:
-        import traceback
-        print(f"[TAG-SEARCH] 扫描异常: {traceback.format_exc()}")
-        return jsonify({"success": False, "message": str(e)})
+        _ts_log(f"[TAG-SEARCH] 扫描异常: {e}")
+        with _ts_scan_lock:
+            _ts_scan_state.update(running=False, progress=f"扫描失败: {e}", error=str(e))
 
 
 @app.route("/api/tag-search/search", methods=["POST"])
 def tag_search_search():
-    """根据标签搜索视频。
-    Body: {"tags": ["tag1", "tag2"], "mode": "and" | "or"}
-    """
-    body = request.json or {}
-    search_tags = [t.strip().lower() for t in (body.get("tags") or []) if t.strip()]
-    mode = body.get("mode", "and")  # and=交集, or=并集
+    """根据标签搜索视频。"""
+    try:
+        body = request.json or {}
+        search_tags = [t.strip().lower() for t in (body.get("tags") or []) if t.strip()]
+        mode = body.get("mode", "and")
 
-    if not search_tags:
-        return jsonify({"success": False, "message": "请输入至少一个标签"})
+        if not search_tags:
+            return jsonify({"success": False, "message": "请输入至少一个标签"})
 
-    cache = _load_tag_cache()
-    videos = cache.get("videos", {})
-    results = []
+        cache = _load_tag_cache()
+        videos = cache.get("videos", {})
+        results = []
 
-    for aid, v in videos.items():
-        v_tags_lower = [t.lower() for t in v.get("tags", [])]
-        if mode == "and":
-            match = all(st in v_tags_lower for st in search_tags)
-        else:
-            match = any(st in v_tags_lower for st in search_tags)
-        if match:
-            results.append(v)
+        for aid, v in videos.items():
+            v_tags_lower = [t.lower() for t in v.get("tags", [])]
+            if mode == "and":
+                match = all(st in v_tags_lower for st in search_tags)
+            else:
+                match = any(st in v_tags_lower for st in search_tags)
+            if match:
+                results.append(v)
 
-    # 按投稿时间倒序
-    results.sort(key=lambda x: x.get("created", 0), reverse=True)
+        results.sort(key=lambda x: x.get("created", 0), reverse=True)
 
-    return jsonify({
-        "success": True,
-        "count": len(results),
-        "videos": results,
-    })
+        return jsonify({"success": True, "count": len(results), "videos": results})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
 
 
 @app.route("/api/tag-search/all-tags")
 def tag_search_all_tags():
     """返回缓存中所有标签名及其出现次数，用于联想补全。"""
-    cache = _load_tag_cache()
-    tag_counts = {}
-    for v in cache.get("videos", {}).values():
-        for t in v.get("tags", []):
-            tag_counts[t] = tag_counts.get(t, 0) + 1
-    # 按出现次数降序
-    sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
-    return jsonify({"success": True, "tags": [{"name": n, "count": c} for n, c in sorted_tags]})
+    try:
+        cache = _load_tag_cache()
+        tag_counts = {}
+        for v in cache.get("videos", {}).values():
+            for t in v.get("tags", []):
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+        return jsonify({"success": True, "tags": [{"name": n, "count": c} for n, c in sorted_tags]})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
 
 
 @app.route("/api/tag-search/refresh-one", methods=["POST"])
 def tag_search_refresh_one():
-    """刷新单个视频的标签缓存。
-    Body: {"aid": int}
-    """
-    sessdata, bili_jct, mid = _coll_cred()
-    if not sessdata or not mid:
-        return jsonify({"success": False, "message": "未登录"})
-
-    body = request.json or {}
-    aid = body.get("aid")
-    if not aid:
-        return jsonify({"success": False, "message": "缺少 aid"})
-
+    """刷新单个视频的标签缓存。"""
     try:
+        sessdata, bili_jct, mid = _coll_cred()
+        if not sessdata or not mid:
+            return jsonify({"success": False, "message": "未登录"})
+
+        body = request.json or {}
+        aid = body.get("aid")
+        if not aid:
+            return jsonify({"success": False, "message": "缺少 aid"})
         from bilibili_api import Credential
         from bilibili_api.video import Video as BiliVideo
 
@@ -3417,22 +3452,18 @@ def tag_search_refresh_one():
 
 @app.route("/api/tag-search/stats", methods=["POST"])
 def tag_search_stats():
-    """批量获取视频统计数据（播放/点赞/投币/收藏/转发）。
-    Body: {"aids": [123, 456, ...]}
-    """
-    sessdata, bili_jct, mid = _coll_cred()
-    if not sessdata or not mid:
-        return jsonify({"success": False, "message": "未登录"})
-
-    body = request.json or {}
-    aids = body.get("aids", [])
-    if not aids:
-        return jsonify({"success": False, "message": "未选择视频"})
-
-    # 限制一次最多 100 个
-    aids = aids[:100]
-
+    """批量获取视频统计数据。"""
     try:
+        sessdata, bili_jct, mid = _coll_cred()
+        if not sessdata or not mid:
+            return jsonify({"success": False, "message": "未登录"})
+
+        body = request.json or {}
+        aids = body.get("aids", [])
+        if not aids:
+            return jsonify({"success": False, "message": "未选择视频"})
+
+        aids = aids[:100]
         from bilibili_api import Credential
         from bilibili_api.video import Video as BiliVideo
 
@@ -3470,7 +3501,6 @@ def tag_search_stats():
                                 "reply": stat.get("reply", 0),
                             }
                         except Exception as e:
-                            print(f"[TAG-SEARCH] stats aid={aid} 失败: {e}")
                             return {"aid": str(aid), "error": str(e)}
 
                 tasks = [_one(a) for a in aids]
@@ -3496,8 +3526,6 @@ def tag_search_stats():
         })
 
     except Exception as e:
-        import traceback
-        print(f"[TAG-SEARCH] stats 异常: {traceback.format_exc()}")
         return jsonify({"success": False, "message": str(e)})
 
 

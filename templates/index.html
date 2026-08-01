@@ -3906,10 +3906,8 @@ function _escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 let _tsAllTags = []; // 缓存所有标签名用于联想
 
 function tsLoadStatus(){
-  fetch('/api/tag-search/status').then(r=>{
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(d=>{
+  fetch('/api/tag-search/status').then(r=>r.json()).then(d=>{
+    if(!d.success) return;
     if(d.logged_in){
       document.getElementById('ts-login-info').innerHTML='已登录 <b>UID: '+d.mid+'</b>';
     } else {
@@ -3921,9 +3919,19 @@ function tsLoadStatus(){
       const dt=new Date(d.last_scan);
       document.getElementById('ts-last-scan').textContent='上次扫描: '+dt.toLocaleString();
     }
-    // 加载标签联想数据
     if(d.video_count>0) tsLoadAllTags();
-  }).catch(e=>{
+    // 检查是否有正在进行的扫描任务
+    fetch('/api/tag-search/scan-status').then(r=>r.json()).then(s=>{
+      if(s.running){
+        const incBtn=document.getElementById('ts-scan-inc-btn');
+        const fullBtn=document.getElementById('ts-scan-full-btn');
+        const prog=document.getElementById('ts-scan-progress');
+        incBtn.disabled=true; fullBtn.disabled=true;
+        prog.textContent=s.progress||'扫描中...';
+        _tsPollScanStatus(incBtn,fullBtn,prog);
+      }
+    }).catch(()=>{});
+  }).catch(()=>{
     document.getElementById('ts-login-info').innerHTML='<span style="color:var(--warn)">标签助手接口不可用，请更新到最新版本</span>';
   });
 }
@@ -3942,26 +3950,41 @@ function tsScan(mode){
   const fullBtn=document.getElementById('ts-scan-full-btn');
   const prog=document.getElementById('ts-scan-progress');
   incBtn.disabled=true; fullBtn.disabled=true;
-  prog.textContent= mode==='full'?'全量扫描中，请稍候...':'增量扫描中，请稍候...';
+  prog.textContent='正在启动扫描任务...';
   fetch('/api/tag-search/scan',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({mode})
-  }).then(r=>{
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(d=>{
-    incBtn.disabled=false; fullBtn.disabled=false;
-    if(d.success){
-      prog.textContent=d.message;
-      tsLoadStatus();
-    } else {
+  }).then(r=>r.json()).then(d=>{
+    if(!d.success){
+      incBtn.disabled=false; fullBtn.disabled=false;
       prog.textContent='扫描失败: '+(d.message||'');
+      return;
     }
+    // 启动轮询
+    prog.textContent='扫描已启动，正在获取数据...';
+    _tsPollScanStatus(incBtn,fullBtn,prog);
   }).catch(e=>{
     incBtn.disabled=false; fullBtn.disabled=false;
-    prog.textContent='请求失败: '+(e.message||e)+'，请确认已更新到最新版本';
+    prog.textContent='请求失败: '+(e.message||e);
   });
+}
+
+function _tsPollScanStatus(incBtn,fullBtn,prog){
+  const timer=setInterval(()=>{
+    fetch('/api/tag-search/scan-status').then(r=>r.json()).then(s=>{
+      prog.textContent=s.progress||'扫描中...';
+      if(!s.running){
+        clearInterval(timer);
+        incBtn.disabled=false; fullBtn.disabled=false;
+        if(s.error){
+          prog.textContent='扫描失败: '+s.error;
+        } else {
+          tsLoadStatus();
+        }
+      }
+    }).catch(()=>{});
+  },2000);
 }
 
 /* ---- 搜索标签 Tag 输入 ---- */
@@ -4028,10 +4051,7 @@ function tsDoSearch(){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({tags,mode})
-  }).then(r=>{
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(d=>{
+  }).then(r=>r.json()).then(d=>{
     if(!d.success){list.innerHTML='<div style="color:var(--warn)">'+d.message+'</div>';return;}
     document.getElementById('ts-result-count').textContent=d.count;
     if(!d.videos||!d.videos.length){list.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-tertiary)">没有匹配的视频</div>';return;}
@@ -4085,10 +4105,7 @@ function tsCalcStats(){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({aids})
-  }).then(r=>{
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json();
-  }).then(d=>{
+  }).then(r=>r.json()).then(d=>{
     btn.disabled=false;btn.textContent='📊 统计选中';
     if(!d.success){grid.innerHTML='<div style="color:var(--warn)">'+d.message+'</div>';return;}
     const t=d.total;
