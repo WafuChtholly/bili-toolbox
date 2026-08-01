@@ -28,6 +28,14 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
 
+# Windows 控制台编码修复：避免 print() 中文时 [Errno 22] Invalid argument
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
