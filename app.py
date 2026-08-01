@@ -28,13 +28,37 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
 
-# Windows 控制台编码修复：避免 print() 中文时 [Errno 22] Invalid argument
+# Windows 控制台安全输出：避免 print() 因编码/fd 问题抛 [Errno 22] 导致业务中断
+class _SafeStream:
+    """包装 sys.stdout/stderr，write/flush 失败时静默忽略，不影响业务逻辑。"""
+    def __init__(self, original):
+        self._orig = original
+    def write(self, s):
+        try:
+            self._orig.write(s)
+        except Exception:
+            pass
+    def flush(self):
+        try:
+            self._orig.flush()
+        except Exception:
+            pass
+    def reconfigure(self, *a, **kw):
+        try:
+            self._orig.reconfigure(*a, **kw)
+        except Exception:
+            pass
+    def __getattr__(self, name):
+        return getattr(self._orig, name)
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+    sys.stdout = _SafeStream(sys.stdout)
+    sys.stderr = _SafeStream(sys.stderr)
 
 app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
