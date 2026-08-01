@@ -3291,55 +3291,127 @@ def _ts_scan_worker(sessdata, bili_jct, mid, mode):
             _ts_scan_state["total"] = len(to_scan)
             _ts_scan_state["progress"] = f"正在获取标签 0/{len(to_scan)}..."
 
-        # 3) 并发获取标签
+        # 3) 并发获取标签（带风控重试冷却）
+        _RISK_CODES = {-412, -509, -799, -352, -403}
+        _RISK_KW = ["风控", "频繁", "blocked", "too many", "412", "509", "799", "352"]
+        _cooldown_until = [0.0]  # mutable for closure
+        _consecutive_fail = [0]
+        _aborted = [False]
+        _CONSECUTIVE_FAIL_LIMIT = 30
+
+        def _is_risk(e):
+            code = getattr(e, "code", None)
+            if code is not None:
+                try:
+                    if int(code) in _RISK_CODES:
+                        return True
+                except (ValueError, TypeError):
+                    pass
+            msg = str(e).lower()
+            return any(kw in msg for kw in _RISK_KW)
+
         loop2 = asyncio.new_event_loop()
         try:
             async def _fetch_tags_batch(vids):
-                sem = asyncio.Semaphore(15)
+                sem = asyncio.Semaphore(5)
                 results = []
                 done_count = 0
+                saved_count = 0
+
+                async def _wait_cooldown():
+                    while _cooldown_until[0] > time.time():
+                        remain = int(_cooldown_until[0] - time.time())
+                        with _ts_scan_lock:
+                            _ts_scan_state["progress"] = f"风控冷却中，剩余 {remain} 秒..."
+                        await asyncio.sleep(1)
 
                 async def _one(v):
                     nonlocal done_count
+                    if _aborted[0]:
+                        return None
                     async with sem:
+                        if _aborted[0]:
+                            return None
+                        await _wait_cooldown()
+                        if _aborted[0]:
+                            return None
                         aid = v.get("aid")
                         bvid = v.get("bvid", "")
                         title = v.get("title", "")
                         pic = v.get("pic", "")
                         created = v.get("created", 0)
                         tags = []
-                        try:
-                            vid = BiliVideo(aid=aid, credential=credential)
-                            tag_list = await vid.get_tags()
-                            if tag_list:
-                                tags = [t.get("tag_name", "") for t in tag_list if t.get("tag_name")]
-                        except Exception:
-                            pass
+                        ok = False
+                        for attempt in range(3):
+                            if _aborted[0]:
+                                break
+                            try:
+                                vid = BiliVideo(aid=aid, credential=credential)
+                                tag_list = await vid.get_tags()
+                                if tag_list:
+                                    tags = [t.get("tag_name", "") for t in tag_list if t.get("tag_name")]
+                                ok = True
+                                _consecutive_fail[0] = 0
+                                break
+                            except Exception as e:
+                                if _is_risk(e):
+                                    cd = 30 + attempt * 30
+                                    _cooldown_until[0] = time.time() + cd
+                                    _ts_log(f"[TAG-SEARCH] 风控检测 aid={aid}, 冷却{cd}s")
+                                    await asyncio.sleep(cd)
+                                    continue
+                                if attempt < 2:
+                                    await asyncio.sleep(2 ** attempt)
+                        if not ok:
+                            _consecutive_fail[0] += 1
+                            if _consecutive_fail[0] >= _CONSECUTIVE_FAIL_LIMIT:
+                                _aborted[0] = True
+                        else:
+                            _consecutive_fail[0] = 0
                         done_count += 1
-                        if done_count % 20 == 0 or done_count == len(vids):
+                        if done_count % 10 == 0 or done_count == len(vids):
                             with _ts_scan_lock:
                                 _ts_scan_state["done"] = done_count
                                 _ts_scan_state["progress"] = f"正在获取标签 {done_count}/{len(vids)}..."
                         return {
                             "aid": str(aid), "bvid": bvid, "title": title,
                             "pic": pic, "created": created, "tags": tags,
+                            "_ok": ok,
                         }
 
-                tasks = [_one(v) for v in vids]
-                batch_size = 50
-                for i in range(0, len(tasks), batch_size):
-                    batch_results = await asyncio.gather(*tasks[i:i+batch_size])
-                    results.extend(batch_results)
+                # 分批执行，每批之间加间隔
+                batch_size = 20
+                for i in range(0, len(vids), batch_size):
+                    if _aborted[0]:
+                        break
+                    batch = vids[i:i+batch_size]
+                    batch_results = await asyncio.gather(*[_one(v) for v in batch])
+                    # 增量写入缓存（请求成功的才缓存，失败的下次增量扫描会重试）
+                    for item in batch_results:
+                        if item and item.get("_ok"):
+                            item.pop("_ok", None)
+                            cached_videos[item["aid"]] = item
+                            saved_count += 1
+                    # 每 5 批保存一次缓存
+                    if (i // batch_size) % 5 == 0 and saved_count > 0:
+                        cache["videos"] = cached_videos
+                        _save_tag_cache(cache)
+                    results.extend([r for r in batch_results if r])
+                    # 批次间隔 1-2 秒
+                    if not _aborted[0] and i + batch_size < len(vids):
+                        await asyncio.sleep(1.5)
                 return results
 
             scan_results = loop2.run_until_complete(_fetch_tags_batch(to_scan))
         finally:
             loop2.close()
 
-        # 4) 写入缓存
+        # 4) 最终写入缓存
         from datetime import datetime
         for item in scan_results:
-            cached_videos[item["aid"]] = item
+            item.pop("_ok", None)
+            if item["aid"] not in cached_videos:
+                cached_videos[item["aid"]] = item
         cache["videos"] = cached_videos
         cache["last_scan"] = datetime.now().isoformat()
         _save_tag_cache(cache)
@@ -3348,16 +3420,35 @@ def _ts_scan_worker(sessdata, bili_jct, mid, mode):
         for v in cached_videos.values():
             all_tags.update(v.get("tags", []))
 
-        with _ts_scan_lock:
-            _ts_scan_state.update(
-                running=False,
-                progress=f"扫描完成：新增 {len(scan_results)} 个视频的标签",
-                done=len(to_scan), total=len(to_scan),
-                result={"scanned": len(scan_results), "total_cached": len(cached_videos), "total_tags": len(all_tags)},
-            )
+        scanned_ok = sum(1 for r in scan_results if r.get("tags"))
+        if _aborted[0]:
+            msg = (f"扫描因风控中断：已获取 {scanned_ok}/{len(to_scan)} 个视频的标签并已缓存，"
+                   f"请稍后使用「增量扫描」继续获取剩余稿件")
+            with _ts_scan_lock:
+                _ts_scan_state.update(
+                    running=False, progress=msg,
+                    done=len(scan_results), total=len(to_scan),
+                    result={"scanned": scanned_ok, "total_cached": len(cached_videos),
+                            "total_tags": len(all_tags), "aborted": True},
+                )
+        else:
+            with _ts_scan_lock:
+                _ts_scan_state.update(
+                    running=False,
+                    progress=f"扫描完成：新增 {scanned_ok} 个视频的标签",
+                    done=len(to_scan), total=len(to_scan),
+                    result={"scanned": scanned_ok, "total_cached": len(cached_videos),
+                            "total_tags": len(all_tags)},
+                )
 
     except Exception as e:
         _ts_log(f"[TAG-SEARCH] 扫描异常: {e}")
+        # 异常时也尝试保存已有缓存
+        try:
+            cache["videos"] = cached_videos
+            _save_tag_cache(cache)
+        except Exception:
+            pass
         with _ts_scan_lock:
             _ts_scan_state.update(running=False, progress=f"扫描失败: {e}", error=str(e))
 
