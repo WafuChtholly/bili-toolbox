@@ -39,6 +39,22 @@ if sys.platform == "win32":
 app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.ERROR)
 
+
+# API 路由统一返回 JSON 错误，避免前端收到 HTML 页面导致 JSON 解析失败
+@app.errorhandler(404)
+def _api_404(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"success": False, "message": f"接口不存在: {request.path}，请更新到最新版本"}), 404
+    return e
+
+
+@app.errorhandler(500)
+def _api_500(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"success": False, "message": f"服务器内部错误: {e}"}), 500
+    return e
+
+
 # =========================================================================
 #  一、通用工具
 # =========================================================================

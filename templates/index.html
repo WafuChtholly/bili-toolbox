@@ -3906,7 +3906,10 @@ function _escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 let _tsAllTags = []; // 缓存所有标签名用于联想
 
 function tsLoadStatus(){
-  fetch('/api/tag-search/status').then(r=>r.json()).then(d=>{
+  fetch('/api/tag-search/status').then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(d=>{
     if(d.logged_in){
       document.getElementById('ts-login-info').innerHTML='已登录 <b>UID: '+d.mid+'</b>';
     } else {
@@ -3920,13 +3923,18 @@ function tsLoadStatus(){
     }
     // 加载标签联想数据
     if(d.video_count>0) tsLoadAllTags();
+  }).catch(e=>{
+    document.getElementById('ts-login-info').innerHTML='<span style="color:var(--warn)">标签助手接口不可用，请更新到最新版本</span>';
   });
 }
 
 function tsLoadAllTags(){
-  fetch('/api/tag-search/all-tags').then(r=>r.json()).then(d=>{
-    if(d.success) _tsAllTags=d.tags||[];
-  });
+  fetch('/api/tag-search/all-tags').then(r=>{
+    if(!r.ok) return;
+    return r.json();
+  }).then(d=>{
+    if(d&&d.success) _tsAllTags=d.tags||[];
+  }).catch(()=>{});
 }
 
 function tsScan(mode){
@@ -3939,7 +3947,10 @@ function tsScan(mode){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({mode})
-  }).then(r=>r.json()).then(d=>{
+  }).then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(d=>{
     incBtn.disabled=false; fullBtn.disabled=false;
     if(d.success){
       prog.textContent=d.message;
@@ -3949,7 +3960,7 @@ function tsScan(mode){
     }
   }).catch(e=>{
     incBtn.disabled=false; fullBtn.disabled=false;
-    prog.textContent='请求失败: '+e;
+    prog.textContent='请求失败: '+(e.message||e)+'，请确认已更新到最新版本';
   });
 }
 
@@ -4017,7 +4028,10 @@ function tsDoSearch(){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({tags,mode})
-  }).then(r=>r.json()).then(d=>{
+  }).then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(d=>{
     if(!d.success){list.innerHTML='<div style="color:var(--warn)">'+d.message+'</div>';return;}
     document.getElementById('ts-result-count').textContent=d.count;
     if(!d.videos||!d.videos.length){list.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-tertiary)">没有匹配的视频</div>';return;}
@@ -4071,7 +4085,10 @@ function tsCalcStats(){
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({aids})
-  }).then(r=>r.json()).then(d=>{
+  }).then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(d=>{
     btn.disabled=false;btn.textContent='📊 统计选中';
     if(!d.success){grid.innerHTML='<div style="color:var(--warn)">'+d.message+'</div>';return;}
     const t=d.total;
