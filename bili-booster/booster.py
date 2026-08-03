@@ -33,7 +33,7 @@ def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7):
     day = date.today()
     for _ in range(max_lookback_days):
         day = day - timedelta(days=1)
-        proxy_url = f'https://api.checkerproxy.net/v1/landing/archive/{day.strftime("%Y-%m-%d")}'
+        proxy_url = f'https://checkerproxy.net/v1/landing/archive/{day.strftime("%Y-%m-%d")}'
         log(f'getting proxies from {proxy_url} ...')
         try:
             response = requests.get(proxy_url, timeout=timeout)
