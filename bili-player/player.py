@@ -351,7 +351,7 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
     log(f"[PLAYER] ━━━━━━━━━━━━━━━━━━━━━━━━")
     log(f"[PLAYER] 🚀 播放任务启动")
     log(f"[PLAYER]    账号数: {len(accounts)} | 视频数: {len(bvids)} | 每视频轮次: {rounds} | 总计: {total_planned} 轮")
-    log(f"[PLAYER]    执行方式: 账号间并行，账号内串行")
+    log(f"[PLAYER]    执行方式: 账号间并行，账号内按轮次串行（每轮各投稿播一次）")
     log(f"[PLAYER]    错开策略: 每个账号启动间隔 {stagger_seconds}-{stagger_seconds + 5} 秒（可用 stagger_seconds 调整）")
     for i, bvid in enumerate(bvids, 1):
         log(f"[PLAYER]    [{i}/{len(bvids)}] {bvid} | 初始播放量: {initial_views.get(bvid, '?')}")
@@ -376,25 +376,24 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
             log(f"[PLAYER] [{account_label}] 延迟 {stagger} 秒启动")
             await asyncio.sleep(stagger)
 
-        for bvid in bvids:
+        for round_num in range(1, rounds + 1):
             if stop_event and stop_event.is_set():
                 log(f"[PLAYER] [{account_label}] 收到停止信号，退出")
                 return
 
-            async with results_lock:
-                video_results.setdefault(bvid, {"rounds": 0, "success": 0, "failed": 0, "last_views": None})
-
-            for round_num in range(1, rounds + 1):
+            # 每一轮把所有投稿各播一次，再进入下一轮
+            for bvid in bvids:
                 if stop_event and stop_event.is_set():
                     log(f"[PLAYER] [{account_label}] 收到停止信号，退出")
                     return
 
                 async with results_lock:
+                    video_results.setdefault(bvid, {"rounds": 0, "success": 0, "failed": 0, "last_views": None})
                     total_rounds += 1
                     video_results[bvid]["rounds"] += 1
 
                 log(f"[PLAYER] [{account_label}] ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
-                log(f"[PLAYER] [{account_label}] 📌 {bvid} | 第 {round_num}/{rounds} 轮")
+                log(f"[PLAYER] [{account_label}] 📌 第 {round_num}/{rounds} 轮 | {bvid}")
 
                 try:
                     cur_views = await play_video(
