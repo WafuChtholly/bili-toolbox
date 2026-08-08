@@ -87,6 +87,40 @@ def load_accounts(cfg: dict = None) -> list[list[dict]]:
     return accounts if accounts else [[]]
 
 
+# 每完成多少轮清理一次残留浏览器进程
+_CLEANUP_EVERY_ROUNDS = 30
+
+
+def cleanup_leftover_browsers(log=None) -> int:
+    """清理异常退出残留的 playwright 浏览器进程，防止长时间运行堆积。
+
+    安全策略：
+    - 只处理 ms-playwright / .local-browsers 目录下的浏览器二进制，不会误杀用户自己的 Chrome
+    - 只清理父进程已不存在的孤儿进程，不会杀掉正在被其他任务使用的浏览器
+    """
+    try:
+        import psutil
+    except ImportError:
+        return 0
+
+    killed = 0
+    for proc in psutil.process_iter(["pid", "ppid", "exe"]):
+        try:
+            exe = (proc.info.get("exe") or "").lower()
+            if "ms-playwright" not in exe and ".local-browsers" not in exe:
+                continue
+            ppid = proc.info.get("ppid")
+            if ppid and psutil.pid_exists(ppid):
+                continue  # 父进程还在，说明浏览器仍在被使用
+            proc.kill()
+            killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if killed and log:
+        log(f"[SYSTEM] 已清理 {killed} 个残留浏览器进程")
+    return killed
+
+
 def extract_bvid(url_or_bvid: str) -> str:
     """从 URL 或直接的 BV 号中提取 bvid"""
     url_or_bvid = url_or_bvid.strip()
@@ -430,6 +464,10 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
                             if res.get("last_views") is not None:
                                 total_growth += max(0, res["last_views"] - initial_views.get(bv, res["last_views"]))
                         log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{total_growth}")
+
+                # 每 30 轮清理一次残留浏览器进程，防止长时间运行堆积
+                if (success_rounds + failed_rounds) % _CLEANUP_EVERY_ROUNDS == 0:
+                    cleanup_leftover_browsers(log)
 
     # 账号间并行执行
     tasks = [play_for_account(i, cookies) for i, cookies in enumerate(accounts)]

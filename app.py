@@ -86,11 +86,16 @@ def _api_500(e):
 # 简单的内存日志存储，前端轮询拉取
 log_buffers: dict[str, list[str]] = {}
 log_lock = threading.Lock()
+# 每个任务日志最多保留的行数，超出丢弃最早的，防止长时间任务内存无限增长
+LOG_MAX_LINES = 2000
 
 
 def _append_log(task_id: str, line: str):
     with log_lock:
-        log_buffers.setdefault(task_id, []).append(line)
+        buf = log_buffers.setdefault(task_id, [])
+        buf.append(line)
+        if len(buf) > LOG_MAX_LINES:
+            del buf[:len(buf) - LOG_MAX_LINES]
 
 
 def _get_log(task_id: str) -> str:
