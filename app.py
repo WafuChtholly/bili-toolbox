@@ -1062,24 +1062,78 @@ def _run_player_task(task_id: str, bv_list: list[str], rounds: int, stop_event: 
         _append_log(task_id, msg)
 
     try:
-        # 检测 Playwright Chromium 是否已安装，未安装则自动安装
+        # 检测 Playwright Chromium 是否已安装：用 playwright 自身的可执行路径解析，
+        # 自动兼容打包运行（浏览器在 playwright 包内）和源码运行（浏览器在系统默认目录）两种情况
         _append_log(task_id, "[SYSTEM] 检查 Playwright Chromium ...")
         import subprocess as _sp
         check = _sp.run(
             [sys.executable, "-c",
-             "import os; import playwright; d=os.path.dirname(playwright.__file__); "
-             "browsers=os.path.join(d,'.local-browsers'); "
-             "exit(0 if os.path.isdir(browsers) and any('chromium' in x for x in os.listdir(browsers)) else 1)"],
-            capture_output=True, timeout=10,
+             "import os; from playwright.sync_api import sync_playwright; "
+             "pw=sync_playwright().start(); ex=pw.chromium.executable_path; pw.stop(); "
+             "exit(0 if ex and os.path.exists(ex) else 1)"],
+            capture_output=True, timeout=30,
         )
         if check.returncode != 0:
-            _append_log(task_id, "[SYSTEM] Chromium 未安装，正在自动安装（约 150MB）...")
-            install = _sp.run(
+            _append_log(task_id, "[SYSTEM] Chromium 未安装，正在自动安装（约 150MB，使用国内镜像）...")
+            install_env = os.environ.copy()
+            # 走国内镜像下载，避免海外 CDN 卡死（用户已配置的环境变量优先）
+            install_env.setdefault("PLAYWRIGHT_DOWNLOAD_HOST", "https://cdn.npmmirror.com/binaries/playwright")
+            # 打包运行时 playwright 只从包内 .local-browsers 查找浏览器，需装到包内；
+            # 源码运行时查找系统默认位置（如 %LOCALAPPDATA%\ms-playwright），不加该变量装到默认位置即可
+            if getattr(sys, "frozen", False) or globals().get("__compiled__"):
+                install_env.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
+            proc = _sp.Popen(
                 [sys.executable, "-m", "playwright", "install", "chromium"],
-                capture_output=True, timeout=600,
+                stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                env=install_env,
             )
-            if install.returncode != 0:
-                _append_log(task_id, "[ERROR] Chromium 安装失败，请手动执行: python -m playwright install chromium")
+
+            def _forward_install_output():
+                last_fwd = 0.0
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # 下载进度行节流：最多每秒转发一条，避免日志刷屏
+                    if "Downloading" in line and "%" in line:
+                        now = time.time()
+                        if now - last_fwd < 1.0:
+                            continue
+                        last_fwd = now
+                    _append_log(task_id, f"[INSTALL] {line}")
+
+            reader = threading.Thread(target=_forward_install_output, daemon=True)
+            reader.start()
+
+            # 等待安装结束：支持停止信号，整体超时 15 分钟
+            deadline = time.time() + 900
+            cancelled = False
+            timed_out = False
+            while proc.poll() is None:
+                if stop_event and stop_event.is_set():
+                    proc.kill()
+                    cancelled = True
+                    _append_log(task_id, "[SYSTEM] 已取消 Chromium 安装")
+                    break
+                if time.time() > deadline:
+                    proc.kill()
+                    timed_out = True
+                    _append_log(task_id, "[ERROR] Chromium 安装超时，请检查网络后重试，或双击运行 install_chromium.bat 手动安装")
+                    break
+                try:
+                    proc.wait(timeout=1)
+                except _sp.TimeoutExpired:
+                    continue
+            reader.join(timeout=3)
+
+            if cancelled:
+                with player_lock:
+                    player_tasks[task_id]["status"] = "completed"
+                return
+            if proc.returncode != 0:
+                if not timed_out:
+                    _append_log(task_id, "[ERROR] Chromium 安装失败，请双击运行 install_chromium.bat 手动安装，或执行: python -m playwright install chromium")
                 with player_lock:
                     player_tasks[task_id]["status"] = "error"
                 return
