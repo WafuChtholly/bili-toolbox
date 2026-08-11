@@ -88,7 +88,7 @@ def load_accounts(cfg: dict = None) -> list[list[dict]]:
 
 
 # 每完成多少轮清理一次残留浏览器进程
-_CLEANUP_EVERY_ROUNDS = 30
+_CLEANUP_EVERY_ROUNDS = 10
 
 
 def cleanup_leftover_browsers(log=None) -> int:
@@ -465,7 +465,7 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
                                 total_growth += max(0, res["last_views"] - initial_views.get(bv, res["last_views"]))
                         log(f"[RESULT] round|{success_rounds + failed_rounds}|{total_planned}|{success_rounds}|{failed_rounds}|{total_growth}")
 
-                # 每 30 轮清理一次残留浏览器进程，防止长时间运行堆积
+                # 每 10 轮清理一次残留浏览器进程，防止长时间运行堆积
                 if (success_rounds + failed_rounds) % _CLEANUP_EVERY_ROUNDS == 0:
                     cleanup_leftover_browsers(log)
 

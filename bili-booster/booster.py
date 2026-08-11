@@ -439,8 +439,10 @@ def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, vi
         log(f'  failed to check views: {e}')
 
 
-def main(bv_input, target_input, stop_event=None):
-    """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。"""
+def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True):
+    """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。
+    max_rounds 为最大轮数，传 0 或 None 表示无上限。
+    refetch_proxies 为 True 时每轮重新获取代理，为 False 时只在启动时获取一次并复用。"""
     log = print
 
     bv_list = [bv.strip() for bv in bv_input.split(',') if bv.strip()]
@@ -476,8 +478,18 @@ def main(bv_input, target_input, stop_event=None):
         return
 
     round_num = 0
-    max_rounds = 5
     no_growth_streak = 0
+    total_proxies = []
+
+    if not refetch_proxies:
+        try:
+            total_proxies = get_total_proxies(log, stop_event=stop_event)
+        except Exception as e:
+            log(f'failed to fetch proxies: {e}')
+        if not total_proxies:
+            log('代理列表为空，无法启动')
+            return
+        log(f'代理仅获取一次（共 {len(total_proxies)} 个），所有轮次复用')
 
     while True:
         if stop_event and stop_event.is_set():
@@ -493,25 +505,27 @@ def main(bv_input, target_input, stop_event=None):
             break
 
         round_num += 1
-        if round_num > max_rounds:
+        if max_rounds and round_num > max_rounds:
             log(f'\nmax rounds ({max_rounds}) reached, stopping')
             break
 
         # snapshot views before this round
         views_before = {v['bvid']: v['current'] for v in videos}
 
-        log(f'\n========== ROUND {round_num}/{max_rounds} ==========')
+        round_label = f'{round_num}/{max_rounds}' if max_rounds else f'{round_num} (unlimited)'
+        log(f'\n========== ROUND {round_label} ==========')
 
-        try:
-            total_proxies = get_total_proxies(log, stop_event=stop_event)
-        except Exception as e:
-            log(f'failed to fetch proxies: {e}')
-            sleep(5)
-            continue
+        if refetch_proxies:
+            try:
+                total_proxies = get_total_proxies(log, stop_event=stop_event)
+            except Exception as e:
+                log(f'failed to fetch proxies: {e}')
+                sleep(5)
+                continue
 
-        if not total_proxies:
-            log('代理列表为空，跳过本轮')
-            continue
+            if not total_proxies:
+                log('代理列表为空，跳过本轮')
+                continue
 
         # 多视频完全并发执行
         video_lock = threading.Lock()
@@ -559,4 +573,6 @@ def main(bv_input, target_input, stop_event=None):
 
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2])
+    cli_max_rounds = int(sys.argv[3]) if len(sys.argv) > 3 else 5
+    cli_refetch = sys.argv[4] != '0' if len(sys.argv) > 4 else True
+    main(sys.argv[1], sys.argv[2], max_rounds=cli_max_rounds, refetch_proxies=cli_refetch)

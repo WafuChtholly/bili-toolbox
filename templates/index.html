@@ -1143,6 +1143,20 @@ textarea.form-input { min-height: 80px; resize: vertical; }
         <label class="form-label">目标播放数</label>
         <input class="form-input" id="booster-target" type="number" placeholder="1000">
       </div>
+      <div class="form-group">
+        <label class="form-label">最大轮数</label>
+        <input class="form-input" id="booster-max-rounds" type="number" min="0" value="5" placeholder="5">
+        <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">填 0 表示不限轮数</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">代理获取方式</label>
+        <label style="display:flex;align-items:center;gap:8px;color:var(--text-secondary);font-size:13px;cursor:pointer">
+          <input type="checkbox" id="booster-refetch" checked>
+          每轮重新获取代理
+          <span style="font-size:11px;color:var(--warning,#f59e0b);border:1px solid var(--warning,#f59e0b);border-radius:4px;padding:0 6px">实验性</span>
+        </label>
+        <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">取消勾选则启动时只获取一次代理，所有轮次复用（速度快，但后续轮次可能失效）</p>
+      </div>
       <div class="status-bar" id="bst-status-bar">
         <span class="status-dot dot-off" id="bst-dot"></span>
         <span id="bst-status-text" style="color:var(--text-secondary)">就绪</span>
@@ -2650,6 +2664,10 @@ function boosterRun(){
   const bvList=bvGetList('booster-bv-list');
   const target=document.getElementById('booster-target').value.trim();
   if(!bvList.length||!target){alert('请填写 BV号 和 目标播放数');return;}
+  const maxRoundsVal=document.getElementById('booster-max-rounds').value.trim();
+  const maxRounds=maxRoundsVal===''?5:parseInt(maxRoundsVal,10);
+  if(isNaN(maxRounds)||maxRounds<0){alert('最大轮数需为不小于 0 的整数');return;}
+  const refetchProxies=document.getElementById('booster-refetch').checked;
   const bv=bvList.join(',');
   const btn=document.getElementById('bst-run-btn');
   const stopBtn=document.getElementById('bst-stop-btn');
@@ -2662,7 +2680,7 @@ function boosterRun(){
   document.getElementById('bst-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
   document.getElementById('bst-rp-videos').innerHTML='';
 
-  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target})})
+  fetch('/api/booster/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,target,max_rounds:maxRounds,refetch_proxies:refetchProxies})})
     .then(r=>r.json()).then(d=>{
       if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 开始提升';stopBtn.style.display='none';return;}
       bstTaskId=d.task_id;

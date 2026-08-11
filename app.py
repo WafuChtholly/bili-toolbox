@@ -854,7 +854,7 @@ def booster_webhook_poll():
     return jsonify({"bvs": bvs, "enabled": booster_webhook_enabled})
 
 
-def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None):
+def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True):
     # 等待信号量：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
     _booster_semaphore.acquire()
     try:
@@ -919,7 +919,7 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
         sys.stdout = capture
         try:
             bv_input = ",".join(bv_list)
-            booster.main(bv_input, str(target), stop_event=stop_event)
+            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies)
             with booster_lock:
                 if booster_tasks[task_id]["status"] != "cancelled":
                     booster_tasks[task_id]["status"] = "completed"
@@ -944,6 +944,14 @@ def booster_run():
     bv_list = [b.strip() for b in bv_str.split(",") if b.strip()]
     if not bv_list or not target:
         return jsonify({"error": "缺少 BV号 或 目标播放数"}), 400
+    try:
+        max_rounds = int(data.get("max_rounds", 5))
+    except (TypeError, ValueError):
+        return jsonify({"error": "最大轮数必须是整数"}), 400
+    if max_rounds < 0:
+        return jsonify({"error": "最大轮数不能为负数"}), 400
+    _refetch = data.get("refetch_proxies")
+    refetch_proxies = True if _refetch is None else bool(_refetch)
 
     tid = str(uuid.uuid4())[:8]
     stop_event = threading.Event()
@@ -954,11 +962,13 @@ def booster_run():
             "end": None,
             "bv": bv_str,
             "target": target,
+            "max_rounds": max_rounds,
+            "refetch_proxies": refetch_proxies,
             "stop_event": stop_event,
         }
     with log_lock:
         log_buffers[tid] = []
-    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event), daemon=True)
+    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event, max_rounds, refetch_proxies), daemon=True)
     t.start()
     return jsonify({"task_id": tid})
 
