@@ -2,6 +2,9 @@
 B站播放量提升 — Playwright 模拟浏览器播放
 通过 Playwright 打开视频页面，模拟真实用户行为增加播放量
 """
+# 兼容 Python 3.8 (Win7)：list[dict] 等注解语法延迟求值
+from __future__ import annotations
+
 import os
 import random
 import re

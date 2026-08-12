@@ -2,6 +2,9 @@
 B站工具箱 — 统一 WebUI
 整合五大场景：自动互动 / 播放量提升(proxy) / 播放量提升(Playwright) / 直播间红包助手 / 话题助手
 """
+# 兼容 Python 3.8 (Win7)：list[str] / X | None 等注解语法延迟求值
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

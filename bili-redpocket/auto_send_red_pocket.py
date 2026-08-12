@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# 兼容 Python 3.8 (Win7)：tuple | None 等注解语法延迟求值
+from __future__ import annotations
+
 import asyncio
 import sys
 import os

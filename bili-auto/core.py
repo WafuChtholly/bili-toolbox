@@ -1,6 +1,9 @@
 """
 Core logic: fetch dynamics, check mutual follow, interact.
 """
+# 兼容 Python 3.8 (Win7)：list[str] / X | None 等注解语法延迟求值
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -51,6 +54,64 @@ import time as _time
 # 活跃的 QR 登录实例
 _qr_login_instances: dict[str, object] = {}
 
+# bilibili_api 17.x 才有 login_v2 模块；16.x（Win7/Python3.8 兼容版本）没有，需降级旧登录 API
+try:
+    from bilibili_api import login_v2 as _login_v2  # noqa: F401
+    _HAS_LOGIN_V2 = True
+except ImportError:
+    _login_v2 = None
+    _HAS_LOGIN_V2 = False
+
+
+def _extract_credential_from_qr_url(cred_url: str, ac_time_value: str) -> Credential:
+    """从扫码登录成功的 URL 中解析 Credential，兼容 crossDomain ticket 跳转流程。"""
+    import httpx
+
+    sessdata = ""
+    bili_jct = ""
+    dedeuserid = ""
+    if "crossDomain" in cred_url and "ticket=" in cred_url:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Referer": "https://passport.bilibili.com/",
+            "Origin": "https://passport.bilibili.com",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        try:
+            client = httpx.Client(headers=headers, follow_redirects=False, timeout=10)
+            url = cred_url
+            for _ in range(5):
+                resp = client.get(url)
+                for cookie in resp.cookies.jar:
+                    if cookie.name == "SESSDATA":
+                        sessdata = cookie.value
+                    elif cookie.name == "bili_jct":
+                        bili_jct = cookie.value
+                    elif cookie.name.upper() == "DEDEUSERID":
+                        dedeuserid = cookie.value
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    url = str(resp.headers.get("location", ""))
+                    if not url:
+                        break
+                else:
+                    break
+            client.close()
+        except Exception as e:
+            logger.warning("crossDomain 请求失败: %s", e)
+    else:
+        cookies_list = cred_url.split("?")[1].split("&") if "?" in cred_url else []
+        for cookie in cookies_list:
+            if cookie[:8] == "SESSDATA":
+                sessdata = cookie[9:]
+            if cookie[:8] == "bili_jct":
+                bili_jct = cookie[9:]
+            if cookie[:11].upper() == "DEDEUSERID=":
+                dedeuserid = cookie[11:]
+    return Credential(
+        sessdata=sessdata, bili_jct=bili_jct,
+        dedeuserid=dedeuserid, ac_time_value=ac_time_value,
+    )
+
 
 # ---- Monkey-patch: 修复 B站新版 crossDomain 扫码登录 ----
 def _patch_qr_login():
@@ -83,52 +144,7 @@ def _patch_qr_login():
             elif code == 86038:
                 return QrCodeLoginEvents.TIMEOUT
             else:
-                cred_url = events["url"]
-                ac_time_value = events["refresh_token"]
-                sessdata = ""
-                bili_jct = ""
-                dedeuserid = ""
-                if "crossDomain" in cred_url and "ticket=" in cred_url:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                        "Referer": "https://passport.bilibili.com/",
-                        "Origin": "https://passport.bilibili.com",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    }
-                    try:
-                        client = httpx.Client(headers=headers, follow_redirects=False, timeout=10)
-                        url = cred_url
-                        for _ in range(5):
-                            resp = client.get(url)
-                            for cookie in resp.cookies.jar:
-                                if cookie.name == "SESSDATA":
-                                    sessdata = cookie.value
-                                elif cookie.name == "bili_jct":
-                                    bili_jct = cookie.value
-                                elif cookie.name.upper() == "DEDEUSERID":
-                                    dedeuserid = cookie.value
-                            if resp.status_code in (301, 302, 303, 307, 308):
-                                url = str(resp.headers.get("location", ""))
-                                if not url:
-                                    break
-                            else:
-                                break
-                        client.close()
-                    except Exception as e:
-                        logger.warning("crossDomain 请求失败: %s", e)
-                else:
-                    cookies_list = cred_url.split("?")[1].split("&") if "?" in cred_url else []
-                    for cookie in cookies_list:
-                        if cookie[:8] == "SESSDATA":
-                            sessdata = cookie[9:]
-                        if cookie[:8] == "bili_jct":
-                            bili_jct = cookie[9:]
-                        if cookie[:11].upper() == "DEDEUSERID=":
-                            dedeuserid = cookie[11:]
-                cred = Credential(
-                    sessdata=sessdata, bili_jct=bili_jct,
-                    dedeuserid=dedeuserid, ac_time_value=ac_time_value,
-                )
+                cred = _extract_credential_from_qr_url(events["url"], events["refresh_token"])
                 setattr(self, "_QrCodeLogin__credential", cred)
                 return QrCodeLoginEvents.DONE
 
@@ -143,18 +159,27 @@ _patch_qr_login()
 # ---- QR 登录 (WebUI 调用) ----
 async def qr_generate() -> dict:
     """生成 QR 登录二维码，返回 {session_id, qrcode_key, qr_image (base64 PNG)}。"""
-    from bilibili_api.login_v2 import QrCodeLogin
     import qrcode as _qrcode
     import uuid as _uuid
 
-    login = QrCodeLogin()
-    await login.generate_qrcode()
+    if _HAS_LOGIN_V2:
+        from bilibili_api.login_v2 import QrCodeLogin
+        login = QrCodeLogin()
+        await login.generate_qrcode()
+        qr_url = getattr(login, "_QrCodeLogin__qr_link", "")
+        if not qr_url:
+            raise RuntimeError("无法获取二维码 URL")
+        session_id = str(_uuid.uuid4())[:8]
+        _qr_login_instances[session_id] = login
+    else:
+        # Python 3.8/Win7 兼容：bilibili-api 16.x 没有 login_v2，降级旧登录 API
+        from bilibili_api import login as _legacy_login
+        qr_data = _legacy_login.update_qrcode_data()
+        qr_url = qr_data["url"]
+        session_id = str(_uuid.uuid4())[:8]
+        _qr_login_instances[session_id] = {"legacy": True, "qrcode_key": qr_data["qrcode_key"]}
 
     # 从 QR URL 直接生成 PNG 图片
-    qr_url = getattr(login, "_QrCodeLogin__qr_link", "")
-    if not qr_url:
-        raise RuntimeError("无法获取二维码 URL")
-
     qr = _qrcode.QRCode(error_correction=_qrcode.constants.ERROR_CORRECT_L)
     qr.add_data(qr_url)
     qr.make(fit=True)
@@ -162,9 +187,6 @@ async def qr_generate() -> dict:
     img = qr.make_image(fill_color="black", back_color="white")
     img.save(buf)
     b64 = base64.b64encode(buf.getvalue()).decode()
-
-    session_id = str(_uuid.uuid4())[:8]
-    _qr_login_instances[session_id] = login
     return {"session_id": session_id, "qrcode_key": session_id, "qr_image": f"data:image/png;base64,{b64}"}
 
 
@@ -172,11 +194,34 @@ async def qr_poll(session_id: str) -> dict:
     """轮询 QR 登录状态。
     返回: {status: waiting|scanned|success|expired|error, ...}
     """
-    from bilibili_api.login_v2 import QrCodeLoginEvents
-
     login = _qr_login_instances.get(session_id)
     if not login:
         return {"status": "error", "message": "登录会话不存在或已过期"}
+
+    # Python 3.8/Win7 兼容：bilibili-api 16.x 旧版扫码登录轮询
+    if isinstance(login, dict) and login.get("legacy"):
+        from bilibili_api import login as _legacy_login
+        try:
+            resp = _legacy_login.login_with_key(login["qrcode_key"])
+        except Exception as e:
+            _qr_login_instances.pop(session_id, None)
+            return {"status": "error", "message": str(e)}
+        data = resp.get("data", {}) or {}
+        code = data.get("code")
+        if code == 0:
+            cred = _extract_credential_from_qr_url(data.get("url", ""), data.get("refresh_token", ""))
+            _save_credential(cred)
+            _qr_login_instances.pop(session_id, None)
+            return {"status": "success", "login_uid": getattr(cred, "dedeuserid", "") or ""}
+        elif code == 86090:
+            return {"status": "scanned", "message": "已扫码，请在手机上确认登录"}
+        elif code == 86038:
+            _qr_login_instances.pop(session_id, None)
+            return {"status": "expired", "message": "二维码已过期，请重新生成"}
+        else:
+            return {"status": "waiting", "message": "等待扫码"}
+
+    from bilibili_api.login_v2 import QrCodeLoginEvents
 
     try:
         state = await login.check_state()

@@ -1,4 +1,6 @@
 # https://socialsisteryi.github.io/bilibili-API-collect/docs/misc/sign/wbi.html#python
+# 兼容 Python 3.8 (Win7)：tuple[str, str] 等注解语法延迟求值
+from __future__ import annotations
 
 from functools import reduce
 from hashlib import md5

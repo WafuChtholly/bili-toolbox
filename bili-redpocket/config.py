@@ -1,14 +1,17 @@
 # config.py
 # -*- coding: utf-8 -*-
 import datetime
-from zoneinfo import ZoneInfo
 from typing import Union
 import yaml
 import os
 from pathlib import Path
 
-# 获取上海时区
-shanghai_tz = ZoneInfo('Asia/Shanghai')
+# 获取上海时区（zoneinfo 为 3.9+ 标准库；Python 3.8/Win7 用固定 UTC+8 兜底）
+try:
+    from zoneinfo import ZoneInfo
+    shanghai_tz = ZoneInfo('Asia/Shanghai')
+except ImportError:
+    shanghai_tz = datetime.timezone(datetime.timedelta(hours=8), 'Asia/Shanghai')
 # B站登录账号的cookie的SESSDATA字段的值（保留兼容，实际从配置读取）
 SESSDATA = '4f5da40b%2C1782701147%2C9435c%2Ac2CjC390H1q-XtSsM3HgusNh3re9iOtCyJWkRejVw0vw54S5ODv3kIa2bodjzX_WJKAEwSVmc4b1k3blItUVJ0ZE5MUjUyeVo2NFlNcXBOc2RlMEViR2d1aUxQRWdDUEp4Z3AwaEhCN0xvWmxTQ0FKU0t5NVM4WC1sYXdEcmFnbGRmUmxoY1hOdDBBIIEC'
 

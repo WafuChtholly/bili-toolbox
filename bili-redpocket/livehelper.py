@@ -4,6 +4,9 @@
 LiveHelper — 扫码登录 → 链接直播间 → 开播后定时发送随机语录
 与 bili-redpocket 共享同一套 config.yaml 中的凭证
 """
+# 兼容 Python 3.8 (Win7)：X | None 等注解语法延迟求值
+from __future__ import annotations
+
 import asyncio
 import os
 import random

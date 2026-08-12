@@ -1,0 +1,30 @@
+# B站工具箱 — Windows 7 / Python 3.8 兼容依赖（老电脑专用）
+# Win7 最高支持 Python 3.8.x（官方最后一个版本是 3.8.20），3.9+ 安装器会直接拒绝 Win7。
+# 用法:  python -m pip install -r requirements-win7.txt
+#
+# 注意:
+# 1. bilibili-api-python 16.1.1 用 ~= 强制锁定 httpx~=0.24.1 / aiohttp~=3.8.6，
+#    其余依赖版本已与其对齐，勿随意升级。
+# 2. bili-player（Playwright 浏览器模拟播放）在 Win7 上不可用
+#    （Chromium 110+ 已放弃 Win7），故不安装 playwright；
+#    proxy 播放量提升和自动互动功能不受影响。
+
+# --- 统一 WebUI (app.py) ---
+flask~=3.0.3
+werkzeug~=3.0.3
+psutil~=6.1.0
+httpx~=0.24.1
+qrcode~=7.4.2
+pillow~=10.0.1
+pyyaml==6.0.1
+
+# --- bili-auto 自动互动 ---
+bilibili-api-python==16.1.1
+aiohttp~=3.8.6
+
+# --- bili-booster 播放量提升(proxy) ---
+requests~=2.31.0
+fake-useragent~=1.5.1
+
+# --- bili-redpocket 直播红包助手（可选） ---
+loguru~=0.7.2

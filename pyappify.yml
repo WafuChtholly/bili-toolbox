@@ -12,3 +12,19 @@ profiles:
   main_script: "app.py"
   requires_python: "3.13"
   requirements: "requirements.txt"
+
+# ---- Win7 老电脑专用（Python 3.8，依赖见 requirements-win7.txt） ----
+# 注意：浏览器模拟播放(Playwright)在 Win7 不可用；proxy 播放量和自动互动不受影响。
+# 若启动器本身无法在 Win7 打开（WebView2 限制），改用 webui-win7.bat 手动部署。
+- name: "China-Win7"
+  git_url: "https://cnb.cool/WafuChtholly/bili-toolbox.git"
+  main_script: "app.py"
+  requires_python: "3.8"
+  requirements: "requirements-win7.txt"
+  pip_args: "-i https://mirrors.aliyun.com/pypi/simple"
+
+- name: "Global-Win7"
+  git_url: "https://github.com/WafuChtholly/bili-toolbox.git"
+  main_script: "app.py"
+  requires_python: "3.8"
+  requirements: "requirements-win7.txt"
