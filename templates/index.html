@@ -1592,6 +1592,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11V4a1 1 0 0 1 1-1h7l10 10-8 8L3 11z"/><circle cx="8" cy="8" r="1.6"/></svg>
         标签助手
       </button>
+
+      <button class="tab-btn" onclick="switchTab('schedmgr')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+        定时任务
+      </button>
     </nav>
 
     <div class="sidebar-foot">
@@ -1708,6 +1713,18 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="dash-badges">
         <span class="dash-badge off" id="dash-tagsearch-login">检测中…</span>
         <span class="dash-badge off" id="dash-tagsearch-extra">–</span>
+      </div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-top">
+        <div class="dash-icon" style="background:rgba(111,168,207,0.1);color:#6fa8cf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <button class="dash-goto" onclick="switchTab('schedmgr')">进入 →</button>
+      </div>
+      <div class="dash-name">定时任务</div>
+      <div class="dash-desc">集中管理自动互动、低播放量刷量等定时任务</div>
+      <div class="dash-badges">
+        <span class="dash-badge off" id="dash-schedmgr-auto">自动互动 · 空闲</span>
+        <span class="dash-badge off" id="dash-schedmgr-booster">低播放刷量 · 空闲</span>
       </div>
     </div>
   </div>
@@ -1917,19 +1934,8 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         </div>
       </div>
 
-      <!-- 定时任务 -->
-      <div class="form-group">
-        <label class="form-label">定时任务</label>
-        <div class="schedule-row">
-          <label class="switch-row"><span>启用定时任务</span><input type="checkbox" id="auto-schedule-enabled"></label>
-          <div class="inline-field">
-            <span style="color:var(--text-secondary)">间隔</span>
-            <input class="form-input inline-input" id="auto-schedule-interval" type="number" value="30" min="1" style="width:80px">
-            <span style="color:var(--text-secondary)">分钟</span>
-          </div>
-        </div>
-      </div>
-
+      <!-- 定时任务已迁至「定时任务管理」页签 -->
+      <div class="soft-note pink">💡 定时执行已迁移到「定时任务管理」页签，可在那里统一调整间隔和启停。</div>
       <div class="status-bar" id="auto-status-bar" style="display:flex;justify-content:space-between;align-items:center">
         <div>
           <span class="status-dot dot-off" id="auto-dot"></span>
@@ -1940,9 +1946,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="btn-row">
         <button class="btn btn-pink" id="auto-run-btn" onclick="autoRun()">▶ 立即执行一次</button>
         <button class="btn btn-stop" id="auto-stop-btn" onclick="autoStop()" style="display:none">⏹ 停止</button>
-      </div>
-      <div class="btn-row" style="margin-top:8px">
-        <button class="btn btn-pink" id="auto-schedule-btn" onclick="autoScheduleToggle()">🕐 启动定时任务</button>
       </div>
     </div>
   </div>
@@ -2165,6 +2168,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="bst-rp-video-list" id="bst-rp-videos"></div>
     </div>
   </div>
+  <!-- 定时任务已迁至「定时任务管理」页签 -->
   <div class="card">
     <div class="card-head blue"><span class="card-step">3</span>执行日志</div>
     <div class="card-body">
@@ -2785,6 +2789,101 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 
 </div>
 
+<!-- ============================================================ -->
+<!--  TAB: 定时任务管理 (schedmgr) — 集中管理所有定时任务        -->
+<!-- ============================================================ -->
+<div id="panel-schedmgr" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-left">
+      <div class="panel-hero-icon" style="color:#6fa8cf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+      <div>
+        <div class="panel-hero-title">定时任务管理</div>
+        <div class="panel-hero-desc">集中管理所有定时任务。可同时启用多个，互不干扰。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head blue"><span class="card-step">1</span>定时任务列表</div>
+    <div class="card-body">
+      <!-- 登录状态：所有定时任务均复用主账号凭证 -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span id="sched-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
+        <span style="font-size:12px;color:var(--text-tertiary)">所有定时任务均复用「自动互动」登录凭证</span>
+      </div>
+
+      <!-- 子标签 -->
+      <div class="sub-tabs">
+        <button class="sub-tab-btn active" onclick="switchSchedSubTab('auto')">⚡ 自动互动</button>
+        <button class="sub-tab-btn" onclick="switchSchedSubTab('booster')">📈 低播放量刷量</button>
+      </div>
+
+      <!-- ===== 子任务 1：自动互动 ===== -->
+      <div id="sched-subtab-auto" class="sub-tab-panel">
+        <div class="soft-note pink">💡 按设定间隔自动执行「自动互动」流程（互关三连/评论/分享等）。可在「自动互动」页调整详细动作配置。</div>
+        <div class="form-group">
+          <label class="form-label">执行间隔</label>
+          <div class="schedule-row">
+            <div class="inline-field">
+              <span>间隔</span>
+              <input class="form-input inline-input" id="mgr-auto-interval" type="number" value="30" min="1">
+              <span>分钟</span>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span class="status-dot dot-off" id="mgr-auto-dot"></span>
+            <span id="mgr-auto-text" style="color:var(--text-secondary)">就绪</span>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="mgrAutoSave()" style="margin:0;padding:4px 14px;font-size:12px">💾 保存配置</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-pink" id="mgr-auto-btn" onclick="mgrAutoToggle()">🕐 启动定时任务</button>
+        </div>
+        <div class="log-box" id="mgr-auto-log" style="margin-top:12px">等待运行...</div>
+      </div>
+
+      <!-- ===== 子任务 2：低播放量刷量 ===== -->
+      <div id="sched-subtab-booster" class="sub-tab-panel" style="display:none">
+        <div class="soft-note blue">💡 定时扫描你的投稿，对播放量低于阈值的稿件自动创建刷量任务（共用主账号凭证）。</div>
+        <div class="form-group">
+          <label class="form-label">扫描配置</label>
+          <div class="schedule-row">
+            <div class="inline-field">
+              <span>扫描间隔</span>
+              <input class="form-input inline-input" id="bst-sched-interval" type="number" value="60" min="5">
+              <span>分钟</span>
+            </div>
+            <div class="inline-field">
+              <span>播放量阈值</span>
+              <input class="form-input inline-input" id="bst-sched-threshold" type="number" value="200" min="1">
+            </div>
+            <div class="inline-field">
+              <span>目标播放数</span>
+              <input class="form-input inline-input" id="bst-sched-target" type="number" value="200" min="1">
+            </div>
+          </div>
+        </div>
+        <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span class="status-dot dot-off" id="bst-sched-dot"></span>
+            <span id="bst-sched-text" style="color:var(--text-secondary)">定时任务未运行</span>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="bstScheduleSave()" style="margin:0;padding:4px 14px;font-size:12px">💾 保存配置</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-pink" id="bst-sched-btn" onclick="bstScheduleToggle()">🕐 启动定时任务</button>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button class="btn btn-pink" onclick="bstScheduleRunOnce()">▶ 立即执行一次</button>
+        </div>
+        <div class="log-box" id="bst-sched-log" style="margin-top:12px">等待运行...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 
   </main>
 </div><!-- /app-shell -->
@@ -2817,13 +2916,14 @@ function switchTab(name){
     if(btn) btn.classList.add('active');
   }
   if(name==='dashboard'){dashRefresh();}
-  if(name==='booster'){bstLoadLoginStatus()}else{bstWebhookStopPoll();}
+  if(name==='booster'){bstLoadLoginStatus();}else{bstWebhookStopPoll();}
   if(name==='redpocket'){rpLoadRooms();rpCheckStatus()}
   if(name==='player'){plLoadConfig()}
   if(name==='auto'){autoLoadConfig()}
   if(name==='livehelper'){lhLoadConfig()}
   if(name==='collection'){collLoadStatus()}
   if(name==='tagsearch'){tsLoadStatus()}
+  if(name==='schedmgr'){mgrAutoLoad();bstScheduleLoad();}
 }
 
 /* ===== BV 动态列表 ===== */
@@ -2867,14 +2967,18 @@ function stopPoll(url){
    TAB 1: 自动互动
    ============================================================ */
 let autoTaskId=null;
-let schedulePolling=null;
 
 /* --- Auto 登录 --- */
 let autoPollTimer=null;
 function autoLoadConfig(){
   fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('auto-login-info');
     if(d.login_uid){
-      document.getElementById('auto-login-info').innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+      el.style.color='var(--success)';
+    } else {
+      el.textContent='未登录';
+      el.style.color='var(--warn)';
     }
   });
 }
@@ -2901,7 +3005,9 @@ function autoStartPoll(key){
         st.textContent='登录成功！';st.style.color='var(--success)';
         clearInterval(autoPollTimer);
         document.getElementById('auto-qr-box').style.display='none';
-        document.getElementById('auto-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        const el=document.getElementById('auto-login-info');
+        el.innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        el.style.color='var(--success)';
       }else if(d.status==='waiting'){
         st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
       }else if(d.status==='confirming'){
@@ -2948,8 +3054,8 @@ function loadAutoConfig(){
     document.getElementById('auto-comment-prefix').value=ct.prefix||'';
     document.getElementById('auto-comment-suffix').value=ct.suffix||'';
     const s=cfg.schedule||{};
-    document.getElementById('auto-schedule-enabled').checked=!!s.enabled;
-    document.getElementById('auto-schedule-interval').value=s.interval_minutes||30;
+    // schedule 已迁至「定时任务管理」页签（mgr-auto-interval），此页不再读写。
+    // 保留读取仅作向后兼容，不修改 DOM。
     loadReplyTexts();
   });
 }
@@ -2986,10 +3092,7 @@ function saveAutoConfig(){
     cfg.interact_own_dynamics=document.getElementById('auto-interact-own').checked;
     const coinTargetUid=document.getElementById('auto-act-coin-target').checked?document.getElementById('auto-coin-target-uid').value.split('\n').map(s=>s.trim()).filter(s=>s):[];
     cfg.coin_target_uid=coinTargetUid;
-    cfg.schedule={
-      enabled:document.getElementById('auto-schedule-enabled').checked,
-      interval_minutes:parseInt(document.getElementById('auto-schedule-interval').value)||30,
-    };
+    // cfg.schedule 由「定时任务管理」页签统一管理（mgrAutoSave 写入），此处不再覆盖。
     return fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
   }).then(r=>r.json()).then(d=>{
     if(d.success)setText('auto-status-text','配置已保存');
@@ -3282,51 +3385,115 @@ function autoUpdate(d){
   }
 }
 
-function updateScheduleBtn(running){
-  const btn=document.getElementById('auto-schedule-btn');
+/* ============================================================
+   TAB: 定时任务管理 (schedmgr)
+   ============================================================ */
+
+/* ============================================================
+   TAB: 定时任务管理 (schedmgr)
+   ============================================================ */
+let mgrAutoPollTimer=null;
+let mgrAutoIdleTicks=0;
+let mgrAutoLastLogLen=-1;
+
+function mgrAutoUpdateBtn(running){
+  const btn=document.getElementById('mgr-auto-btn');
   if(running){btn.textContent='⏹ 停止定时任务';btn.className='btn btn-stop';}
   else{btn.textContent='🕐 启动定时任务';btn.className='btn btn-pink';}
 }
 
-function autoScheduleToggle(){
+function mgrAutoLoad(){
+  fetch('/api/auto/config').then(r=>r.json()).then(c=>{
+    const s=(c&&c.schedule)||{};
+    document.getElementById('mgr-auto-interval').value=s.interval_minutes||30;
+  }).catch(()=>{});
+  // 复用主账号凭证：统一从「自动互动」拉登录态
+  fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('sched-login-info');
+    if(d.login_uid){
+      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+      el.style.color='var(--success)';
+    } else {
+      el.innerHTML='<span>未登录，请先在「自动互动」页面扫码登录</span>';
+      el.style.color='var(--warn)';
+    }
+  }).catch(()=>{});
+  mgrAutoTick();
+}
+
+function mgrAutoSave(silent){
+  const interval=parseInt(document.getElementById('mgr-auto-interval').value)||30;
+  if(interval<1){alert('间隔必须为正整数');return Promise.resolve(false);}
+  return fetch('/api/auto/config').then(r=>r.json()).then(c=>{
+    c=c||{};
+    c.schedule=c.schedule||{};
+    c.schedule.interval_minutes=interval;
+    return fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)});
+  }).then(r=>r.json()).then(d=>{
+    if(d&&d.success&&!silent)alert('配置已保存');
+    return d&&d.success;
+  }).catch(e=>{if(!silent)alert('保存失败: '+e);return false;});
+}
+
+function mgrAutoToggle(){
   fetch('/api/auto/schedule/status').then(r=>r.json()).then(s=>{
     if(s.running){
-      fetch('/api/auto/schedule/stop',{method:'POST'}).then(()=>updateScheduleBtn(false));
+      fetch('/api/auto/schedule/stop',{method:'POST'}).then(()=>mgrAutoUpdateBtn(false));
     }else{
-      // 启动定时任务前自动保存配置
-      saveAutoConfig().then(()=>{
+      mgrAutoSave(true).then(ok=>{
+        if(!ok)return null;
         return fetch('/api/auto/schedule/start',{method:'POST'});
       }).then(()=>{
-        updateScheduleBtn(true);
-        startSchedulePoll();
+        mgrAutoUpdateBtn(true);
+        mgrAutoStartPoll();
+        mgrAutoTick();
       });
     }
-  });
+  }).catch(e=>alert('操作失败: '+e));
 }
 
-function startSchedulePoll(){
-  if(schedulePolling)return;
-  schedulePolling=setInterval(()=>{
-    fetch('/api/auto/schedule/status').then(r=>r.json()).then(s=>{
-      updateScheduleBtn(s.running);
-      if(s.log){
-        const log=document.getElementById('auto-log');
-        log.textContent=s.log;
-        log.scrollTop=log.scrollHeight;
-      }
-      if(!s.running){clearInterval(schedulePolling);schedulePolling=null;}
-    });
-  },5000);
+function mgrAutoStartPoll(){
+  if(mgrAutoPollTimer)return;
+  mgrAutoLastLogLen=-1;mgrAutoIdleTicks=0;
+  mgrAutoPollTimer=setInterval(mgrAutoTick,5000);
 }
 
-// 页面加载时拉取配置 + 检查定时任务状态
-document.addEventListener('DOMContentLoaded',()=>{
-  loadAutoConfig();
+function mgrAutoStopPoll(){
+  if(mgrAutoPollTimer){clearInterval(mgrAutoPollTimer);mgrAutoPollTimer=null;}
+}
+
+function mgrAutoTick(){
   fetch('/api/auto/schedule/status').then(r=>r.json()).then(s=>{
-    updateScheduleBtn(s.running);
-    if(s.running)startSchedulePoll();
+    mgrAutoUpdateBtn(s.running);
+    if(s.running){
+      setDot('mgr-auto-dot','run');
+      let txt='运行中 · 间隔 '+s.interval_minutes+' 分钟';
+      if(s.last_run){txt+=' · 已执行 '+s.run_count+' 次';}
+      setText('mgr-auto-text',txt);
+    }else{
+      setDot('mgr-auto-dot','off');
+      setText('mgr-auto-text','就绪');
+    }
+    const log=document.getElementById('mgr-auto-log');
+    if(s.log){log.textContent=s.log;log.scrollTop=log.scrollHeight;}
+    const logLen=(s.log||'').length;
+    if(s.running){mgrAutoIdleTicks=0;mgrAutoLastLogLen=logLen;return;}
+    if(logLen!==mgrAutoLastLogLen){mgrAutoLastLogLen=logLen;mgrAutoIdleTicks=0;}
+    else{mgrAutoIdleTicks++;}
+    if(mgrAutoIdleTicks>=6)mgrAutoStopPoll();
+  }).catch(()=>{});
+}
+
+/* --- 定时任务页：子标签切换 --- */
+function switchSchedSubTab(tab){
+  const tabs=['auto','booster'];
+  tabs.forEach(t=>{
+    const panel=document.getElementById('sched-subtab-'+t);
+    const btn=document.querySelector(`.sub-tab-btn[onclick="switchSchedSubTab('${t}')"]`);
+    if(t===tab){panel.style.display='block';btn.classList.add('active');}
+    else{panel.style.display='none';btn.classList.remove('active');}
   });
-});
+}
 
 /* ============================================================
    子标签切换 + 历史投稿互动
@@ -3642,10 +3809,13 @@ let bstTaskId=null;
 
 function bstLoadLoginStatus(){
   fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('bst-login-info');
     if(d.login_uid){
-      document.getElementById('bst-login-info').innerHTML='已登录 <b>UID: '+d.login_uid+'</b> （复用「自动互动」登录凭证）';
+      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b> （复用「自动互动」登录凭证）';
+      el.style.color='var(--success)';
     } else {
-      document.getElementById('bst-login-info').innerHTML='<span style="color:var(--warn)">未登录，请先在「自动互动」页面扫码登录</span>';
+      el.innerHTML='<span>未登录，请先在「自动互动」页面扫码登录</span>';
+      el.style.color='var(--warn)';
     }
   });
 }
@@ -3734,6 +3904,124 @@ function boosterRun(){
 function boosterStop(){
   fetch('/api/booster/stop',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({task_id:bstTaskId})});
+}
+
+// ── 定时任务：低播放量自动刷量 ──
+let bstSchedPollTimer=null;
+let bstSchedLastLogLen=-1;
+let bstSchedIdleTicks=0;
+
+function bstScheduleLoad(){
+  fetch('/api/booster/schedule/config').then(r=>r.json()).then(c=>{
+    document.getElementById('bst-sched-interval').value=c.interval_minutes;
+    document.getElementById('bst-sched-threshold').value=c.play_threshold;
+    document.getElementById('bst-sched-target').value=c.target_play;
+  }).catch(()=>{});
+  bstSchedulePollTick();
+}
+
+function bstScheduleSave(silent){
+  const interval=parseInt(document.getElementById('bst-sched-interval').value)||60;
+  const threshold=parseInt(document.getElementById('bst-sched-threshold').value)||200;
+  const target=parseInt(document.getElementById('bst-sched-target').value)||200;
+  if(interval<1||threshold<1||target<1){alert('配置项必须为正整数');return Promise.resolve(false);}
+  return fetch('/api/booster/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success&&!silent)alert('配置已保存');
+    return d.success;
+  }).catch(e=>{if(!silent)alert('保存失败: '+e);return false;});
+}
+
+function bstScheduleUpdateBtn(s){
+  const btn=document.getElementById('bst-sched-btn');
+  const isRun=!!s.running;
+  // 兼容 s 为 bool（旧调用）或对象
+  const running = isRun;
+  if(running){
+    btn.textContent='⏹ 停止';
+    btn.className='btn btn-stop';
+  }else{
+    btn.textContent='🕐 启动定时任务';
+    btn.className='btn btn-pink';
+  }
+}
+
+function bstScheduleUpdateStatus(s){
+  if(s.running){
+    setDot('bst-sched-dot','run');
+    const mode = s.running === true ? '定时' : '手动执行中';
+    let txt=`${mode} · 阈值 ${s.play_threshold} · 目标 ${s.target_play}`;
+    if(s.last_run){txt+=` · 已执行 ${s.run_count} 次`;}
+    if(s.active_tasks&&s.active_tasks.length){
+      const summary=s.active_tasks.map(t=>`${t.bv}(${t.status})`).join(' ');
+      txt+=` · 活跃 ${s.active_tasks.length}: ${summary}`;
+    }
+    setText('bst-sched-text',txt);
+  }else{
+    setDot('bst-sched-dot','off');
+    setText('bst-sched-text','定时任务未运行');
+  }
+  const log=document.getElementById('bst-sched-log');
+  if(s.log){log.textContent=s.log;log.scrollTop=log.scrollHeight;}
+}
+
+function bstScheduleToggle(){
+  fetch('/api/booster/schedule/status').then(r=>r.json()).then(s=>{
+    if(s.running){
+      fetch('/api/booster/schedule/stop',{method:'POST'}).then(()=>{
+        bstScheduleUpdateBtn({running:false});
+        setDot('bst-sched-dot','off');
+        setText('bst-sched-text','正在停止...');
+        bstScheduleStartPoll();
+        bstSchedulePollTick();
+      });
+    }else{
+      bstScheduleSave(true).then(ok=>{
+        if(!ok)return null;
+        return fetch('/api/booster/schedule/start',{method:'POST'});
+      }).then(()=>{
+        bstScheduleUpdateBtn({running:true});
+        bstScheduleStartPoll();
+        bstSchedulePollTick();
+      });
+    }
+  }).catch(e=>alert('操作失败: '+e));
+}
+
+function bstScheduleRunOnce(){
+  bstScheduleSave(true).then(ok=>{
+    if(!ok)return null;
+    return fetch('/api/booster/schedule/run-once',{method:'POST'}).then(r=>r.json());
+  }).then(d=>{
+    if(d&&d.success){
+      bstScheduleUpdateBtn({running:'once'});
+      bstScheduleStartPoll();
+      bstSchedulePollTick();
+    }
+  }).catch(e=>alert('触发失败: '+e));
+}
+
+function bstScheduleStartPoll(){
+  if(bstSchedPollTimer)return;
+  bstSchedLastLogLen=-1;bstSchedIdleTicks=0;
+  bstSchedPollTimer=setInterval(bstSchedulePollTick,5000);
+}
+
+function bstScheduleStopPoll(){
+  if(bstSchedPollTimer){clearInterval(bstSchedPollTimer);bstSchedPollTimer=null;}
+}
+
+function bstSchedulePollTick(){
+  fetch('/api/booster/schedule/status').then(r=>r.json()).then(s=>{
+    bstScheduleUpdateBtn(s);
+    bstScheduleUpdateStatus(s);
+    const logLen=(s.log||'').length;
+    if(s.running){bstSchedIdleTicks=0;bstSchedLastLogLen=logLen;return;}
+    if(logLen!==bstSchedLastLogLen){bstSchedLastLogLen=logLen;bstSchedIdleTicks=0;}
+    else{bstSchedIdleTicks++;}
+    if(bstSchedIdleTicks>=6)bstScheduleStopPoll();
+  }).catch(()=>{});
 }
 
 // ── Webhook（活动助手推送） ──
@@ -3915,10 +4203,12 @@ function plLoadConfig(){
     const accounts=d.accounts||[];
     if(accounts.length===0){
       infoEl.textContent='未登录';
+      infoEl.style.color='var(--warn)';
       listEl.innerHTML='';
       return;
     }
     infoEl.innerHTML='已登录账号数: <b>'+accounts.length+'</b>';
+    infoEl.style.color='var(--success)';
     listEl.innerHTML=accounts.map(a=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-bottom:6px;background:var(--bg-tertiary);border-radius:10px">
         <span style="font-size:13px">UID: <b>${a.login_uid||'?'}</b></span>
@@ -4356,7 +4646,9 @@ function rpStartPollQR(){
         st.textContent='登录成功！';st.style.color='var(--success)';
         clearInterval(rpPollTimer);
         document.getElementById('rp-qr-area').style.display='none';
-        document.getElementById('rp-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        const el=document.getElementById('rp-login-info');
+        el.innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        el.style.color='var(--success)';
       }else if(d.status==='waiting'){
         st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
       }else if(d.status==='confirming'){
@@ -4384,8 +4676,13 @@ let lhPollTimer=null;
 
 function lhLoadConfig(){
   fetch('/api/livehelper/config').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('lh-login-info');
     if(d._has_login&&d._login_uid){
-      document.getElementById('lh-login-info').innerHTML='已登录 <b>UID: '+d._login_uid+'</b>';
+      el.innerHTML='已登录 <b>UID: '+d._login_uid+'</b>';
+      el.style.color='var(--success)';
+    } else {
+      el.textContent='未登录';
+      el.style.color='var(--warn)';
     }
     document.getElementById('lh-room-id').value=d.room_id||'';
     document.getElementById('lh-interval').value=d.interval_seconds||60;
@@ -4422,7 +4719,9 @@ function lhStartPollQR(key){
         st.textContent='登录成功！';st.style.color='var(--success)';
         clearInterval(lhPollTimer);
         document.getElementById('lh-qr-area').style.display='none';
-        document.getElementById('lh-login-info').innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        const el=document.getElementById('lh-login-info');
+        el.innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        el.style.color='var(--success)';
       }else if(d.status==='waiting'){
         st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
       }else if(d.status==='confirming'){
@@ -4524,7 +4823,7 @@ function collLoadStatus(){
       document.getElementById('coll-scan-btn').disabled=false;
     }else{
       el.textContent='未登录 — 请先在「自动互动」页面扫码登录';
-      el.style.color='var(--danger)';
+      el.style.color='var(--warn)';
       document.getElementById('coll-scan-btn').disabled=true;
     }
   }).catch(()=>{});
@@ -4969,10 +5268,13 @@ let _tsAllTags = []; // 缓存所有标签名用于联想
 function tsLoadStatus(){
   fetch('/api/tag-search/status').then(r=>r.json()).then(d=>{
     if(!d.success) return;
+    const el=document.getElementById('ts-login-info');
     if(d.logged_in){
-      document.getElementById('ts-login-info').innerHTML='已登录 <b>UID: '+d.mid+'</b>';
+      el.innerHTML='已登录 <b>UID: '+d.mid+'</b>';
+      el.style.color='var(--success)';
     } else {
-      document.getElementById('ts-login-info').innerHTML='<span style="color:var(--warn)">未登录，请先在「自动互动」页面扫码登录</span>';
+      el.innerHTML='<span>未登录，请先在「自动互动」页面扫码登录</span>';
+      el.style.color='var(--warn)';
     }
     document.getElementById('ts-video-count').textContent=d.video_count||0;
     document.getElementById('ts-tag-count').textContent=d.tag_count||0;
@@ -5229,6 +5531,7 @@ async function dashRefresh(){
     _dget('/api/auto/login/config', j => { d.autoLogin = !!(j && j.login_uid); }),
     _dget('/api/auto/schedule/status', j => { d.autoRun = !!(j && j.running); }),
     _dget('/api/booster/tasks', j => { d.boosterRun = _anyTaskStatus(j, 'running'); d.boosterErr = _anyTaskStatus(j, 'error'); }),
+    _dget('/api/booster/schedule/status', j => { d.boosterSched = !!(j && j.running); if(d.boosterSched || (j && j.active_tasks && j.active_tasks.length)) d.boosterRun = true; }),
     _dget('/api/player/config', j => { d.playerLogin = !!(j && (j.accounts || []).some(a => a.login_uid && a.has_sessdata)); }),
     _dget('/api/player/tasks', j => { d.playerRun = _anyTaskStatus(j, 'running'); }),
     _dget('/api/redpocket/config', j => { d.rpLogin = !!(j && (j.sessdata || j.login_uid)); }),
@@ -5259,6 +5562,11 @@ function dashRender(){
   _dashBadge('dash-collection-login', d.collLogin ? 'ok' : 'off', d.collLogin ? '已登录' : '未登录');
   _dashBadge('dash-tagsearch-login', d.tsLogin ? 'ok' : 'off', d.tsLogin ? '已登录' : '未登录');
   _dashBadge('dash-tagsearch-extra', 'off', d.tsExtra || '–');
+
+  // 定时任务聚合徽章（任一子指标在跑即认为运行中，避免接口偶发失败导致误显空闲）
+  _dashBadge('dash-schedmgr-auto', d.autoRun ? 'run' : 'off', '自动互动 · ' + (d.autoRun ? '运行中' : '空闲'));
+  const _bstSchedOn = !!(d.boosterSched || d.boosterRun);
+  _dashBadge('dash-schedmgr-booster', _bstSchedOn ? 'run' : 'off', '低播放刷量 · ' + (_bstSchedOn ? '运行中' : '空闲'));
 
   _heroBadge('hero-auto-badge', d.autoLogin, d.autoLogin ? '已登录' : '未登录');
   _heroBadge('hero-booster-badge', d.boosterRun, d.boosterRun ? '运行中' : '空闲');
@@ -5293,7 +5601,7 @@ function toggleTheme(){
   try{ localStorage.setItem('bili-theme', isDark ? 'light' : 'dark'); }catch(e){}
 }
 
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
 </script>
 <!-- 联想下拉（挂在 body 末尾，fixed 定位，不受 .card overflow/transform 影响） -->
 <div id="ts-autocomplete" style="display:none;position:fixed;z-index:9999;max-height:200px;overflow-y:auto;border-radius:var(--radius-sm)"></div>

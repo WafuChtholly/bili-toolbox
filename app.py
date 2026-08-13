@@ -6,6 +6,7 @@ B站工具箱 — 统一 WebUI
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import os
@@ -881,6 +882,15 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
                     buf = log_buffers.get(task_id)
                     if buf is not None:
                         buf.append(f'[BOOSTER] {line}\n')
+                    # 镜像全部子任务日志到 schedule 日志，便于在定时任务页看到完整执行进度
+                    log_target = booster_tasks.get(task_id, {}).get("log_target")
+                    bv = booster_tasks.get(task_id, {}).get("bv", "")
+                # 锁外追加 mirror，避免在 booster_lock 内长时间阻塞其他 booster 任务
+                if log_target and log_target != task_id:
+                    with log_lock:
+                        target_buf = log_buffers.get(log_target)
+                        if target_buf is not None:
+                            target_buf.append(f'  └ [{bv}] {line}\n')
             def _replace_last_line(self, line):
                 with booster_lock:
                     if booster_tasks.get(task_id, {}).get("status") == "cancelled":
@@ -896,9 +906,31 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
                     # 只替换上一个进度条行，避免覆盖普通日志
                     for i in range(len(lines) - 1, -1, -1):
                         if lines[i].startswith('[BOOSTER] [PROGRESS]'):
+                            old_progress = lines[i]
                             lines[i] = f'[BOOSTER] {line}'
                             buf.clear()
                             buf.append('\n'.join(lines) + '\n')
+                            log_target = booster_tasks.get(task_id, {}).get("log_target")
+                            bv = booster_tasks.get(task_id, {}).get("bv", "")
+                            # 锁外替换镜像的进度行
+                            if log_target and log_target != task_id:
+                                with log_lock:
+                                    target_buf = log_buffers.get(log_target)
+                                    if target_buf is not None:
+                                        ttext = ''.join(target_buf)
+                                        tlines = ttext.splitlines()
+                                        prefix = f'  └ [{bv}] '
+                                        replaced = False
+                                        for j in range(len(tlines) - 1, -1, -1):
+                                            if tlines[j] == f'{prefix}{old_progress}':
+                                                tlines[j] = f'{prefix}{line}'
+                                                target_buf.clear()
+                                                target_buf.append('\n'.join(tlines) + '\n')
+                                                replaced = True
+                                                break
+                                        if not replaced:
+                                            # 没找到对应的旧行（可能因 LOG_MAX_LINES 截断），直接追加
+                                            target_buf.append(f'{prefix}{line}\n')
                             return
                     # 没有可替换的进度条行时作为新行追加
                     buf.append(f'[BOOSTER] {line}\n')
@@ -933,6 +965,20 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
                 booster_tasks[task_id]["status"] = "error"
         finally:
             sys.stdout = capture.original_stdout
+            # 任务结束后向 schedule 日志输出总结
+            with booster_lock:
+                final_status = booster_tasks.get(task_id, {}).get("status", "")
+                bv = booster_tasks.get(task_id, {}).get("bv", "")
+                log_target = booster_tasks.get(task_id, {}).get("log_target")
+            if log_target and log_target != task_id:
+                target_buf = log_buffers.get(log_target)
+                if target_buf is not None:
+                    if final_status == "completed":
+                        target_buf.append(f"  └ [{bv}] ✅ 任务完成\n")
+                    elif final_status == "cancelled":
+                        target_buf.append(f"  └ [{bv}] ⏹ 已停止\n")
+                    elif final_status == "error":
+                        target_buf.append(f"  └ [{bv}] ❌ 任务出错\n")
     finally:
         with booster_lock:
             booster_tasks[task_id]["end"] = time.time()
@@ -1011,43 +1057,7 @@ def booster_my_videos():
         return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
 
     try:
-        from bilibili_api import Credential
-        from bilibili_api.user import User, VideoOrder
-
-        # Credential 会自动处理 SESSDATA 编码和 buvid 获取
-        credential = Credential(
-            sessdata=sessdata,
-            bili_jct=cred.get("bili_jct", ""),
-            dedeuserid=str(mid),
-            ac_time_value=cred.get("ac_time_value", ""),
-        )
-        u = User(int(mid), credential=credential)
-
-        loop = asyncio.new_event_loop()
-        try:
-            for _attempt in range(3):
-                try:
-                    result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
-                    break
-                except Exception as retry_err:
-                    if _attempt < 2 and "第三方请求库" in str(retry_err):
-                        import time as _t; _t.sleep(1)
-                        continue
-                    raise
-        finally:
-            loop.close()
-
-        vlist = result.get("list", {}).get("vlist", [])
-        videos = []
-        for v in vlist:
-            videos.append({
-                "bvid": v.get("bvid", ""),
-                "title": v.get("title", ""),
-                "pic": v.get("pic", ""),
-                "play": v.get("play", 0),
-                "created": v.get("created", 0),
-                "length": v.get("length", ""),
-            })
+        videos = _fetch_my_videos(cred)
         return jsonify({"success": True, "videos": videos, "mid": mid})
     except Exception as e:
         import traceback
@@ -1057,10 +1067,328 @@ def booster_my_videos():
         return jsonify({"success": False, "message": error_msg})
 
 
+def _fetch_my_videos(cred: dict) -> list:
+    """通过 bilibili_api 获取账号投稿列表（自动处理 wbi/buvid），供 my-videos 接口和定时任务共用。"""
+    from bilibili_api import Credential
+    from bilibili_api.user import User, VideoOrder
+
+    mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
+    # Credential 会自动处理 SESSDATA 编码和 buvid 获取
+    credential = Credential(
+        sessdata=cred.get("sessdata", ""),
+        bili_jct=cred.get("bili_jct", ""),
+        dedeuserid=str(mid),
+        ac_time_value=cred.get("ac_time_value", ""),
+    )
+    u = User(int(mid), credential=credential)
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = None
+        for _attempt in range(3):
+            try:
+                result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
+                break
+            except Exception as retry_err:
+                if _attempt < 2 and "第三方请求库" in str(retry_err):
+                    time.sleep(1)
+                    continue
+                raise
+    finally:
+        loop.close()
+
+    vlist = (result or {}).get("list", {}).get("vlist", [])
+    videos = []
+    for v in vlist:
+        videos.append({
+            "bvid": v.get("bvid", ""),
+            "title": v.get("title", ""),
+            "pic": v.get("pic", ""),
+            "play": v.get("play", 0),
+            "created": v.get("created", 0),
+            "length": v.get("length", ""),
+        })
+    return videos
+
+
 @app.route("/api/booster/tasks")
 def booster_all():
     with booster_lock:
-        return jsonify(booster_tasks)
+        # 过滤 stop_event（threading.Event 无法被 jsonify 序列化，否则 500 导致总览状态取不到）
+        safe = {}
+        for k, v in booster_tasks.items():
+            safe[k] = {kk: vv for kk, vv in v.items() if kk != "stop_event"}
+        return jsonify(safe)
+
+
+# ---- Booster 定时任务：自动为低播放量投稿跑一次刷量 ----
+BOOSTER_CONFIG_FILE = CONFIG_DIR / "booster_config.yaml"
+
+_booster_schedule = {
+    "running": False,
+    "thread": None,
+    "stop_event": threading.Event(),
+    "last_run": None,
+    "next_run": None,
+    "run_count": 0,
+}
+
+
+def _load_booster_config():
+    import yaml
+    if BOOSTER_CONFIG_FILE.exists():
+        try:
+            with open(BOOSTER_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    return {}
+
+
+def _save_booster_config(cfg):
+    import yaml
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(BOOSTER_CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+
+def _booster_schedule_once(stop_event: threading.Event, log_target: str = "booster-schedule"):
+    """执行一次：获取投稿列表，为播放量低于阈值的稿件各创建一个 booster 任务。"""
+    cfg = _load_booster_config().get("schedule", {})
+    try:
+        threshold = int(cfg.get("play_threshold", 200))
+        target = int(cfg.get("target_play", 200))
+    except (TypeError, ValueError):
+        threshold, target = 200, 200
+
+    cred = _read_auto_cred()
+    sessdata = cred.get("sessdata", "")
+    mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
+    if not sessdata or not mid:
+        _append_log(log_target, "[ERROR] 未登录，请先在「自动互动」页面登录账号")
+        if _booster_schedule["running"] == "once":
+            _booster_schedule["running"] = False
+            _append_log(log_target, "=== 手动执行已结束 ===")
+        return
+
+    _append_log(log_target, f"获取投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
+    try:
+        videos = _fetch_my_videos(cred)
+    except Exception as e:
+        _append_log(log_target, f"[ERROR] 获取投稿列表失败: {e}")
+        if _booster_schedule["running"] == "once":
+            _booster_schedule["running"] = False
+            _append_log(log_target, "=== 手动执行已结束 ===")
+        return
+
+    if stop_event.is_set():
+        if _booster_schedule["running"] == "once":
+            _booster_schedule["running"] = False
+            _append_log(log_target, "=== 手动执行已结束 ===")
+        return
+
+    low = [v for v in videos if int(v.get("play", 0) or 0) < threshold]
+    if not low:
+        _append_log(log_target, f"共 {len(videos)} 个投稿，无播放量低于 {threshold} 的稿件，本轮跳过")
+        if _booster_schedule["running"] == "once":
+            _booster_schedule["running"] = False
+            _append_log(log_target, "=== 手动执行已结束 ===")
+        return
+
+    _append_log(log_target, f"共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
+                ", ".join(v["bvid"] for v in low))
+    for v in low:
+        if stop_event.is_set():
+            _append_log(log_target, "[SYSTEM] 正在停止...")
+            break
+        tid = str(uuid.uuid4())[:8]
+        with booster_lock:
+            booster_tasks[tid] = {
+                "status": "queued",
+                "start": time.time(),
+                "end": None,
+                "bv": v["bvid"],
+                "title": v.get("title", ""),
+                "target": target,
+                "max_rounds": 5,
+                "refetch_proxies": True,
+                "stop_event": stop_event,
+                "log_target": log_target,  # 便于子任务日志回流
+            }
+        with log_lock:
+            log_buffers[tid] = []
+        _append_log(log_target, f"已创建任务 {tid} → {v['bvid']}《{v.get('title','')}》（当前播放 {v.get('play', 0)}）")
+        t = threading.Thread(target=_run_booster_task, args=(tid, [v["bvid"]], target, stop_event, 5, True), daemon=True)
+        t.start()
+
+    # 「once」模式下不进入循环：等所有派生的 booster 子任务都结束后才标记结束
+    if _booster_schedule["running"] == "once":
+        threading.Thread(target=_wait_once_done, args=(log_target,), daemon=True).start()
+
+
+def _booster_schedule_loop():
+    """定时任务主循环"""
+    while not _booster_schedule["stop_event"].is_set():
+        cfg = _load_booster_config().get("schedule", {})
+        try:
+            interval = int(cfg.get("interval_minutes", 60)) * 60
+        except (TypeError, ValueError):
+            interval = 60 * 60
+
+        _append_log("booster-schedule", f"=== 定时刷量执行 (第{_booster_schedule['run_count']+1}次) ===")
+        _booster_schedule_once(_booster_schedule["stop_event"])
+        _booster_schedule["run_count"] += 1
+        _booster_schedule["last_run"] = time.time()
+        _booster_schedule["next_run"] = time.time() + interval
+
+        if _booster_schedule["stop_event"].is_set():
+            break
+        _append_log("booster-schedule", f"=== 等待 {interval//60} 分钟后执行下一次 ===")
+
+        # 分段等待，以便能快速响应停止
+        for _ in range(interval):
+            if _booster_schedule["stop_event"].is_set():
+                break
+            time.sleep(1)
+
+    _booster_schedule["running"] = False
+    _append_log("booster-schedule", "定时刷量任务已停止")
+
+
+def _wait_once_done(log_target: str):
+    """「once」模式下等待所有派生的 booster 子任务结束，再标记 running=False。
+    进度通过子任务日志镜像实时显示在 schedule 日志上，这里不再额外输出。"""
+    last_pending = -1
+    while True:
+        with booster_lock:
+            stop_event = _booster_schedule["stop_event"]
+            still_running = []
+            for t in booster_tasks.values():
+                if t.get("log_target") != log_target:
+                    continue
+                if t.get("stop_event") is not stop_event:
+                    continue
+                if t.get("status") not in ("completed", "error", "cancelled", "stopping"):
+                    still_running.append(t)
+        if not still_running:
+            break
+        # 仅在计数变化时静默记录（不输出到日志，避免淹没真实进度）
+        last_pending = len(still_running)
+        if stop_event.is_set() and not still_running:
+            break
+        time.sleep(1)
+    if _booster_schedule["running"] == "once":
+        _booster_schedule["running"] = False
+        _append_log(log_target, "=== 手动执行已结束 ===")
+
+
+@app.route("/api/booster/schedule/config", methods=["GET"])
+def booster_schedule_config_get():
+    cfg = _load_booster_config().get("schedule", {})
+    return jsonify({
+        "interval_minutes": cfg.get("interval_minutes", 60),
+        "play_threshold": cfg.get("play_threshold", 200),
+        "target_play": cfg.get("target_play", 200),
+    })
+
+
+@app.route("/api/booster/schedule/config", methods=["POST"])
+def booster_schedule_config_save():
+    data = request.json or {}
+    try:
+        interval = int(data.get("interval_minutes", 60))
+        threshold = int(data.get("play_threshold", 200))
+        target = int(data.get("target_play", 200))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "配置项必须为整数"}), 400
+    if interval < 1 or threshold < 1 or target < 1:
+        return jsonify({"success": False, "message": "配置项必须为正整数"}), 400
+    cfg = _load_booster_config()
+    cfg["schedule"] = {
+        "interval_minutes": interval,
+        "play_threshold": threshold,
+        "target_play": target,
+    }
+    _save_booster_config(cfg)
+    return jsonify({"success": True})
+
+
+@app.route("/api/booster/schedule/start", methods=["POST"])
+def booster_schedule_start():
+    if _booster_schedule["running"]:
+        return jsonify({"success": False, "message": "定时刷量任务已在运行"})
+
+    _booster_schedule["stop_event"] = threading.Event()
+    _booster_schedule["running"] = True
+    _booster_schedule["run_count"] = 0
+    _booster_schedule["last_run"] = None
+    with log_lock:
+        log_buffers["booster-schedule"] = []
+    _append_log("booster-schedule", "定时刷量任务已启动")
+
+    t = threading.Thread(target=_booster_schedule_loop, daemon=True)
+    _booster_schedule["thread"] = t
+    t.start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/booster/schedule/stop", methods=["POST"])
+def booster_schedule_stop():
+    if not _booster_schedule["running"]:
+        return jsonify({"success": True, "message": "未在运行"})
+    _booster_schedule["stop_event"].set()
+    return jsonify({"success": True})
+
+
+@app.route("/api/booster/schedule/run-once", methods=["POST"])
+def booster_schedule_run_once():
+    """手动触发一次低播放量扫描（不影响定时循环）。复用 schedule 的 stop_event，以便「停止」能一并中止。"""
+    if _booster_schedule["running"]:
+        # 定时在跑：复用定时 stop_event，使「停止」按钮能一并中断本轮执行
+        stop_event = _booster_schedule["stop_event"]
+    else:
+        # 定时未在跑：建立一次性的"运行中"状态，对应「停止」按钮
+        _booster_schedule["stop_event"] = threading.Event()
+        _booster_schedule["running"] = "once"
+        _booster_schedule["last_run"] = None
+        with log_lock:
+            log_buffers["booster-schedule"] = []
+        _append_log("booster-schedule", "=== 手动执行低播放量扫描 ===")
+        stop_event = _booster_schedule["stop_event"]
+
+    t = threading.Thread(target=_booster_schedule_once, args=(stop_event,), daemon=True)
+    t.start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/booster/schedule/status")
+def booster_schedule_status():
+    cfg = _load_booster_config().get("schedule", {})
+    # 统计当前由本 schedule 派生的活跃子任务
+    stop_event = _booster_schedule.get("stop_event")
+    active_bvids = []
+    with booster_lock:
+        for t in booster_tasks.values():
+            if t.get("stop_event") is not stop_event:
+                continue
+            if t.get("status") in ("completed", "error", "cancelled"):
+                continue
+            active_bvids.append({
+                "bv": t.get("bv", ""),
+                "title": t.get("title", ""),
+                "status": t.get("status", ""),
+                "target": t.get("target", 0),
+            })
+    return jsonify({
+        "running": _booster_schedule["running"],
+        "interval_minutes": cfg.get("interval_minutes", 60),
+        "play_threshold": cfg.get("play_threshold", 200),
+        "target_play": cfg.get("target_play", 200),
+        "last_run": _booster_schedule["last_run"],
+        "run_count": _booster_schedule["run_count"],
+        "active_tasks": active_bvids,
+        "log": _get_log("booster-schedule"),
+    })
 
 
 # =========================================================================
@@ -3695,6 +4023,173 @@ def tag_search_stats():
 # =========================================================================
 #  八、前端入口
 # =========================================================================
+
+# =========================================================================
+#  进程关闭清理
+# =========================================================================
+# 在 pyappify / 手动 kill / Ctrl+C 等场景下，确保：
+#   1. 触发所有 schedule 任务的 stop_event（auto schedule / booster schedule / redpocket / livehelper / player）
+#   2. 触发所有 active task 的 stop_event（auto_stop_events / history_stop_events / booster_tasks）
+#   3. 等后台线程退出（带超时，避免 hang）
+#   4. 杀掉本进程派生的子进程（playwright 浏览器 chromium.exe、asyncio 子进程等），避免成为孤儿
+#   5. 清理异常退出残留的 playwright 浏览器进程（仅 ms-playwright / .local-browsers 下的孤儿）
+#
+# Windows 上 SIGTERM 不可靠（部分 Tauri 启动器会直接 TerminateProcess），
+# 所以同时注册 atexit + signal.SIGINT + signal.SIGBREAK（Windows Ctrl+Break）。
+# 即使信号都失效，os._exit 之前我们已做完最关键的 stop + kill 子进程。
+
+_shutdown_done = False
+_shutdown_lock = threading.Lock()
+
+
+def _shutdown(label: str = "shutdown"):
+    """统一关闭逻辑，幂等"""
+    global _shutdown_done
+    with _shutdown_lock:
+        if _shutdown_done:
+            return
+        _shutdown_done = True
+    print(f"[{label}] 开始清理后台任务与子进程...", flush=True)
+
+    # 1) 触发所有 schedule 级别的 stop_event
+    try:
+        if _auto_schedule.get("stop_event"):
+            _auto_schedule["stop_event"].set()
+    except Exception as e:
+        print(f"[{label}] set auto schedule stop_event failed: {e}", flush=True)
+    try:
+        if _booster_schedule.get("stop_event"):
+            _booster_schedule["stop_event"].set()
+    except Exception as e:
+        print(f"[{label}] set booster schedule stop_event failed: {e}", flush=True)
+
+    # 2) 触发所有 active task 的 stop_event
+    try:
+        for ev in list(auto_stop_events.values()):
+            ev.set()
+    except Exception as e:
+        print(f"[{label}] set auto stop_events failed: {e}", flush=True)
+    try:
+        for ev in list(history_stop_events.values()):
+            ev.set()
+    except Exception as e:
+        print(f"[{label}] set history stop_events failed: {e}", flush=True)
+    try:
+        with booster_lock:
+            for t in booster_tasks.values():
+                ev = t.get("stop_event")
+                if ev:
+                    ev.set()
+    except Exception as e:
+        print(f"[{label}] set booster stop_events failed: {e}", flush=True)
+
+    # redpocket / livehelper / player 通过自己的 stop 端点或共享 stop_event 处理
+    # 这里直接尝试调用对应模块的 stop 函数（如果存在）
+    for mod_name in ("bili_redpocket", "bili_livehelper", "bili_player"):
+        try:
+            mod = sys.modules.get(mod_name)
+            if mod and hasattr(mod, "stop_all"):
+                mod.stop_all()
+        except Exception as e:
+            print(f"[{label}] {mod_name}.stop_all failed: {e}", flush=True)
+
+    # 3) 等后台线程退出（最多 5 秒）
+    def _join_all(deadline: float):
+        for t in threading.enumerate():
+            if t is threading.current_thread():
+                continue
+            if not t.is_alive():
+                continue
+            remaining = max(0.0, deadline - time.time())
+            if remaining <= 0:
+                break
+            t.join(timeout=remaining)
+
+    # 先杀子进程（chromium 等），后台线程会因为子进程断开而快速退出
+    try:
+        _kill_child_processes()
+    except Exception as e:
+        print(f"[{label}] kill child processes failed: {e}", flush=True)
+
+    _join_all(time.time() + 5.0)
+
+    # 兜底：再清一次残留（防止杀子进程前线程仍持有子进程句柄）
+    try:
+        _kill_child_processes()
+    except Exception as e:
+        print(f"[{label}] re-kill child processes failed: {e}", flush=True)
+
+    # 5) 清理异常退出残留的 playwright 浏览器进程（玩家模块已有此工具）
+    try:
+        from bili_player.player import cleanup_leftover_browsers
+        cleanup_leftover_browsers(log=lambda m: print(f"[{label}] {m}", flush=True))
+    except Exception as e:
+        # 没有 psutil / player 未装时静默
+        pass
+
+    print(f"[{label}] 清理完成", flush=True)
+
+
+def _kill_child_processes():
+    """杀掉当前进程派生的所有子进程。
+    - 仅处理 PPID == os.getpid() 的进程（包括已退出主进程的孤儿）
+    - 仅处理 chromium / playwright / python -m 等可能挂着的进程
+    - 不杀系统进程、用户自己的 Chrome
+    """
+    try:
+        import psutil
+    except ImportError:
+        print("[shutdown] psutil 未安装，跳过子进程清理", flush=True)
+        return
+
+    my_pid = os.getpid()
+    keywords = ("ms-playwright", ".local-browsers", "playwright", "chromium", "headless_shell")
+    killed = 0
+    for proc in psutil.process_iter(["pid", "ppid", "exe", "cmdline"]):
+        try:
+            info = proc.info
+            ppid = info.get("ppid")
+            exe = (info.get("exe") or "").lower()
+            cmdline = " ".join(info.get("cmdline") or []).lower()
+            if ppid != my_pid:
+                continue
+            hit = any(kw in exe for kw in keywords) or any(kw in cmdline for kw in keywords)
+            if not hit:
+                continue
+            proc.kill()
+            killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    if killed:
+        print(f"[shutdown] 已杀 {killed} 个子进程", flush=True)
+
+
+def _signal_handler(signum, frame):
+    print(f"[signal] 收到信号 {signum}", flush=True)
+    _shutdown(label=f"signal-{signum}")
+    # 给清理留一点时间，再 os._exit 强退（避免被 hang 在 flask shutdown 流程上）
+    try:
+        time.sleep(0.3)
+    except Exception:
+        pass
+    os._exit(0)
+
+
+# 注册关闭钩子（idempotent）
+atexit.register(_shutdown, label="atexit")
+try:
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+except (ValueError, OSError, AttributeError):
+    # 某些环境（子线程、被打包成 exe）不允许注册信号，忽略
+    pass
+# Windows: Ctrl+Break 也常见于 pyappify / 控制台
+if hasattr(signal, "SIGBREAK"):
+    try:
+        signal.signal(signal.SIGBREAK, _signal_handler)
+    except (ValueError, OSError, AttributeError):
+        pass
+
 
 @app.route("/")
 def index():
