@@ -396,7 +396,7 @@ html[data-theme="dark"] .sub-tab-btn.active { color: #f489ae; }
   margin-bottom: 16px;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--transition), box-shadow var(--transition);
+  transition: border-color var(--transition), box-shadow var(--transition), opacity 0.5s ease, transform 0.5s ease;
   animation: fadeInUp 0.3s ease both;
 }
 .card:nth-child(2) { animation-delay: 0.05s; }
@@ -468,7 +468,6 @@ html[data-theme="dark"] .sub-tab-btn.active { color: #f489ae; }
   border-radius: var(--radius-md);
   padding: 18px 20px;
   box-shadow: var(--shadow-sm);
-  animation: fadeInUp 0.3s ease both;
 }
 .dash-stat-val {
   font-family: var(--font-mono);
@@ -497,7 +496,6 @@ html[data-theme="dark"] .sub-tab-btn.active { color: #f489ae; }
   padding: 18px;
   box-shadow: var(--shadow-sm);
   transition: border-color var(--transition), box-shadow var(--transition), transform var(--transition);
-  animation: fadeInUp 0.3s ease both;
   display: flex;
   flex-direction: column;
 }
@@ -505,6 +503,82 @@ html[data-theme="dark"] .sub-tab-btn.active { color: #f489ae; }
   border-color: var(--card-border-hover);
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
+}
+
+/* ----- 通用面板加载过渡动画 ----- */
+.panel { position: relative; min-height: 200px; }
+.panel-loader {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 14px;
+  background: linear-gradient(180deg, rgba(253,252,250,0.96), rgba(248,247,244,0.96));
+  z-index: 6;
+  border-radius: var(--radius-md);
+  transition: opacity 0.45s ease, visibility 0.45s ease;
+  opacity: 0; visibility: hidden; pointer-events: none;
+}
+.panel.loading > .panel-loader {
+  opacity: 1; visibility: visible; pointer-events: auto;
+}
+.panel-loader-spin {
+  width: 38px; height: 38px;
+  border: 3px solid rgba(247,113,159,0.18);
+  border-top-color: #f7719f;
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+.panel-loader-text {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.5px;
+}
+html[data-theme="dark"] .panel-loader {
+  background: linear-gradient(180deg, rgba(28,28,30,0.96), rgba(22,22,24,0.96));
+}
+/* 加载时隐藏卡片，加载完成后错落渐入 */
+.panel.loading > .card,
+.panel.loading > .dash-summary,
+.panel.loading > .dash-grid {
+  animation: none;
+  opacity: 0; transform: translateY(12px);
+}
+.panel:not(.loading) > .card { opacity: 1; transform: none; }
+.panel:not(.loading) > .card:nth-child(2) { transition-delay: 0.05s; }
+.panel:not(.loading) > .card:nth-child(3) { transition-delay: 0.10s; }
+.panel:not(.loading) > .card:nth-child(4) { transition-delay: 0.15s; }
+.panel:not(.loading) > .card:nth-child(5) { transition-delay: 0.20s; }
+.panel:not(.loading) > .card:nth-child(6) { transition-delay: 0.25s; }
+.panel:not(.loading) > .card:nth-child(7) { transition-delay: 0.30s; }
+.panel:not(.loading) > .card:nth-child(n+8) { transition-delay: 0.35s; }
+/* 总览页专属错落 */
+#panel-dashboard.loading .dash-stat,
+#panel-dashboard.loading .dash-card {
+  opacity: 0; transform: translateY(12px);
+}
+#panel-dashboard:not(.loading) .dash-stat,
+#panel-dashboard:not(.loading) .dash-card {
+  opacity: 1; transform: none;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+#panel-dashboard:not(.loading) .dash-stat:nth-child(2) { transition-delay: 0.06s; }
+#panel-dashboard:not(.loading) .dash-stat:nth-child(3) { transition-delay: 0.12s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(1) { transition-delay: 0.16s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(2) { transition-delay: 0.22s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(3) { transition-delay: 0.28s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(4) { transition-delay: 0.34s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(5) { transition-delay: 0.40s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(6) { transition-delay: 0.46s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(7) { transition-delay: 0.52s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(8) { transition-delay: 0.58s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(9) { transition-delay: 0.64s; }
+#panel-dashboard:not(.loading) .dash-card:nth-child(n+10) { transition-delay: 0.70s; }
+@media (prefers-reduced-motion: reduce) {
+  .panel-loader-spin { animation: none; }
+  .panel.loading > .card,
+  .panel.loading > .dash-summary,
+  .panel.loading > .dash-grid,
+  #panel-dashboard.loading .dash-stat,
+  #panel-dashboard.loading .dash-card { opacity: 1; transform: none; }
 }
 .dash-card-top { display: flex; align-items: center; justify-content: space-between; }
 .dash-icon {
@@ -1613,7 +1687,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 <!-- ============================================================ -->
 <!--  TAB 0: 总览仪表盘                                            -->
 <!-- ============================================================ -->
-<div id="panel-dashboard" class="panel active">
+<div id="panel-dashboard" class="panel active loading">
+  <div class="panel-loader" aria-hidden="true">
+    <div class="panel-loader-spin"></div>
+    <div class="panel-loader-text">正在加载总览数据…</div>
+  </div>
   <div class="panel-hero">
     <div class="panel-hero-left">
       <div class="panel-hero-icon" style="color:#f7719f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg></div>
@@ -2901,6 +2979,39 @@ document.addEventListener('click', function(e){
 });
 
 /* ===== Tab 切换 ===== */
+function ensurePanelLoader(panel, text){
+  if(!panel || panel.querySelector(':scope > .panel-loader')) return;
+  const loader = document.createElement('div');
+  loader.className = 'panel-loader';
+  loader.setAttribute('aria-hidden', 'true');
+  loader.innerHTML = '<div class="panel-loader-spin"></div><div class="panel-loader-text">'+(text||'加载中…')+'</div>';
+  panel.appendChild(loader);
+}
+function withPanelLoader(panelId, taskFn, text){
+  const panel = document.getElementById(panelId);
+  if(!panel) return taskFn ? taskFn() : undefined;
+  ensurePanelLoader(panel, text);
+  const isFirstLoad = !panel.dataset.loaded;
+  if(isFirstLoad){
+    panel.classList.add('loading');
+    panel._loaderStart = Date.now();
+  }
+  const done = () => {
+    if(!isFirstLoad) return;
+    const elapsed = Date.now() - (panel._loaderStart || 0);
+    const delay = Math.max(0, 350 - elapsed);
+    setTimeout(() => {
+      panel.classList.remove('loading');
+      panel.dataset.loaded = '1';
+    }, delay);
+  };
+  let ret;
+  try { ret = taskFn ? taskFn() : undefined; }
+  catch(e){ done(); throw e; }
+  if(ret && typeof ret.then === 'function'){ ret.then(done, done); }
+  else { done(); }
+  return ret;
+}
 function switchTab(name){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
@@ -2916,14 +3027,16 @@ function switchTab(name){
     if(btn) btn.classList.add('active');
   }
   if(name==='dashboard'){dashRefresh();}
-  if(name==='booster'){bstLoadLoginStatus();}else{bstWebhookStopPoll();}
-  if(name==='redpocket'){rpLoadRooms();rpCheckStatus()}
-  if(name==='player'){plLoadConfig()}
-  if(name==='auto'){autoLoadConfig();loadAutoConfig();}
-  if(name==='livehelper'){lhLoadConfig()}
-  if(name==='collection'){collLoadStatus()}
-  if(name==='tagsearch'){tsLoadStatus()}
-  if(name==='schedmgr'){mgrAutoLoad();bstScheduleLoad();}
+  if(name==='booster'){
+    withPanelLoader('panel-booster', () => bstLoadLoginStatus(), '正在加载代理池状态…');
+  } else { bstWebhookStopPoll(); }
+  if(name==='redpocket'){ withPanelLoader('panel-redpocket', () => Promise.all([rpLoadRooms(), rpCheckStatus()]), '正在加载红包助手…'); }
+  if(name==='player'){ withPanelLoader('panel-player', () => plLoadConfig(), '正在加载账号配置…'); }
+  if(name==='auto'){ withPanelLoader('panel-auto', () => Promise.all([autoLoadConfig(), loadAutoConfig()]), '正在加载自动互动配置…'); }
+  if(name==='livehelper'){ withPanelLoader('panel-livehelper', () => lhLoadConfig(), '正在加载弹幕助手配置…'); }
+  if(name==='collection'){ withPanelLoader('panel-collection', () => collLoadStatus(), '正在加载合集助手状态…'); }
+  if(name==='tagsearch'){ withPanelLoader('panel-tagsearch', () => tsLoadStatus(), '正在加载标签助手状态…'); }
+  if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad()]), '正在加载定时任务状态…'); }
 }
 
 /* ===== BV 动态列表 ===== */
@@ -2963,6 +3076,37 @@ function stopPoll(url){
   if(pollTimers[url]){clearInterval(pollTimers[url]);delete pollTimers[url];}
 }
 
+/* ===== 通用：配置加载完成高亮动画 ===== */
+function flashConfigLoaded(panelId){
+  const panel=document.getElementById(panelId);
+  if(!panel) return;
+  // 直接作用在 panel 内的每张 .card 上，避免被 card 自身背景遮挡
+  const cards=panel.querySelectorAll('.card');
+  const targets=cards.length?[...cards]:[panel];
+  targets.forEach(el=>{
+    el.classList.remove('auto-config-flash');
+    void el.offsetWidth; // 强制 reflow 重新触发动画
+    el.classList.add('auto-config-flash');
+    setTimeout(()=>el.classList.remove('auto-config-flash'),1300);
+  });
+}
+
+/* ===== 通用：配置加载过渡（半透明 → 完成时高亮一闪） ===== */
+function withConfigLoading(panelId, task){
+  const panel=document.getElementById(panelId);
+  if(panel) panel.classList.add('auto-config-loading');
+  const finish=()=>{
+    if(panel){
+      panel.classList.remove('auto-config-loading');
+      flashConfigLoaded(panelId);
+    }
+  };
+  return Promise.resolve()
+    .then(task)
+    .then(r=>{finish();return r;})
+    .catch(err=>{finish();throw err;});
+}
+
 /* ============================================================
    TAB 1: 自动互动
    ============================================================ */
@@ -2971,7 +3115,7 @@ let autoTaskId=null;
 /* --- Auto 登录 --- */
 let autoPollTimer=null;
 function autoLoadConfig(){
-  fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+  return fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('auto-login-info');
     if(d.login_uid){
       el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
@@ -3021,7 +3165,8 @@ function autoStartPoll(key){
 }
 
 function loadAutoConfig(){
-  fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
+  // 用过渡包装：fetch 期间整个动态互动区半透明 + 显示「正在加载配置…」
+  return withConfigLoading('auto-subtab-dynamic', ()=>fetch('/api/auto/config').then(r=>r.json()).then(cfg=>{
     const a=cfg.actions||{};
     const triple=a.triple!==false;
     document.getElementById('auto-act-triple').checked=triple;
@@ -3055,7 +3200,7 @@ function loadAutoConfig(){
     document.getElementById('auto-comment-suffix').value=ct.suffix||'';
     // schedule 已迁至「定时任务管理」页签（mgr-auto-interval），此页不再读写。
     loadReplyTexts();
-  });
+  }));
 }
 
 function saveAutoConfig(){
@@ -3401,12 +3546,12 @@ function mgrAutoUpdateBtn(running){
 }
 
 function mgrAutoLoad(){
-  fetch('/api/auto/config').then(r=>r.json()).then(c=>{
+  const p1 = fetch('/api/auto/config').then(r=>r.json()).then(c=>{
     const s=(c&&c.schedule)||{};
     document.getElementById('mgr-auto-interval').value=s.interval_minutes||30;
   }).catch(()=>{});
   // 复用主账号凭证：统一从「自动互动」拉登录态
-  fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+  const p2 = fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('sched-login-info');
     if(d.login_uid){
       el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
@@ -3417,6 +3562,7 @@ function mgrAutoLoad(){
     }
   }).catch(()=>{});
   mgrAutoTick();
+  return Promise.all([p1, p2]);
 }
 
 function mgrAutoSave(silent){
@@ -3806,7 +3952,7 @@ histLoadActions();
 let bstTaskId=null;
 
 function bstLoadLoginStatus(){
-  fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
+  return fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('bst-login-info');
     if(d.login_uid){
       el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b> （复用「自动互动」登录凭证）';
@@ -3910,12 +4056,13 @@ let bstSchedLastLogLen=-1;
 let bstSchedIdleTicks=0;
 
 function bstScheduleLoad(){
-  fetch('/api/booster/schedule/config').then(r=>r.json()).then(c=>{
+  const p = fetch('/api/booster/schedule/config').then(r=>r.json()).then(c=>{
     document.getElementById('bst-sched-interval').value=c.interval_minutes;
     document.getElementById('bst-sched-threshold').value=c.play_threshold;
     document.getElementById('bst-sched-target').value=c.target_play;
   }).catch(()=>{});
   bstSchedulePollTick();
+  return p;
 }
 
 function bstScheduleSave(silent){
@@ -4195,7 +4342,7 @@ let playerTaskId=null;
 let plPollTimer=null;
 
 function plLoadConfig(){
-  fetch('/api/player/config').then(r=>r.json()).then(d=>{
+  return fetch('/api/player/config').then(r=>r.json()).then(d=>{
     const listEl=document.getElementById('pl-accounts-list');
     const infoEl=document.getElementById('pl-login-info');
     const accounts=d.accounts||[];
@@ -4419,25 +4566,27 @@ function plRenderResultPanel(){
    TAB 3: 红包助手
    ============================================================ */
 function rpCheckStatus(){
-  fetch('/api/redpocket/status').then(r=>r.json()).then(d=>{
-    if(d.running){
-      setDot('rp-dot','run');setText('rp-run-status','运行中 (PID '+d.pid+')');
-      document.getElementById('rp-start-btn').disabled=true;
-      document.getElementById('rp-stop-btn').disabled=false;
-    }else{
-      setDot('rp-dot','off');setText('rp-run-status','未运行');
-      document.getElementById('rp-start-btn').disabled=false;
-      document.getElementById('rp-stop-btn').disabled=true;
-    }
-    if(d.logs){document.getElementById('rp-log').textContent=d.logs;
-      document.getElementById('rp-log').scrollTop=document.getElementById('rp-log').scrollHeight;}
-  });
-  fetch('/api/redpocket/config').then(r=>r.json()).then(d=>{
-    if(d.sessdata){
-      const uid=d.login_uid||'未知';
-      document.getElementById('rp-login-info').innerHTML='已登录 <b>UID: '+uid+'</b>';
-    }
-  });
+  return Promise.all([
+    fetch('/api/redpocket/status').then(r=>r.json()).then(d=>{
+      if(d.running){
+        setDot('rp-dot','run');setText('rp-run-status','运行中 (PID '+d.pid+')');
+        document.getElementById('rp-start-btn').disabled=true;
+        document.getElementById('rp-stop-btn').disabled=false;
+      }else{
+        setDot('rp-dot','off');setText('rp-run-status','未运行');
+        document.getElementById('rp-start-btn').disabled=false;
+        document.getElementById('rp-stop-btn').disabled=true;
+      }
+      if(d.logs){document.getElementById('rp-log').textContent=d.logs;
+        document.getElementById('rp-log').scrollTop=document.getElementById('rp-log').scrollHeight;}
+    }),
+    fetch('/api/redpocket/config').then(r=>r.json()).then(d=>{
+      if(d.sessdata){
+        const uid=d.login_uid||'未知';
+        document.getElementById('rp-login-info').innerHTML='已登录 <b>UID: '+uid+'</b>';
+      }
+    })
+  ]);
 }
 function rpStart(){
   document.getElementById('rp-start-btn').disabled=true;
@@ -4469,7 +4618,7 @@ function fillRoomId(id){
   document.getElementById('rp-add-room').value=id;
 }
 function rpLoadRooms(){
-  fetch('/api/redpocket/rooms').then(r=>r.json()).then(d=>{
+  return fetch('/api/redpocket/rooms').then(r=>r.json()).then(d=>{
     const box=document.getElementById('rp-rooms');
     if(!d.rooms||d.rooms.length===0){box.innerHTML='<p style="color:var(--text-secondary)">暂无监听房间</p>';return;}
     box.innerHTML='';
@@ -4673,7 +4822,7 @@ function setText(id,text){document.getElementById(id).textContent=text;}
 let lhPollTimer=null;
 
 function lhLoadConfig(){
-  fetch('/api/livehelper/config').then(r=>r.json()).then(d=>{
+  return fetch('/api/livehelper/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('lh-login-info');
     if(d._has_login&&d._login_uid){
       el.innerHTML='已登录 <b>UID: '+d._login_uid+'</b>';
@@ -4813,7 +4962,7 @@ let collMatchData = [];  // 保存扫描结果
 let collSeasons = [];    // 保存合集列表，供下拉框使用
 
 function collLoadStatus(){
-  fetch('/api/collection/status').then(r=>r.json()).then(d=>{
+  return fetch('/api/collection/status').then(r=>r.json()).then(d=>{
     const el=document.getElementById('coll-login-info');
     if(d.logged_in){
       el.innerHTML='已登录 <b>UID: '+d.mid+'</b>';
@@ -5264,7 +5413,7 @@ function _escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 let _tsAllTags = []; // 缓存所有标签名用于联想
 
 function tsLoadStatus(){
-  fetch('/api/tag-search/status').then(r=>r.json()).then(d=>{
+  return fetch('/api/tag-search/status').then(r=>r.json()).then(d=>{
     if(!d.success) return;
     const el=document.getElementById('ts-login-info');
     if(d.logged_in){
@@ -5525,6 +5674,11 @@ function _dget(url, fn){
 }
 async function dashRefresh(){
   const d = _dash;
+  const panel = document.getElementById('panel-dashboard');
+  if(panel && panel.classList.contains('loading')){
+    // 保证 loader 至少展示一瞬，避免数据返回过快导致闪烁
+    await new Promise(r => setTimeout(r, 350));
+  }
   await Promise.all([
     _dget('/api/auto/login/config', j => { d.autoLogin = !!(j && j.login_uid); }),
     _dget('/api/auto/schedule/status', j => { d.autoRun = !!(j && j.running); }),
@@ -5543,6 +5697,9 @@ async function dashRefresh(){
     })
   ]);
   dashRender();
+  if(panel && panel.classList.contains('loading')){
+    panel.classList.remove('loading');
+  }
 }
 function dashRender(){
   const d = _dash;
