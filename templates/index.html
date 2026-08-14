@@ -2919,7 +2919,7 @@ function switchTab(name){
   if(name==='booster'){bstLoadLoginStatus();}else{bstWebhookStopPoll();}
   if(name==='redpocket'){rpLoadRooms();rpCheckStatus()}
   if(name==='player'){plLoadConfig()}
-  if(name==='auto'){autoLoadConfig()}
+  if(name==='auto'){autoLoadConfig();loadAutoConfig();}
   if(name==='livehelper'){lhLoadConfig()}
   if(name==='collection'){collLoadStatus()}
   if(name==='tagsearch'){tsLoadStatus()}
@@ -3053,9 +3053,7 @@ function loadAutoConfig(){
     const ct=cfg.comment_text||{};
     document.getElementById('auto-comment-prefix').value=ct.prefix||'';
     document.getElementById('auto-comment-suffix').value=ct.suffix||'';
-    const s=cfg.schedule||{};
     // schedule 已迁至「定时任务管理」页签（mgr-auto-interval），此页不再读写。
-    // 保留读取仅作向后兼容，不修改 DOM。
     loadReplyTexts();
   });
 }
