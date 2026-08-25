@@ -2304,6 +2304,167 @@ def livehelper_config_save():
 
 
 # =========================================================================
+#  四-C、B站直播间抢电池红包 (bili-battery-redpocket)
+# =========================================================================
+
+BATTERY_DIR = str(ROOT / "bili-battery-redpocket")
+BATTERY_SCRIPT = os.path.join(BATTERY_DIR, "auto_grab_battery_red_pocket.py")
+
+battery_process = None
+battery_lock = threading.Lock()
+
+
+def _battery_running():
+    global battery_process
+    if battery_process and battery_process.poll() is None:
+        return True, battery_process.pid
+    # 检查是否有残留进程
+    for proc in __import__("psutil").process_iter(["pid", "cmdline"]):
+        try:
+            cmdline = proc.cmdline()
+            if cmdline and any("auto_grab_battery_red_pocket" in c for c in cmdline):
+                return True, proc.pid
+        except Exception:
+            continue
+    return False, None
+
+
+def _read_battery_config():
+    """读取 redpocket 配置中的 battery_redpocket 配置"""
+    _ensure_redpocket_config()
+    import yaml
+    config_path = REDPOCKET_CONFIG
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return cfg.get("battery_redpocket", {})
+    return {}
+
+
+def _write_battery_config(bat_cfg):
+    """更新 redpocket 配置中的 battery_redpocket 配置"""
+    _ensure_redpocket_config()
+    import yaml
+    config_path = REDPOCKET_CONFIG
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    else:
+        cfg = {"bilibili": {}, "network": {"browser_headers": {}}, "logging": {"level": "INFO"}}
+    cfg["battery_redpocket"] = bat_cfg
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+
+@app.route("/api/battery/status")
+def battery_status():
+    running, pid = _battery_running()
+    log_dir = os.path.join(BATTERY_DIR, "logs")
+    logs = ""
+    if os.path.exists(log_dir):
+        log_files = sorted(
+            [f for f in os.listdir(log_dir) if f.endswith(".log")],
+            reverse=True,
+        )
+        if log_files:
+            try:
+                with open(os.path.join(log_dir, log_files[0]), "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                    logs = "".join(lines[-100:])
+            except Exception:
+                pass
+    return jsonify({"running": running, "pid": pid, "logs": logs})
+
+
+@app.route("/api/battery/start", methods=["POST"])
+def battery_start():
+    running, _ = _battery_running()
+    if running:
+        return jsonify({"success": False, "message": "已在运行中"})
+
+    python_exe = sys.executable
+    if not python_exe or not os.path.exists(python_exe):
+        return jsonify({"success": False, "message": "找不到 Python 解释器"})
+
+    global battery_process
+    try:
+        battery_process = subprocess.Popen(
+            [python_exe, BATTERY_SCRIPT],
+            cwd=BATTERY_DIR,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        )
+        return jsonify({"success": True, "message": f"已启动 PID: {battery_process.pid}"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/battery/stop", methods=["POST"])
+def battery_stop():
+    running, pid = _battery_running()
+    if not running:
+        return jsonify({"success": True, "message": "未在运行"})
+
+    try:
+        stop_file = os.path.join(BATTERY_DIR, ".stop_signal")
+        with open(stop_file, "w") as f:
+            f.write(str(pid))
+
+        import psutil
+        if psutil.pid_exists(pid):
+            proc = psutil.Process(pid)
+            try:
+                proc.wait(timeout=10)
+            except psutil.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
+
+        if os.path.exists(stop_file):
+            os.remove(stop_file)
+
+        return jsonify({"success": True, "message": "已停止"})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/battery/config", methods=["GET"])
+def battery_config_get():
+    _ensure_redpocket_config()
+    import yaml
+    config_path = REDPOCKET_CONFIG
+    cfg = {"enabled": True, "poll_interval": 1.0, "only_battery": True, "rooms": []}
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            yml = yaml.safe_load(f) or {}
+            bat = yml.get("battery_redpocket", {})
+            if bat:
+                cfg.update(bat)
+            # 登录状态也返回
+            bili = yml.get("bilibili", {})
+            cfg["_login_uid"] = bili.get("login_uid", "")
+            cfg["_has_login"] = bool(bili.get("sessdata") and bili.get("bili_jct"))
+    return jsonify(cfg)
+
+
+@app.route("/api/battery/config", methods=["POST"])
+def battery_config_save():
+    data = request.json or {}
+    # 只保存 battery_redpocket 相关字段
+    rooms = data.get("rooms", [])
+    if isinstance(rooms, str):
+        rooms = [r.strip() for r in rooms.replace("，", ",").split(",") if r.strip()]
+    elif isinstance(rooms, list):
+        rooms = [str(r).strip() for r in rooms if str(r).strip()]
+    bat_cfg = {
+        "enabled": data.get("enabled", True),
+        "poll_interval": float(data.get("poll_interval", 1.0)),
+        "only_battery": data.get("only_battery", True),
+        "rooms": rooms,
+    }
+    _write_battery_config(bat_cfg)
+    return jsonify({"success": True})
+
+
+# =========================================================================
 #  五、合集助手 (Collection Assistant)
 # =========================================================================
 

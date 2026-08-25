@@ -307,6 +307,7 @@ _DEFAULT_CONFIG = {
                         "comment": True, "share": True, "cover_comment": True, "play_once": False},
     "interact_own_dynamics": True,  # 是否互动自己的动态
     "coin_target_uid": [],  # 指定投币对象 UID 列表，为空则不指定
+    "coin_num": 2,  # 每次投币数量：1=单币, 2=双币
     "list_mode": "blacklist",   # "blacklist" | "whitelist"（互斥）
     "blacklist": [],
     "whitelist": [],
@@ -1128,9 +1129,10 @@ async def interact_with_video(
     if not use_triple and actions.get("coin", False):
         if stop_event and stop_event.is_set():
             return results
+        coin_num = int(cfg.get("coin_num", 2) or 2)
         try:
-            await v.pay_coin(num=2, like=False)
-            logger.info("✅ 投币: %s", bvid)
+            await v.pay_coin(num=coin_num, like=False)
+            logger.info("✅ 投币(%d币): %s", coin_num, bvid)
             results["coin"] = "success"
         except Exception as e:
             err_str = str(e)
@@ -1437,11 +1439,12 @@ async def run_once(
 
         # 指定投币对象：仅对目标 UID 的视频投币，其他视频跳过投币
         call_cfg = cfg
-        if coin_target_set and str(d["author_uid"]) not in coin_target_set:
+        if coin_target_set:
             call_cfg = dict(cfg)
             call_cfg["actions"] = dict(cfg.get("actions", {}))
-            call_cfg["actions"]["triple"] = False
-            call_cfg["actions"]["coin"] = False
+            call_cfg["actions"]["triple"] = False  # 三连与指定投币互斥
+            # 目标 UID 的视频才投币，其他视频跳过投币
+            call_cfg["actions"]["coin"] = str(d["author_uid"]) in coin_target_set
 
         action_results = await interact_with_video(bvid, d["aid"], d["author_name"], cred, my_uid, config=call_cfg, stop_event=_stop)
         seen_bvids.add(bvid)

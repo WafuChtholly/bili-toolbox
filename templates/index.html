@@ -754,6 +754,18 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 }
 .inline-field .form-input:focus { border: none; box-shadow: none; }
 .inline-input { width: 80px; text-align: center; }
+/* 投币数量下拉（单币/双币） */
+.coin-num-select {
+  margin-left: auto;
+  width: 64px; height: 24px; padding: 0 4px;
+  font-size: 12px; color: var(--text-secondary);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.coin-num-select:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(247,113,159,0.18); }
 
 /* 悬停行（JS 生成的用户行 / 视频行） */
 .following-item { display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:10px; cursor:pointer; transition: background var(--transition); }
@@ -1657,6 +1669,8 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         弹幕助手
       </button>
 
+      <!-- 抢电池红包模块暂未完成，入口已隐藏（panel-battery 面板与 bt* 函数保留） -->
+
       <button class="tab-btn" onclick="switchTab('collection')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 17.5l9 5 9-5"/></svg>
         合集助手
@@ -1866,7 +1880,13 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             </label>
             <div id="auto-sub-actions" class="act-sub" style="display:none">
               <label class="switch-row"><span>点赞</span><input type="checkbox" id="auto-act-like" onchange="onSubActionChange()"></label>
-              <label class="switch-row"><span>投币</span><input type="checkbox" id="auto-act-coin" onchange="onSubActionChange()"></label>
+              <label class="switch-row"><span>投币</span>
+                <select id="auto-coin-num" class="coin-num-select" title="每次投币数量">
+                  <option value="2">双币</option>
+                  <option value="1">单币</option>
+                </select>
+                <input type="checkbox" id="auto-act-coin" onchange="onSubActionChange()">
+              </label>
               <label class="switch-row"><span>收藏</span><input type="checkbox" id="auto-act-favorite" onchange="onSubActionChange()"></label>
             </div>
           </div>
@@ -1893,6 +1913,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           </div>
           <textarea class="form-input" id="auto-coin-target-uid" rows="3" placeholder="12345678&#10;87654321" style="margin-bottom:8px"></textarea>
           <p id="coin-target-status" style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px"></p>
+          <p style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px">💡 投币数量（单币/双币）在「执行动作 → 组合动作 → 投币」行的右侧下拉中设置，目标 UID 统一按该数量投币</p>
           <!-- 关注列表勾选区 -->
           <div id="coin-target-following-container" style="display:none">
             <label class="form-label" style="font-size:12px;color:var(--text-secondary)">👥 我的关注列表（点击勾选添加到投币对象）</label>
@@ -2060,7 +2081,13 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             </label>
             <div id="hist-sub-actions" class="act-sub" style="display:none">
               <label class="switch-row"><span>点赞</span><input type="checkbox" id="hist-act-like" onchange="histOnSubActionChange()"></label>
-              <label class="switch-row"><span>投币</span><input type="checkbox" id="hist-act-coin" onchange="histOnSubActionChange()"></label>
+              <label class="switch-row"><span>投币</span>
+                <select id="hist-coin-num" class="coin-num-select" title="每次投币数量">
+                  <option value="2">双币</option>
+                  <option value="1">单币</option>
+                </select>
+                <input type="checkbox" id="hist-act-coin" onchange="histOnSubActionChange()">
+              </label>
               <label class="switch-row"><span>收藏</span><input type="checkbox" id="hist-act-favorite" onchange="histOnSubActionChange()"></label>
             </div>
           </div>
@@ -2192,6 +2219,8 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('booster-bv-list')">+ 添加视频</button>
           <button type="button" class="btn btn-outline btn-sm" id="bst-webhook-btn" onclick="bstWebhookToggle()">🔗 从活动助手获取</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="tpToggle('bst')">🏷 按标签添加</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvClear('booster-bv-list')">🗑 一键清空</button>
         </div>
         <div id="bst-webhook-area" class="soft-note blue" style="display:none;margin-top:10px">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2205,6 +2234,33 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             Body: <code>{"bvid":"BVxxx"}</code> 或 <code>{"bvid":["BV1","BV2"]}</code>
           </div>
           <div id="bst-webhook-status" style="margin-top:6px;font-size:12px;color:var(--text-tertiary)">等待接收...</div>
+        </div>
+        <!-- 按标签选稿（复用标签助手缓存） -->
+        <div id="bst-tag-pick" style="display:none;margin-top:10px;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:13px;color:var(--text-secondary)">🏷 按标签选择稿件（数据来自「标签助手」缓存，未扫描请先到标签助手页扫描）</span>
+            <button type="button" class="btn btn-outline btn-sm" style="font-size:12px;padding:2px 10px" onclick="tpToggle('bst')">收起</button>
+          </div>
+          <div id="bst-pick-tags" class="tp-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px 10px;background:var(--card-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm);cursor:text" onclick="document.getElementById('bst-pick-input').focus()">
+            <input id="bst-pick-input" type="text" placeholder="输入标签名后按回车添加" style="flex:1;min-width:120px;border:none;background:transparent;color:var(--text-primary);font-size:13px;outline:none;padding:2px 0" onkeydown="tpKeydown(event,'bst')" oninput="tpAutocomplete('bst')">
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+            <div class="seg">
+              <label><input type="radio" name="bst-pick-mode" value="and" checked><span>交集（同时包含所有标签）</span></label>
+              <label><input type="radio" name="bst-pick-mode" value="or"><span>并集（包含任一标签）</span></label>
+            </div>
+            <button type="button" class="btn btn-pink btn-sm" onclick="tpSearch('bst')" style="margin-left:auto">搜索</button>
+          </div>
+          <div id="bst-tag-results" style="display:none;margin-top:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <label class="switch-row"><span>全选</span><input type="checkbox" id="bst-tag-select-all" onchange="tpToggleAll('bst')"></label>
+                <span style="font-size:12px;color:var(--text-secondary)">匹配: <b id="bst-tag-count">0</b> 个稿件</span>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" onclick="tpAddSelected('bst')">✅ 添加选中到下方</button>
+            </div>
+            <div id="bst-tag-results-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+          </div>
         </div>
       </div>
       <div class="form-group">
@@ -2311,7 +2367,38 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <div id="player-bv-list" class="bv-list">
           <div class="bv-row"><input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>
         </div>
-        <button type="button" class="btn btn-outline btn-sm" style="margin-top:8px" onclick="bvAdd('player-bv-list')">+ 添加视频</button>
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('player-bv-list')">+ 添加视频</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="tpToggle('pl')">🏷 按标签添加</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvClear('player-bv-list')">🗑 一键清空</button>
+        </div>
+        <!-- 按标签选稿（复用标签助手缓存） -->
+        <div id="pl-tag-pick" style="display:none;margin-top:10px;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:13px;color:var(--text-secondary)">🏷 按标签选择稿件（数据来自「标签助手」缓存，未扫描请先到标签助手页扫描）</span>
+            <button type="button" class="btn btn-outline btn-sm" style="font-size:12px;padding:2px 10px" onclick="tpToggle('pl')">收起</button>
+          </div>
+          <div id="pl-pick-tags" class="tp-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px 10px;background:var(--card-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm);cursor:text" onclick="document.getElementById('pl-pick-input').focus()">
+            <input id="pl-pick-input" type="text" placeholder="输入标签名后按回车添加" style="flex:1;min-width:120px;border:none;background:transparent;color:var(--text-primary);font-size:13px;outline:none;padding:2px 0" onkeydown="tpKeydown(event,'pl')" oninput="tpAutocomplete('pl')">
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+            <div class="seg">
+              <label><input type="radio" name="pl-pick-mode" value="and" checked><span>交集（同时包含所有标签）</span></label>
+              <label><input type="radio" name="pl-pick-mode" value="or"><span>并集（包含任一标签）</span></label>
+            </div>
+            <button type="button" class="btn btn-success btn-sm" onclick="tpSearch('pl')" style="margin-left:auto">搜索</button>
+          </div>
+          <div id="pl-tag-results" style="display:none;margin-top:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <label class="switch-row"><span>全选</span><input type="checkbox" id="pl-tag-select-all" onchange="tpToggleAll('pl')"></label>
+                <span style="font-size:12px;color:var(--text-secondary)">匹配: <b id="pl-tag-count">0</b> 个稿件</span>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" onclick="tpAddSelected('pl')">✅ 添加选中到下方</button>
+            </div>
+            <div id="pl-tag-results-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+          </div>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">每个视频播放轮数</label>
@@ -2621,6 +2708,86 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
     <div class="card-head blue"><span class="card-step">4</span>运行日志</div>
     <div class="card-body">
       <div class="log-box" id="lh-log">等待启动...</div>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ============================================================ -->
+<!--  TAB 5: 抢电池红包 (bili-battery-redpocket)                    -->
+<!-- ============================================================ -->
+<div id="panel-battery" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-left">
+      <div class="panel-hero-icon" style="color:#f2a33c"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="17" height="10" rx="2"/><line x1="22" y1="11" x2="22" y2="13"/><line x1="6" y1="10.5" x2="6" y2="13.5"/><line x1="10" y1="10.5" x2="10" y2="13.5"/><line x1="14" y1="10.5" x2="14" y2="13.5"/></svg></div>
+      <div>
+        <div class="panel-hero-title">抢电池红包</div>
+        <div class="panel-hero-desc">轮询人气红包接口，自动识别并抢取主播发的电池红包。</div>
+      </div>
+    </div>
+    <span class="hero-badge off" id="hero-battery-badge">检测中…</span>
+  </div>
+
+
+  <!-- 登录卡片 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">1</span>账号登录</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span id="bt-login-info" style="color:var(--text-secondary)">未登录</span>
+        <button class="btn btn-outline btn-sm" onclick="btShowQR()">扫码登录</button>
+      </div>
+      <div class="qr-wrap" id="bt-qr-area" style="display:none">
+        <img id="bt-qr-img" src="" alt="QR">
+        <div class="qr-status" id="bt-qr-status">请用B站 App 扫描</div>
+      </div>
+      <p style="color:var(--text-tertiary);font-size:12px;margin-top:8px">与红包助手/弹幕助手共用同一套 B 站凭证。</p>
+    </div>
+  </div>
+
+  <!-- 配置卡片 -->
+  <div class="card">
+    <div class="card-head blue"><span class="card-step">2</span>运行配置</div>
+    <div class="card-body">
+      <div class="form-group">
+        <label class="form-label">监控房间号（每行一个，短号/真实号均可）</label>
+        <textarea class="form-input" id="bt-rooms" rows="4" placeholder="27354807&#10;1758153368"></textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label class="form-label">轮询间隔（秒）</label>
+          <input class="form-input" id="bt-poll-interval" type="number" value="1" step="0.1" min="0.2">
+        </div>
+        <div class="form-group">
+          <label class="switch-row" style="align-self:end"><span>只抢电池红包</span><input type="checkbox" id="bt-only-battery" checked></label>
+        </div>
+      </div>
+      <p style="color:var(--text-tertiary);font-size:12px">关闭后也会顺带抢礼物红包。电池红包识别依据：奖励含「电池」或自动弹幕为空。</p>
+      <button class="btn btn-outline btn-sm" onclick="btSaveConfig()" style="width:100%">💾 保存配置</button>
+    </div>
+  </div>
+
+  <!-- 运行控制 -->
+  <div class="card">
+    <div class="card-head green"><span class="card-step">3</span>运行控制</div>
+    <div class="card-body">
+      <div class="status-bar">
+        <span class="status-dot dot-off" id="bt-dot"></span>
+        <span id="bt-run-status" style="color:var(--text-secondary)">未运行</span>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-success" id="bt-start-btn" onclick="btStart()">▶ 启动</button>
+        <button class="btn btn-danger" id="bt-stop-btn" onclick="btStop()" disabled>⏹ 停止</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="card">
+    <div class="card-head blue"><span class="card-step">4</span>运行日志</div>
+    <div class="card-body">
+      <div class="log-box" id="bt-log">等待启动...</div>
     </div>
   </div>
 
@@ -3063,6 +3230,12 @@ function bvGetList(listId){
   const inputs=document.getElementById(listId).querySelectorAll('input');
   return Array.from(inputs).map(i=>i.value.trim()).filter(s=>s);
 }
+function bvClear(listId){
+  const list=document.getElementById(listId);
+  const filled=Array.from(list.querySelectorAll('input')).filter(i=>i.value.trim()).length;
+  if(filled&&!confirm(`确定清空 ${filled} 个视频吗？`))return;
+  list.innerHTML='<div class="bv-row"><input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>';
+}
 
 /* ===== 通用：轮询日志 ===== */
 let pollTimers={};
@@ -3178,6 +3351,7 @@ function loadAutoConfig(){
     document.getElementById('auto-act-share').checked=a.share!==false;
     document.getElementById('auto-act-cover').checked=a.cover_comment!==false;
     document.getElementById('auto-act-play').checked=!!a.play_once;
+    document.getElementById('auto-coin-num').value=String(cfg.coin_num==null?2:cfg.coin_num);
     const coinTarget=cfg.coin_target_uid||[];
     const coinTargetArr=Array.isArray(coinTarget)?coinTarget:(coinTarget?[coinTarget]:[]);
     document.getElementById('auto-act-coin-target').checked=coinTargetArr.length>0;
@@ -3235,6 +3409,7 @@ function saveAutoConfig(){
     cfg.interact_own_dynamics=document.getElementById('auto-interact-own').checked;
     const coinTargetUid=document.getElementById('auto-act-coin-target').checked?document.getElementById('auto-coin-target-uid').value.split('\n').map(s=>s.trim()).filter(s=>s):[];
     cfg.coin_target_uid=coinTargetUid;
+    cfg.coin_num=parseInt(document.getElementById('auto-coin-num').value)||2;
     // cfg.schedule 由「定时任务管理」页签统一管理（mgrAutoSave 写入），此处不再覆盖。
     return fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
   }).then(r=>r.json()).then(d=>{
@@ -3919,6 +4094,7 @@ function histLoadActions(){
     document.getElementById('hist-act-share').checked=ha.share!==false;
     document.getElementById('hist-act-cover').checked=ha.cover_comment!==false;
     document.getElementById('hist-act-play').checked=!!ha.play_once;
+    document.getElementById('hist-coin-num').value=String(cfg.coin_num==null?2:cfg.coin_num);
   });
 }
 function histSaveActions(){
@@ -3935,6 +4111,7 @@ function histSaveActions(){
       cover_comment:document.getElementById('hist-act-cover').checked,
       play_once:document.getElementById('hist-act-play').checked,
     };
+    cfg.coin_num=parseInt(document.getElementById('hist-coin-num').value)||2;
     fetch('/api/auto/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)})
       .then(r=>r.json()).then(d=>{
         if(d.success)setText('hist-status-text','动作配置已保存');
@@ -4957,6 +5134,141 @@ function lhStartPoll(){
   },3000);
 }
 
+/* ============================================================
+   TAB 5: 抢电池红包 (bili-battery-redpocket)
+   ============================================================ */
+let btPollTimer=null;
+
+function btLoadConfig(){
+  return fetch('/api/battery/config').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('bt-login-info');
+    if(d._has_login&&d._login_uid){
+      el.innerHTML='已登录 <b>UID: '+d._login_uid+'</b>';
+      el.style.color='var(--success)';
+    } else {
+      el.textContent='未登录';
+      el.style.color='var(--warn)';
+    }
+    document.getElementById('bt-rooms').value=(d.rooms||[]).join('\n');
+    document.getElementById('bt-poll-interval').value=d.poll_interval||1;
+    document.getElementById('bt-only-battery').checked=d.only_battery!==false;
+  }).catch(()=>{});
+  btCheckStatus();
+}
+
+function btShowQR(){
+  const area=document.getElementById('bt-qr-area');
+  area.style.display='block';
+  document.getElementById('bt-qr-status').textContent='生成中...';
+  fetch('/api/redpocket/login/qrcode').then(r=>r.json()).then(d=>{
+    if(d.success){
+      document.getElementById('bt-qr-img').src=d.qr_image;
+      document.getElementById('bt-qr-status').textContent='请用 B站 App 扫描二维码';
+      btStartPollQR(d.qrcode_key);
+    }else{
+      document.getElementById('bt-qr-status').textContent='生成失败: '+d.message;
+    }
+  });
+}
+
+function btStartPollQR(key){
+  if(btPollTimer)clearInterval(btPollTimer);
+  btPollTimer=setInterval(()=>{
+    fetch(`/api/redpocket/login/poll/${key}`).then(r=>r.json()).then(d=>{
+      const st=document.getElementById('bt-qr-status');
+      if(d.success){
+        st.textContent='登录成功！';st.style.color='var(--success)';
+        clearInterval(btPollTimer);
+        document.getElementById('bt-qr-area').style.display='none';
+        const el=document.getElementById('bt-login-info');
+        el.innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
+        el.style.color='var(--success)';
+      }else if(d.status==='waiting'){
+        st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
+      }else if(d.status==='confirming'){
+        st.textContent='已确认，处理中...';st.style.color='var(--warn)';
+      }else{
+        st.textContent=d.message||'未知错误';st.style.color='var(--danger)';
+        if(d.message&&d.message.includes('过期'))clearInterval(btPollTimer);
+      }
+    });
+  },2000);
+}
+
+function btSaveConfig(){
+  const roomsText=document.getElementById('bt-rooms').value.trim();
+  const rooms=roomsText?roomsText.split('\n').map(s=>s.trim()).filter(s=>s):[];
+  const payload={
+    rooms:rooms,
+    poll_interval:parseFloat(document.getElementById('bt-poll-interval').value)||1,
+    only_battery:document.getElementById('bt-only-battery').checked,
+  };
+  fetch('/api/battery/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){alert('配置已保存');}else{alert('保存失败: '+d.message);}
+    });
+}
+
+function btCheckStatus(){
+  fetch('/api/battery/status').then(r=>r.json()).then(d=>{
+    if(d.running){
+      setDot('bt-dot','run');
+      document.getElementById('bt-run-status').textContent='运行中 PID: '+d.pid;
+      document.getElementById('bt-start-btn').disabled=true;
+      document.getElementById('bt-stop-btn').disabled=false;
+      if(d.logs){
+        document.getElementById('bt-log').textContent=d.logs;
+      }
+    }else{
+      setDot('bt-dot','off');
+      document.getElementById('bt-run-status').textContent='未运行';
+      document.getElementById('bt-start-btn').disabled=false;
+      document.getElementById('bt-stop-btn').disabled=true;
+    }
+  });
+}
+
+function btStart(){
+  fetch('/api/battery/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      btStartPoll();
+    }else{
+      alert('启动失败: '+d.message);
+    }
+  });
+}
+
+function btStop(){
+  fetch('/api/battery/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      clearInterval(btPollTimer);
+      btCheckStatus();
+    }else{
+      alert('停止失败: '+d.message);
+    }
+  });
+}
+
+function btStartPoll(){
+  if(btPollTimer)clearInterval(btPollTimer);
+  btPollTimer=setInterval(()=>{
+    fetch('/api/battery/status').then(r=>r.json()).then(d=>{
+      if(d.running){
+        setDot('bt-dot','run');
+        document.getElementById('bt-run-status').textContent='运行中 PID: '+d.pid;
+        document.getElementById('bt-start-btn').disabled=true;
+        document.getElementById('bt-stop-btn').disabled=false;
+        if(d.logs){
+          document.getElementById('bt-log').textContent=d.logs;
+        }
+      }else{
+        clearInterval(btPollTimer);
+        btCheckStatus();
+      }
+    });
+  },3000);
+}
+
 /* ===== 合集助手 ===== */
 let collMatchData = [];  // 保存扫描结果
 let collSeasons = [];    // 保存合集列表，供下拉框使用
@@ -5550,7 +5862,7 @@ function tsSearchAutocomplete(){
 }
 
 function tsHideAutocomplete(){document.getElementById('ts-autocomplete').style.display='none';}
-document.addEventListener('click',e=>{if(!e.target.closest('#ts-search-tags')&&!e.target.closest('#ts-autocomplete'))tsHideAutocomplete();});
+document.addEventListener('click',e=>{if(!e.target.closest('#ts-search-tags')&&!e.target.closest('.tp-tags')&&!e.target.closest('#ts-autocomplete'))tsHideAutocomplete();});
 
 /* ---- 执行搜索 ---- */
 function tsDoSearch(){
@@ -5649,6 +5961,151 @@ function tsCalcStats(){
     btn.disabled=false;btn.textContent='📊 统计选中';
     grid.innerHTML='<div style="color:var(--warn)">请求失败: '+e+'</div>';
   });
+}
+
+/* ---- 通用：按标签添加稿件（booster / player 共用，复用标签助手缓存） ---- */
+const TP_CFG={
+  bst:{listId:'booster-bv-list',tagsId:'bst-pick-tags',inputId:'bst-pick-input',areaId:'bst-tag-pick',resultsId:'bst-tag-results',resListId:'bst-tag-results-list',countId:'bst-tag-count',selAllId:'bst-tag-select-all',modeName:'bst-pick-mode'},
+  pl:{listId:'player-bv-list',tagsId:'pl-pick-tags',inputId:'pl-pick-input',areaId:'pl-tag-pick',resultsId:'pl-tag-results',resListId:'pl-tag-results-list',countId:'pl-tag-count',selAllId:'pl-tag-select-all',modeName:'pl-pick-mode'}
+};
+
+function tpEnsureAllTags(){
+  if(_tsAllTags.length) return Promise.resolve();
+  return fetch('/api/tag-search/all-tags').then(r=>r.json()).then(d=>{
+    if(d&&d.success) _tsAllTags=d.tags||[];
+  }).catch(()=>{});
+}
+
+function tpToggle(p){
+  const c=TP_CFG[p];
+  const area=document.getElementById(c.areaId);
+  const show=area.style.display==='none';
+  area.style.display=show?'block':'none';
+  if(show){tpEnsureAllTags();document.getElementById(c.inputId).focus();}
+  else tsHideAutocomplete();
+}
+
+function tpAddTag(p,text){
+  const c=TP_CFG[p];
+  const container=document.getElementById(c.tagsId);
+  const inp=document.getElementById(c.inputId);
+  const existing=[...container.querySelectorAll('.ts-chip')].map(x=>x.dataset.tag.toLowerCase());
+  if(existing.includes(text.toLowerCase()))return;
+  const chip=document.createElement('span');
+  chip.className='coll-kw-chip ts-chip';
+  chip.dataset.tag=text;
+  chip.innerHTML=`<span>${_escHtml(text)}</span><span class="coll-kw-x" onclick="this.parentElement.remove()">&times;</span>`;
+  container.insertBefore(chip,inp);
+}
+
+function tpGetTags(p){
+  const c=TP_CFG[p];
+  return [...document.getElementById(c.tagsId).querySelectorAll('.ts-chip')].map(x=>x.dataset.tag);
+}
+
+function tpKeydown(e,p){
+  if(e.key==='Enter'||e.key===','){
+    e.preventDefault();
+    const val=e.target.value.replace(/,/g,'').trim();
+    if(val.length>=1)tpAddTag(p,val);
+    e.target.value='';
+    tsHideAutocomplete();
+  }else if(e.key==='Backspace'&&!e.target.value){
+    const chips=document.getElementById(TP_CFG[p].tagsId).querySelectorAll('.ts-chip');
+    if(chips.length)chips[chips.length-1].remove();
+  }
+}
+
+function tpAutocomplete(p){
+  const c=TP_CFG[p];
+  const inp=document.getElementById(c.inputId);
+  const val=inp.value.trim().toLowerCase();
+  const box=document.getElementById('ts-autocomplete');
+  if(!val||_tsAllTags.length===0){tsHideAutocomplete();return;}
+  const existing=new Set(tpGetTags(p).map(t=>t.toLowerCase()));
+  const matches=_tsAllTags.filter(t=>t.name.toLowerCase().includes(val)&&!existing.has(t.name.toLowerCase())).slice(0,20);
+  if(!matches.length){tsHideAutocomplete();return;}
+  box.innerHTML=matches.map(t=>`<div class="ts-ac-item" data-tag="${_escHtml(t.name)}" style="padding:6px 12px;cursor:pointer;font-size:13px;color:var(--text-primary);border-bottom:1px solid var(--input-border)" onmouseenter="this.style.background='var(--input-bg)'" onmouseleave="this.style.background='transparent'">${_escHtml(t.name)} <span style="color:var(--text-tertiary);font-size:11px">(${t.count})</span></div>`).join('');
+  box.querySelectorAll('.ts-ac-item').forEach(el=>{el.onclick=()=>{tpAddTag(p,el.dataset.tag);inp.value='';tsHideAutocomplete();};});
+  const rect=document.getElementById(c.tagsId).getBoundingClientRect();
+  box.style.left=rect.left+'px';
+  box.style.width=rect.width+'px';
+  box.style.top=(rect.bottom+2)+'px';
+  box.style.display='block';
+}
+
+function tpSearch(p){
+  const c=TP_CFG[p];
+  const tags=tpGetTags(p);
+  if(!tags.length){alert('请至少输入一个标签');return;}
+  const mode=document.querySelector(`input[name="${c.modeName}"]:checked`).value;
+  const area=document.getElementById(c.resultsId);
+  const list=document.getElementById(c.resListId);
+  area.style.display='block';
+  document.getElementById(c.selAllId).checked=false;
+  list.innerHTML='<div style="text-align:center;padding:12px;color:var(--text-tertiary)">搜索中...</div>';
+  fetch('/api/tag-search/search',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({tags,mode})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.success){list.innerHTML='<div style="color:var(--warn)">'+(d.message||'搜索失败')+'</div>';return;}
+    document.getElementById(c.countId).textContent=d.count;
+    if(!d.videos||!d.videos.length){
+      list.innerHTML='<div style="text-align:center;padding:12px;color:var(--text-tertiary)">没有匹配的视频（若从未扫描过标签，请先到「标签助手」页签扫描）</div>';
+      return;
+    }
+    list.innerHTML='';
+    d.videos.forEach(v=>{
+      const item=document.createElement('label');
+      item.className='video-pick-item';
+      item.style.cursor='pointer';
+      item.innerHTML=`
+        <input type="checkbox" value="${v.bvid}" onchange="this.closest('.video-pick-item').classList.toggle('selected',this.checked)">
+        <img class="video-pick-thumb" src="${v.pic}@160w_90h.webp" loading="lazy" onerror="this.style.display='none'">
+        <div class="video-pick-info">
+          <div class="video-pick-title">${_escHtml(v.title)}</div>
+          <div class="video-pick-meta">${v.bvid}</div>
+        </div>`;
+      list.appendChild(item);
+    });
+  }).catch(e=>{list.innerHTML='<div style="color:var(--warn)">请求失败: '+e+'</div>';});
+}
+
+function tpToggleAll(p){
+  const c=TP_CFG[p];
+  const checked=document.getElementById(c.selAllId).checked;
+  document.getElementById(c.resListId).querySelectorAll('input[type="checkbox"]').forEach(cb=>{
+    cb.checked=checked;
+    cb.closest('.video-pick-item').classList.toggle('selected',checked);
+  });
+}
+
+function tpAddSelected(p){
+  const c=TP_CFG[p];
+  const checks=document.getElementById(c.resListId).querySelectorAll('input[type="checkbox"]:checked');
+  if(!checks.length){alert('请先勾选要添加的视频');return;}
+  const list=document.getElementById(c.listId);
+  // 清除空的默认行
+  list.querySelectorAll('.bv-row').forEach(row=>{
+    const inp=row.querySelector('input');
+    if(inp&&!inp.value.trim())row.remove();
+  });
+  let added=0;
+  checks.forEach(cb=>{
+    const bvid=cb.value;
+    const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
+    if(existing)return;
+    const row=document.createElement('div');
+    row.className='bv-row';
+    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+    list.appendChild(row);
+    added++;
+  });
+  checks.forEach(cb=>{cb.checked=false;cb.closest('.video-pick-item').classList.remove('selected');});
+  document.getElementById(c.selAllId).checked=false;
+  if(!list.querySelector('.bv-row')){bvAdd(c.listId);}
+  alert(`已添加 ${added} 个视频到列表${added<checks.length?`（${checks.length-added} 个已存在，跳过）`:''}`);
 }
 
 // 初始加载
