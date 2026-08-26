@@ -1871,17 +1871,21 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
     <span class="hero-badge off" id="hero-auto-badge">检测中…</span>
   </div>
 
-  <!-- 登录卡片 -->
+  <!-- 登录卡片（支持多账号） -->
   <div class="card">
-    <div class="card-head pink"><span class="card-step">1</span>账号登录（扫码）</div>
+    <div class="card-head pink"><span class="card-step">1</span>账号登录（扫码，支持多账号）</div>
     <div class="card-body">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span id="auto-login-info" style="color:var(--text-secondary)">未登录</span>
-        <button class="btn btn-outline btn-sm" onclick="autoShowQR()">刷新登录</button>
+        <button class="btn btn-outline btn-sm" onclick="autoShowQR()">扫码添加账号</button>
       </div>
       <div id="auto-qr-box" class="qr-wrap" style="display:none">
         <img id="auto-qr-img" src="" alt="QR">
         <div id="auto-qr-status" class="qr-status">等待扫码…</div>
+      </div>
+      <div id="auto-account-list" style="margin-top:12px"></div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px">
+        多账号按顺序串行运行（共用下方配置）；同一账号重复扫码将刷新其凭证。主账号凭证供「播放一次」等功能复用。
       </div>
     </div>
   </div>
@@ -3452,7 +3456,51 @@ function autoLoadConfig(){
       el.textContent='未登录';
       el.style.color='var(--warn)';
     }
-  });
+  }).then(()=>autoLoadAccounts());
+}
+
+/* --- Auto 多账号管理 --- */
+function autoLoadAccounts(){
+  const box=document.getElementById('auto-account-list');
+  if(!box)return Promise.resolve();
+  return fetch('/api/auto/accounts').then(r=>r.json()).then(d=>{
+    const accs=d.accounts||[];
+    const infoEl=document.getElementById('auto-login-info');
+    if(!accs.length){
+      box.innerHTML='<div style="font-size:12px;color:var(--text-tertiary)">暂无账号，请扫码登录</div>';
+      return;
+    }
+    const primary=accs.find(a=>a.is_primary)||accs[0];
+    if(infoEl){
+      infoEl.innerHTML='已登录 <b>'+accs.length+'</b> 个账号 · 主账号: <b>UID: '+primary.uid+'</b>'+(primary.name?' <span style="color:var(--text-secondary)">· '+_escHtml(primary.name)+'</span>':'');
+      infoEl.style.color='var(--success)';
+    }
+    box.innerHTML=accs.map(a=>{
+      const name=a.name?_escHtml(a.name):'(未命名)';
+      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;margin-top:6px;flex-wrap:wrap">'
+        +'<label title="启用/停用该账号" style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer"><input type="checkbox" '+(a.enabled?'checked':'')+' onchange="autoToggleAccount(\''+a.uid+'\',this.checked)"> 启用</label>'
+        +'<span style="flex:1;font-size:13px;min-width:150px">'+name+' <span style="color:var(--text-tertiary)">UID: '+a.uid+'</span>'
+        +(a.is_primary?' <span style="color:#f7719f;font-size:12px">★主账号</span>':'')
+        +(!a.enabled?' <span style="color:var(--text-tertiary);font-size:12px">(已停用)</span>':'')
+        +'</span>'
+        +(a.is_primary?'':'<button class="btn btn-outline btn-sm" style="padding:2px 8px;font-size:12px" onclick="autoSetPrimary(\''+a.uid+'\')">设为主账号</button>')
+        +'<button class="btn btn-danger btn-sm" style="padding:2px 8px;font-size:12px" onclick="autoRemoveAccount(\''+a.uid+'\')">删除</button>'
+        +'</div>';
+    }).join('');
+  }).catch(()=>{});
+}
+function autoToggleAccount(uid,enabled){
+  fetch('/api/auto/accounts/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:uid,enabled:enabled})})
+    .then(()=>autoLoadAccounts());
+}
+function autoSetPrimary(uid){
+  fetch('/api/auto/accounts/primary',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:uid})})
+    .then(()=>autoLoadAccounts());
+}
+function autoRemoveAccount(uid){
+  if(!confirm('确定删除该账号？'))return;
+  fetch('/api/auto/accounts/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({uid:uid})})
+    .then(()=>autoLoadAccounts());
 }
 function autoShowQR(){
   const box=document.getElementById('auto-qr-box');

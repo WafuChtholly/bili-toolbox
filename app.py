@@ -425,6 +425,70 @@ def _fetch_bili_uname(sessdata: str, uid) -> str:
     return uname
 
 
+# ---- Auto 多账号管理 API ----
+
+@app.route("/api/auto/accounts")
+def auto_accounts_list():
+    """列出所有已登录账号（主账号在前）。"""
+    try:
+        from core import list_accounts, load_enabled_credentials, update_account_name
+        accounts = list_accounts()
+        # 昵称为空的账号按需回填（登录时未写入的场景）
+        missing = [a for a in accounts if not a.get("name")]
+        if missing:
+            cred_map = {uid: cred for uid, cred, _m in load_enabled_credentials()}
+            for a in missing:
+                cred = cred_map.get(a["uid"])
+                if not cred:
+                    continue
+                try:
+                    name = _fetch_bili_uname(cred.sessdata, a["uid"])
+                except Exception:
+                    name = ""
+                if name:
+                    update_account_name(a["uid"], name)
+                    a["name"] = name
+        return jsonify({"success": True, "accounts": accounts})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e), "accounts": []})
+
+
+@app.route("/api/auto/accounts/toggle", methods=["POST"])
+def auto_accounts_toggle():
+    """启用/停用指定账号。"""
+    data = request.json or {}
+    try:
+        from core import set_account_enabled
+        ok = set_account_enabled(str(data.get("uid", "")), bool(data.get("enabled", True)))
+        return jsonify({"success": ok})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/auto/accounts/remove", methods=["POST"])
+def auto_accounts_remove():
+    """删除指定账号。"""
+    data = request.json or {}
+    try:
+        from core import remove_account
+        ok = remove_account(str(data.get("uid", "")))
+        return jsonify({"success": ok})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/auto/accounts/primary", methods=["POST"])
+def auto_accounts_primary():
+    """设置主账号（播放等复用单凭证的功能使用主账号）。"""
+    data = request.json or {}
+    try:
+        from core import set_primary_account
+        ok = set_primary_account(str(data.get("uid", "")))
+        return jsonify({"success": ok})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
 @app.route("/api/auto/login/config")
 def auto_login_config():
     """检查 auto 模块登录状态"""

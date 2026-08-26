@@ -211,8 +211,10 @@ async def qr_poll(session_id: str) -> dict:
         if code == 0:
             cred = _extract_credential_from_qr_url(data.get("url", ""), data.get("refresh_token", ""))
             _save_credential(cred)
+            login_uid = getattr(cred, "dedeuserid", "") or ""
+            uname = await _refresh_account_name(cred, login_uid)
             _qr_login_instances.pop(session_id, None)
-            return {"status": "success", "login_uid": getattr(cred, "dedeuserid", "") or ""}
+            return {"status": "success", "login_uid": login_uid, "uname": uname}
         elif code == 86090:
             return {"status": "scanned", "message": "已扫码，请在手机上确认登录"}
         elif code == 86038:
@@ -228,8 +230,10 @@ async def qr_poll(session_id: str) -> dict:
         if state == QrCodeLoginEvents.DONE:
             cred = login.get_credential()
             _save_credential(cred)
+            login_uid = getattr(cred, "dedeuserid", "") or ""
+            uname = await _refresh_account_name(cred, login_uid)
             _qr_login_instances.pop(session_id, None)
-            return {"status": "success", "login_uid": getattr(cred, "dedeuserid", "") or ""}
+            return {"status": "success", "login_uid": login_uid, "uname": uname}
         elif state == QrCodeLoginEvents.CONF:
             return {"status": "scanned", "message": "已扫码，请在手机上确认登录"}
         elif state == QrCodeLoginEvents.TIMEOUT:
@@ -268,6 +272,11 @@ def _save_credential(cred) -> None:
     }
     CREDENTIAL_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("凭证已保存: %s", CREDENTIAL_FILE)
+    # 同步写入多账号存储（新登录账号成为主账号）
+    try:
+        upsert_account(cred)
+    except Exception as e:
+        logger.warning("同步多账号凭证失败: %s", e)
 
 
 # ---- credential ----
@@ -291,6 +300,221 @@ def load_credential() -> Credential | None:
     except Exception as e:
         logger.warning("读取凭证失败 %s: %s", CREDENTIAL_FILE, e)
         return None
+
+
+# =========================================================================
+#  多账号凭证管理 (multi_credentials.json)
+# =========================================================================
+
+def _load_accounts_data() -> dict:
+    """读取多账号凭证存储文件。"""
+    if MULTI_CREDENTIALS_FILE.exists():
+        try:
+            data = json.loads(MULTI_CREDENTIALS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("accounts"), dict):
+                data.setdefault("primary", "")
+                return data
+        except Exception as e:
+            logger.warning("读取多账号凭证失败 %s: %s", MULTI_CREDENTIALS_FILE, e)
+    return {"accounts": {}, "primary": ""}
+
+
+def _save_accounts_data(data: dict) -> None:
+    MULTI_CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MULTI_CREDENTIALS_FILE.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _migrate_legacy_credential() -> None:
+    """旧单账号 credential.json 迁移到多账号存储（仅当多账号存储为空时）。"""
+    data = _load_accounts_data()
+    if data.get("accounts") or not CREDENTIAL_FILE.exists():
+        return
+    try:
+        legacy = json.loads(CREDENTIAL_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    sessdata = legacy.get("sessdata", "")
+    uid = str(legacy.get("dedeuserid", "") or "")
+    if not sessdata or not uid:
+        return
+    data["accounts"][uid] = {
+        "sessdata": sessdata,
+        "bili_jct": legacy.get("bili_jct", ""),
+        "ac_time_value": legacy.get("ac_time_value", ""),
+        "dedeuserid": uid,
+        "name": legacy.get("name", ""),
+        "enabled": True,
+        "saved_at": legacy.get("saved_at", 0),
+    }
+    data["primary"] = uid
+    _save_accounts_data(data)
+    logger.info("已迁移旧凭证到多账号存储: UID=%s", uid)
+
+
+def upsert_account(cred, name: str = "") -> str:
+    """新增/更新账号到多账号存储；新登录账号默认成为主账号。返回 UID。"""
+    uid = str(getattr(cred, "dedeuserid", "") or "")
+    if not uid:
+        return ""
+    data = _load_accounts_data()
+    acc = data.get("accounts", {}).get(uid, {})
+    acc.update({
+        "sessdata": cred.sessdata or "",
+        "bili_jct": cred.bili_jct or "",
+        "ac_time_value": cred.ac_time_value or "",
+        "dedeuserid": uid,
+        "saved_at": _time.time(),
+    })
+    if name:
+        acc["name"] = name
+    acc.setdefault("name", "")
+    acc.setdefault("enabled", True)
+    data["accounts"][uid] = acc
+    data["primary"] = uid
+    _save_accounts_data(data)
+    return uid
+
+
+def update_account_name(uid, name: str) -> None:
+    """更新账号昵称（运行时从用户信息接口获得）。"""
+    uid = str(uid or "")
+    if not uid or not name:
+        return
+    data = _load_accounts_data()
+    acc = data.get("accounts", {}).get(uid)
+    if acc and acc.get("name") != name:
+        acc["name"] = name
+        _save_accounts_data(data)
+
+
+async def _refresh_account_name(cred, uid) -> str:
+    """登录成功后拉取昵称并写入多账号存储，失败返回空串。"""
+    try:
+        info = await asyncio.wait_for(user.get_self_info(cred), timeout=10)
+        uname = info.get("name", "") if isinstance(info, dict) else ""
+    except Exception:
+        uname = ""
+    if uname:
+        update_account_name(uid, uname)
+    return uname
+
+
+def _write_primary_credential(data: dict) -> None:
+    """把主账号凭证写入 credential.json（兼容播放等复用单凭证的模块）。"""
+    primary = str(data.get("primary", ""))
+    acc = data.get("accounts", {}).get(primary)
+    if not acc or not acc.get("sessdata"):
+        return
+    CREDENTIAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CREDENTIAL_FILE.write_text(json.dumps({
+        "sessdata": acc.get("sessdata", ""),
+        "bili_jct": acc.get("bili_jct", ""),
+        "ac_time_value": acc.get("ac_time_value", ""),
+        "buvid3": "",
+        "buvid4": "",
+        "dedeuserid": primary,
+        "name": acc.get("name", ""),
+        "saved_at": acc.get("saved_at", 0),
+    }, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def list_accounts() -> list:
+    """列出所有账号（主账号在前，其余按登录时间倒序）。"""
+    _migrate_legacy_credential()
+    data = _load_accounts_data()
+    primary = str(data.get("primary", ""))
+    result = []
+    for uid, acc in data.get("accounts", {}).items():
+        result.append({
+            "uid": uid,
+            "name": acc.get("name", ""),
+            "enabled": acc.get("enabled", True),
+            "is_primary": uid == primary,
+            "saved_at": acc.get("saved_at", 0),
+            "has_sessdata": bool(acc.get("sessdata")),
+        })
+    result.sort(key=lambda a: (not a["is_primary"], -float(a.get("saved_at") or 0)))
+    return result
+
+
+def set_account_enabled(uid, enabled: bool) -> bool:
+    """启用/停用指定账号。"""
+    uid = str(uid or "")
+    data = _load_accounts_data()
+    acc = data.get("accounts", {}).get(uid)
+    if not acc:
+        return False
+    acc["enabled"] = bool(enabled)
+    _save_accounts_data(data)
+    return True
+
+
+def remove_account(uid) -> bool:
+    """删除账号；若删除的是主账号，自动提升最近登录的账号为主账号。"""
+    uid = str(uid or "")
+    data = _load_accounts_data()
+    if uid not in data.get("accounts", {}):
+        return False
+    del data["accounts"][uid]
+    if data.get("primary") == uid:
+        remaining = sorted(
+            data["accounts"].items(),
+            key=lambda kv: -float(kv[1].get("saved_at") or 0),
+        )
+        data["primary"] = remaining[0][0] if remaining else ""
+        if data["primary"]:
+            _save_accounts_data(data)
+            _write_primary_credential(data)
+        else:
+            _save_accounts_data(data)
+            if CREDENTIAL_FILE.exists():
+                try:
+                    CREDENTIAL_FILE.unlink()
+                except OSError:
+                    pass
+    else:
+        _save_accounts_data(data)
+    return True
+
+
+def set_primary_account(uid) -> bool:
+    """设置主账号，并同步 credential.json。"""
+    uid = str(uid or "")
+    data = _load_accounts_data()
+    if uid not in data.get("accounts", {}):
+        return False
+    data["primary"] = uid
+    _save_accounts_data(data)
+    _write_primary_credential(data)
+    return True
+
+
+def load_enabled_credentials() -> list:
+    """加载所有启用账号的凭证，返回 [(uid, Credential, meta), ...]，主账号在前。"""
+    _migrate_legacy_credential()
+    data = _load_accounts_data()
+    primary = str(data.get("primary", ""))
+    accounts = data.get("accounts", {})
+    ordered = sorted(
+        accounts.items(),
+        key=lambda kv: (kv[0] != primary, -float(kv[1].get("saved_at") or 0)),
+    )
+    result = []
+    for uid, acc in ordered:
+        if not acc.get("enabled", True):
+            continue
+        sessdata = acc.get("sessdata", "")
+        if not sessdata:
+            continue
+        cred = Credential(
+            sessdata=sessdata,
+            bili_jct=acc.get("bili_jct", ""),
+            ac_time_value=acc.get("ac_time_value", ""),
+        )
+        result.append((uid, cred, {"name": acc.get("name", "")}))
+    return result
 
 
 # 兼容旧调用（CLI 模式下不再需要）
@@ -346,19 +570,59 @@ def load_config() -> dict:
     return _DEFAULT_CONFIG.copy()
 
 
-# ---- processed dynamics ----
-def load_processed() -> set[str]:
-    if PROCESSED_FILE.exists():
+# ---- processed dynamics（按账号隔离） ----
+def _account_state_dir(uid) -> Path:
+    return CONFIG_DIR / "accounts" / str(uid)
+
+
+def _processed_file(uid) -> Path:
+    return _account_state_dir(uid) / "processed_dynamics.json"
+
+
+def _interacted_file(uid) -> Path:
+    return _account_state_dir(uid) / "interacted_bvids.json"
+
+
+def _primary_uid() -> str:
+    return str(_load_accounts_data().get("primary", ""))
+
+
+def load_processed(uid) -> set[str]:
+    """加载指定账号的已处理动态记录；主账号兼容回退旧的全局文件。"""
+    pf = _processed_file(uid)
+    if not pf.exists() and str(uid) == _primary_uid() and PROCESSED_FILE.exists():
+        pf = PROCESSED_FILE
+    if pf.exists():
         try:
-            return set(json.loads(PROCESSED_FILE.read_text()).get("ids", []))
+            return set(json.loads(pf.read_text()).get("ids", []))
         except Exception:
             pass
     return set()
 
 
-def save_processed(ids: set[str]) -> None:
-    PROCESSED_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROCESSED_FILE.write_text(json.dumps({"ids": list(ids)}, ensure_ascii=False))
+def save_processed(uid, ids: set) -> None:
+    pf = _processed_file(uid)
+    pf.parent.mkdir(parents=True, exist_ok=True)
+    pf.write_text(json.dumps({"ids": list(ids)}, ensure_ascii=False))
+
+
+def load_interacted(uid) -> dict:
+    """加载指定账号的当日已互动 BV 记录；主账号兼容回退旧的全局文件。"""
+    f = _interacted_file(uid)
+    if not f.exists() and str(uid) == _primary_uid() and INTERACTED_BVIDS_FILE.exists():
+        f = INTERACTED_BVIDS_FILE
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def save_interacted(uid, interacted_data: dict) -> None:
+    f = _interacted_file(uid)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(interacted_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ---- feed ----
@@ -1028,23 +1292,23 @@ async def post_cover_comment(bvid: str, aid: int, cred: Credential, v: video.Vid
     logger.warning("⚠️ 封面评论发送失败: %s — %s", bvid, last_err)
 
 
-# ---- default favorite folder cache ----
-_default_fav_folder_id: int | None = None
+# ---- default favorite folder cache（按账号缓存，避免多账号收藏到错误收藏夹） ----
+_default_fav_folder_cache: dict = {}  # str(uid) -> folder_id
 _coin_captcha_warned: bool = False
 
 
 async def _get_default_fav_folder(cred: Credential, my_uid: int) -> int | None:
-    """Get user's default favorite folder ID, cached after first call."""
-    global _default_fav_folder_id
-    if _default_fav_folder_id is not None:
-        return _default_fav_folder_id
+    """Get user's default favorite folder ID, cached per account after first call."""
+    key = str(my_uid)
+    if key in _default_fav_folder_cache:
+        return _default_fav_folder_cache[key]
     try:
         from bilibili_api import favorite_list
         result = await favorite_list.get_video_favorite_list(uid=my_uid, credential=cred)
         folders = result.get("list", [])
         if folders:
-            _default_fav_folder_id = folders[0]["id"]
-            return _default_fav_folder_id
+            _default_fav_folder_cache[key] = folders[0]["id"]
+            return _default_fav_folder_cache[key]
     except Exception as e:
         logger.warning("获取默认收藏夹失败: %s", e)
     return None
@@ -1243,13 +1507,13 @@ async def interact_with_video(
     return results
 
 
-# ---- main entry ----
+# ---- main entry（多账号串行轮转） ----
 async def run_once(
     stop_event: threading.Event | None = None,
     on_interact=None,
     extra_handler=None,
 ) -> None:
-    """Single execution entry point. Set stop_event to abort gracefully.
+    """Single execution entry point (multi-account serial). Set stop_event to abort gracefully.
     on_interact: optional callback(bvid) called when a video is interacted with.
     extra_handler: optional logging.Handler (or list of handlers) for direct log routing
                    (e.g. WebUI TaskLogHandler). When provided, replaces stdout handler.
@@ -1260,7 +1524,7 @@ async def run_once(
 
     _formatter = logging.Formatter("[%(asctime)s] [AUTO] %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 
-    # 清除旧 handlers，重新配置
+    # 清除旧 handlers，重新配置（整个多账号轮次只配置一次）
     logger.handlers.clear()
 
     # 如果有外部 handler（WebUI 场景），用它替代 stdout handler，避免线程安全问题
@@ -1283,7 +1547,7 @@ async def run_once(
     logger.setLevel(logging.INFO)
 
     logger.info("=" * 40)
-    logger.info("启动 B站自动互动")
+    logger.info("启动 B站自动互动（多账号串行模式）")
 
     cfg = load_config()
     list_mode = cfg.get("list_mode", "blacklist")  # "blacklist" | "whitelist"
@@ -1306,10 +1570,62 @@ async def run_once(
         if blacklist:
             logger.info("🚫 黑名单: %s 个 UID", len(blacklist))
 
-    cred = load_credential()
-    if not cred:
+    accounts = load_enabled_credentials()
+    if not accounts:
         logger.info("未找到凭证，请在页面上扫码登录后重试")
         return
+    logger.info("👥 本次将串行运行 %d 个启用账号", len(accounts))
+
+    summaries: list = []
+    total_accounts = len(accounts)
+    for i, (uid, cred, meta) in enumerate(accounts):
+        if _stop.is_set():
+            logger.info("⏹️ 用户中断，停止运行")
+            break
+        # 账号之间短暂休息，降低风控风险
+        if i > 0 and await _interruptible_sleep(random.uniform(5, 10), _stop):
+            logger.info("⏹️ 用户中断，停止运行")
+            break
+        logger.info("")
+        logger.info("👤 [%d/%d] 账号: %s (UID=%s)", i + 1, total_accounts, meta.get("name") or uid, uid)
+        summaries.append(await _run_account(uid, cred, cfg, _stop, on_interact))
+
+    # ── 多账号汇总 ──
+    logger.info("")
+    logger.info("━" * 40)
+    logger.info("📊 多账号执行汇总")
+    logger.info("━" * 40)
+    for s in summaries:
+        if s.get("stopped"):
+            status = "🛑 已中断"
+        elif s.get("error"):
+            status = "⚠️ " + s["error"]
+        else:
+            status = "✅ 完成"
+        logger.info("  👤 %s (UID=%s): 新动态 %d / 已互动 %d — %s",
+                    s.get("name") or s["uid"], s["uid"], s.get("new", 0), s.get("interacted", 0), status)
+    logger.info("━" * 40)
+
+
+async def _run_account(
+    uid: str,
+    cred: Credential,
+    cfg: dict,
+    _stop: threading.Event,
+    on_interact=None,
+) -> dict:
+    """对单个账号执行完整动态互动流程，返回该账号统计摘要。"""
+    summary = {"uid": uid, "name": "", "new": 0, "interacted": 0, "stopped": False, "error": ""}
+
+    list_mode = cfg.get("list_mode", "blacklist")  # "blacklist" | "whitelist"
+    blacklist = set(str(u) for u in cfg.get("blacklist", []))
+    whitelist = set(str(u) for u in cfg.get("whitelist", []))
+    interact_own = cfg.get("interact_own_dynamics", True)
+    coin_target = cfg.get("coin_target_uid", [])
+    if isinstance(coin_target, str):
+        coin_target = [coin_target] if coin_target else []
+    coin_target_set = set(str(u) for u in coin_target)
+    actions = cfg.get("actions", {})
 
     # buvid3/buvid4 由 bilibili_api 的 auto_buvid 自动处理，不手动获取
 
@@ -1318,33 +1634,37 @@ async def run_once(
         me = await asyncio.wait_for(user.get_self_info(cred), timeout=30)
         if not me or not isinstance(me, dict):
             logger.error("获取用户信息失败: 返回数据异常 (%s)，请重新登录", type(me).__name__)
-            return
+            summary["error"] = "获取用户信息失败"
+            return summary
         my_uid = me.get("mid")
+        summary["name"] = me.get("name", "") or ""
+        update_account_name(uid, summary["name"])
         logger.info("登录用户: %s (UID=%s)", me.get("name"), my_uid)
     except asyncio.TimeoutError:
         logger.error("获取用户信息超时(30s)，请检查网络或重新登录")
-        return
+        summary["error"] = "获取用户信息超时"
+        return summary
     except Exception as e:
         logger.error("获取用户信息失败: [%s] %s", type(e).__name__, e)
-        logger.error("凭证可能已失效，请在页面上重新扫码登录")
-        return
+        logger.error("该账号凭证可能已失效，请停用该账号或重新登录")
+        summary["error"] = "凭证失效"
+        return summary
 
     try:
         dynamics = await get_feed_dynamics(cred)
     except Exception as e:
         logger.error("获取动态失败: %s", e)
-        return
+        summary["error"] = "获取动态失败"
+        return summary
     logger.info("获取到 %d 条视频动态", len(dynamics))
     if not dynamics:
         logger.info("无视频动态")
-        return
+        return summary
 
-    processed = load_processed()
+    processed = load_processed(uid)
 
     today = time.strftime("%Y-%m-%d")
-    interacted_data: dict = {}
-    if INTERACTED_BVIDS_FILE.exists():
-        interacted_data = json.loads(INTERACTED_BVIDS_FILE.read_text(encoding="utf-8"))
+    interacted_data: dict = load_interacted(uid)
     if interacted_data.get("_date") != today:
         interacted_data = {"_date": today, "bvids": []}
     seen_bvids: set[str] = set(interacted_data.get("bvids", []))
@@ -1358,9 +1678,10 @@ async def run_once(
     }
     new_dynamics = [d for d in dynamics if d["dynamic_id"] not in processed]
     logger.info("📬 本次扫描: %d 条动态，其中 %d 条新动态待处理", len(dynamics), len(new_dynamics))
+    summary["new"] = len(new_dynamics)
     if not new_dynamics:
         logger.info("✅ 无新动态需要处理")
-        return
+        return summary
     logger.info("")
 
     # 统计数据
@@ -1477,12 +1798,9 @@ async def run_once(
             stats["stopped"] = True
             break
 
-    save_processed(processed)
+    save_processed(uid, processed)
     interacted_data["bvids"] = sorted(seen_bvids)
-    INTERACTED_BVIDS_FILE.write_text(
-        json.dumps(interacted_data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    save_interacted(uid, interacted_data)
 
     # ── 结果汇总 ──
     _ACTION_NAMES = {
@@ -1510,6 +1828,10 @@ async def run_once(
     if stats["stopped"]:
         logger.info("🛑 状态: 用户中断")
     logger.info("━" * 40)
+
+    summary["interacted"] = stats["interacted"]
+    summary["stopped"] = stats["stopped"]
+    return summary
 
 
 # =========================================================================
@@ -1640,22 +1962,49 @@ async def run_history_interact(
     logger.setLevel(logging.INFO)
 
     logger.info("=" * 40)
-    logger.info("启动历史投稿互动模式")
+    logger.info("启动历史投稿互动模式（多账号串行模式）")
     logger.info("目标用户: %d 个，时间范围: %d 天内", len(target_uids), days)
 
     cfg = load_config()
     # 历史投稿使用独立的 history_actions 配置，回退到通用 actions
     history_actions = cfg.get("history_actions", cfg.get("actions", {}))
-    # 构建传给 interact_with_video 的配置，用 history_actions 覆盖 actions
-    hist_cfg = dict(cfg)
-    hist_cfg["actions"] = history_actions
     enabled = [k for k, v in history_actions.items() if v]
     logger.info("启用动作: %s", ", ".join(enabled) if enabled else "无")
 
-    cred = load_credential()
-    if not cred:
+    accounts = load_enabled_credentials()
+    if not accounts:
         logger.info("未找到凭证，请在页面上扫码登录后重试")
         return
+    logger.info("👥 本次将串行运行 %d 个启用账号", len(accounts))
+
+    total_accounts = len(accounts)
+    for i, (acc_uid, cred, meta) in enumerate(accounts):
+        if _stop.is_set():
+            logger.info("⏹️ 用户中断，停止运行")
+            break
+        # 账号之间短暂休息，降低风控风险
+        if i > 0 and await _interruptible_sleep(random.uniform(5, 10), _stop):
+            logger.info("⏹️ 用户中断，停止运行")
+            break
+        logger.info("")
+        logger.info("👤 [%d/%d] 账号: %s (UID=%s)", i + 1, total_accounts, meta.get("name") or acc_uid, acc_uid)
+        await _run_history_account(acc_uid, cred, cfg, target_uids, days, _stop, on_interact)
+
+
+async def _run_history_account(
+    uid: str,
+    cred: Credential,
+    cfg: dict,
+    target_uids: list,
+    days: int,
+    _stop: threading.Event,
+    on_interact=None,
+) -> None:
+    """对单个账号，逐个互动目标用户在时间范围内的投稿。"""
+    # 构建传给 interact_with_video 的配置，用 history_actions 覆盖 actions
+    history_actions = cfg.get("history_actions", cfg.get("actions", {}))
+    hist_cfg = dict(cfg)
+    hist_cfg["actions"] = history_actions
 
     # 获取登录用户信息
     logger.info("正在获取用户信息...")
@@ -1665,37 +2014,36 @@ async def run_history_interact(
             logger.error("获取用户信息失败: 返回数据异常 (%s)，请重新登录", type(me).__name__)
             return
         my_uid = me.get("mid")
+        update_account_name(uid, me.get("name", "") or "")
         logger.info("登录用户: %s (UID=%s)", me.get("name"), my_uid)
     except asyncio.TimeoutError:
         logger.error("获取用户信息超时(30s)，请检查网络或重新登录")
         return
     except Exception as e:
         logger.error("获取用户信息失败: [%s] %s", type(e).__name__, e)
-        logger.error("凭证可能已失效，请在页面上重新扫码登录")
+        logger.error("该账号凭证可能已失效，请停用该账号或重新登录")
         return
 
-    # 加载已互动记录
+    # 加载已互动记录（按账号隔离）
     today = time.strftime("%Y-%m-%d")
-    interacted_data: dict = {}
-    if INTERACTED_BVIDS_FILE.exists():
-        interacted_data = json.loads(INTERACTED_BVIDS_FILE.read_text(encoding="utf-8"))
+    interacted_data: dict = load_interacted(uid)
     if interacted_data.get("_date") != today:
         interacted_data = {"_date": today, "bvids": []}
     seen_bvids: set[str] = set(interacted_data.get("bvids", []))
 
     # 拉取所有目标用户的投稿
     all_videos: list[dict] = []
-    for uid in target_uids:
+    for tuid in target_uids:
         if _stop.is_set():
             logger.info("⏹️ 用户中断，停止拉取投稿")
             break
-        logger.info("正在拉取用户 UID=%d 的投稿...", uid)
+        logger.info("正在拉取用户 UID=%d 的投稿...", tuid)
         try:
-            videos = await get_user_videos_in_range(uid, cred, days)
+            videos = await get_user_videos_in_range(tuid, cred, days)
             logger.info("  获取到 %d 个视频（%d天内）", len(videos), days)
             all_videos.extend(videos)
         except Exception as e:
-            logger.warning("拉取用户 UID=%d 投稿失败: %s", uid, e)
+            logger.warning("拉取用户 UID=%d 投稿失败: %s", tuid, e)
 
     if not all_videos:
         logger.info("未找到符合条件的投稿")
@@ -1805,12 +2153,9 @@ async def run_history_interact(
             stats["stopped"] = True
             break
 
-    # 保存已互动记录
+    # 保存已互动记录（按账号隔离）
     interacted_data["bvids"] = sorted(seen_bvids)
-    INTERACTED_BVIDS_FILE.write_text(
-        json.dumps(interacted_data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    save_interacted(uid, interacted_data)
 
     # ── 结果汇总 ──
     _ACTION_NAMES = {
