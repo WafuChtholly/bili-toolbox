@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parent
 # booster 模块在启动时通过 importlib 一次性加载（见 booster 章节）
 sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
+sys.path.insert(0, str(ROOT / "bili-cat"))
 
 # Windows 控制台安全输出：避免 print() 因编码/fd 问题抛 [Errno 22] 导致业务中断
 class _SafeStream:
@@ -391,6 +392,39 @@ def _read_auto_cred():
     return {}
 
 
+# ---- B站用户名查询（内存缓存 10 分钟） ----
+_UNAME_CACHE: dict = {}
+
+
+def _fetch_bili_uname(sessdata: str, uid) -> str:
+    """通过 nav 接口查询 UID 对应用户名；失败或无凭证返回空串。"""
+    uid = str(uid or "")
+    if not uid or not sessdata:
+        return ""
+    now = time.time()
+    hit = _UNAME_CACHE.get(uid)
+    if hit and now - hit[1] < 600:
+        return hit[0]
+    uname = ""
+    try:
+        import httpx
+        resp = httpx.get(
+            "https://api.bilibili.com/x/web-interface/nav",
+            cookies={"SESSDATA": sessdata},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Referer": "https://www.bilibili.com/",
+            },
+            timeout=8,
+        )
+        uname = str((resp.json().get("data") or {}).get("uname") or "")
+    except Exception:
+        uname = ""
+    if uname:
+        _UNAME_CACHE[uid] = (uname, now)
+    return uname
+
+
 @app.route("/api/auto/login/config")
 def auto_login_config():
     """检查 auto 模块登录状态"""
@@ -398,10 +432,11 @@ def auto_login_config():
         data = _read_auto_cred()
         if data.get("sessdata"):
             uid = data.get("mid") or data.get("login_uid") or data.get("dedeuserid") or data.get("uid", "")
-            return jsonify({"login_uid": str(uid) if uid else ""})
+            return jsonify({"login_uid": str(uid) if uid else "",
+                            "uname": _fetch_bili_uname(data.get("sessdata", ""), uid)})
     except Exception:
         pass
-    return jsonify({"login_uid": ""})
+    return jsonify({"login_uid": "", "uname": ""})
 
 
 @app.route("/api/auto/login/qrcode")
@@ -1679,6 +1714,7 @@ def player_config():
                 {
                     "login_uid": str(a.get("login_uid", "")),
                     "has_sessdata": bool(a.get("sessdata")),
+                    "uname": _fetch_bili_uname(a.get("sessdata", ""), a.get("login_uid", "")),
                 }
                 for a in accounts
             ],
@@ -4182,7 +4218,443 @@ def tag_search_stats():
 
 
 # =========================================================================
-#  八、前端入口
+#  八、粉丝节养猫 (bili-cat)
+# =========================================================================
+
+CAT_CONFIG_FILE = CONFIG_DIR / "cat_config.yaml"
+CAT_DATA_DIR = ROOT / "data" / "bili-cat"
+CAT_MEDALS_FILE = CAT_DATA_DIR / "cat_medals.json"
+CAT_PROGRESS_FILE = CAT_DATA_DIR / "cat_progress.json"
+
+_CAT_DEFAULT_OPTIONS = {
+    "sign": True, "feedBanner": False, "feed": True,
+    "pet": True, "petTop20": False, "petAll": False,
+}
+
+cat_task_status: dict = {}
+cat_stop_events: dict = {}
+_cat_run_lock = threading.Lock()
+_cat_fetch_state = {"running": False}
+
+
+def _load_cat_config() -> dict:
+    import yaml
+    cfg = {}
+    if CAT_CONFIG_FILE.exists():
+        try:
+            with open(CAT_CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+        except Exception:
+            cfg = {}
+    cfg.setdefault("selected", [])
+    cfg.setdefault("exclude_dead", False)
+    options = cfg.setdefault("options", {})
+    for k, v in _CAT_DEFAULT_OPTIONS.items():
+        options.setdefault(k, v)
+    return cfg
+
+
+def _save_cat_config(cfg: dict):
+    import yaml
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(CAT_CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+
+def _load_cat_medals_raw() -> dict:
+    if CAT_MEDALS_FILE.exists():
+        try:
+            data = json.loads(CAT_MEDALS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data.get("medals"), list):
+                return data
+        except Exception:
+            pass
+    return {"medals": [], "updated_at": None}
+
+
+def _save_cat_medals(medals: list, updated_at: str):
+    CAT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    CAT_MEDALS_FILE.write_text(
+        json.dumps({"medals": medals, "updated_at": updated_at}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def _load_cat_progress() -> dict:
+    """读取当日养猫进度，跨天自动重置。"""
+    today = time.strftime("%Y-%m-%d")
+    if CAT_PROGRESS_FILE.exists():
+        try:
+            p = json.loads(CAT_PROGRESS_FILE.read_text(encoding="utf-8"))
+            if p.get("date") == today and isinstance(p.get("completed_ruids"), list):
+                return p
+        except Exception:
+            pass
+    return {"date": today, "completed_ruids": []}
+
+
+def _save_cat_progress(progress: dict):
+    CAT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    CAT_PROGRESS_FILE.write_text(
+        json.dumps(progress, ensure_ascii=False), encoding="utf-8")
+
+
+def _cat_cookies_from_cred() -> dict:
+    """从 auto 模块凭证构建养猫所需 cookies。"""
+    cred = _read_auto_cred()
+    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
+    return {
+        "SESSDATA": cred.get("sessdata", ""),
+        "bili_jct": cred.get("bili_jct", ""),
+        "DedeUserID": uid,
+    }
+
+
+def _run_cat_task(task_id: str, stop_event: threading.Event, mirror: str | None = None):
+    """后台线程执行养猫主循环。mirror 为可选的日志镜像目标（如定时任务日志）。"""
+    def _emit(line: str):
+        _append_log(task_id, line)
+        if mirror:
+            _append_log(mirror, line)
+
+    if not _cat_run_lock.acquire(blocking=False):
+        cat_task_status[task_id]["status"] = "error"
+        _emit("[SYSTEM] 已有养猫任务在运行，请等待完成后再试")
+        cat_task_status[task_id]["end"] = time.time()
+        return
+
+    cat_task_status[task_id]["status"] = "running"
+
+    def _log(line: str):
+        _emit(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
+
+    try:
+        from cat_helper import run_cat_loop
+
+        cookies = _cat_cookies_from_cred()
+        if not cookies["SESSDATA"]:
+            raise RuntimeError("未登录，请先在「自动互动」页扫码登录")
+
+        cfg = _load_cat_config()
+        medals = _load_cat_medals_raw().get("medals", [])
+        progress = _load_cat_progress()
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(run_cat_loop(
+                cookies=cookies,
+                options=cfg.get("options", {}),
+                selected_ruids=cfg.get("selected", []),
+                medals=medals,
+                progress=progress,
+                save_progress=_save_cat_progress,
+                log=_log,
+                stop_event=stop_event,
+            ))
+        finally:
+            loop.close()
+        cat_task_status[task_id]["status"] = "completed"
+    except Exception as e:
+        _emit(f"[ERROR] {e}")
+        cat_task_status[task_id]["status"] = "error"
+    finally:
+        cat_task_status[task_id]["end"] = time.time()
+        _cat_run_lock.release()
+
+
+@app.route("/api/cat/login")
+def cat_login_status():
+    cred = _read_auto_cred()
+    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
+    return jsonify({"logged_in": bool(cred.get("sessdata")), "uid": uid,
+                    "uname": _fetch_bili_uname(cred.get("sessdata", ""), uid)})
+
+
+@app.route("/api/cat/config", methods=["GET"])
+def cat_config_get():
+    cfg = _load_cat_config()
+    medals_data = _load_cat_medals_raw()
+    cred = _read_auto_cred()
+    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
+    return jsonify({
+        "options": cfg.get("options", {}),
+        "selected": cfg.get("selected", []),
+        "exclude_dead": cfg.get("exclude_dead", False),
+        "medals": medals_data.get("medals", []),
+        "medals_updated_at": medals_data.get("updated_at"),
+        "progress": _load_cat_progress(),
+        "logged_in": bool(cred.get("sessdata")),
+        "uid": uid,
+        "uname": _fetch_bili_uname(cred.get("sessdata", ""), uid),
+    })
+
+
+@app.route("/api/cat/config", methods=["POST"])
+def cat_config_save():
+    data = request.json or {}
+    cfg = _load_cat_config()
+    if "selected" in data:
+        sel = data.get("selected") or []
+        cfg["selected"] = [str(r) for r in sel if str(r)]
+    if "options" in data and isinstance(data.get("options"), dict):
+        for k in _CAT_DEFAULT_OPTIONS:
+            if k in data["options"]:
+                cfg["options"][k] = bool(data["options"][k])
+    if "exclude_dead" in data:
+        cfg["exclude_dead"] = bool(data.get("exclude_dead"))
+    _save_cat_config(cfg)
+    return jsonify({"success": True})
+
+
+@app.route("/api/cat/fetch-medals", methods=["POST"])
+def cat_fetch_medals():
+    """同步拉取全部粉丝牌（可能耗时，前端需等待）。"""
+    if _cat_fetch_state["running"]:
+        return jsonify({"success": False, "message": "正在拉取中，请稍候"}), 409
+    for st in cat_task_status.values():
+        if st["status"] == "running":
+            return jsonify({"success": False, "message": "养猫任务运行中，请先停止"}), 409
+
+    cookies = _cat_cookies_from_cred()
+    if not cookies["SESSDATA"]:
+        return jsonify({"success": False, "message": "未登录，请先在「自动互动」页扫码登录"})
+
+    _cat_fetch_state["running"] = True
+    try:
+        from cat_helper import fetch_all_medals
+        loop = asyncio.new_event_loop()
+        try:
+            medals = loop.run_until_complete(fetch_all_medals(
+                cookies, log=lambda m: print(f"[CAT] {m}", flush=True)))
+        finally:
+            loop.close()
+        updated_at = datetime.now().isoformat(timespec="seconds")
+        _save_cat_medals(medals, updated_at)
+        return jsonify({"success": True, "count": len(medals), "updated_at": updated_at})
+    except Exception as e:
+        return jsonify({"success": False, "message": f"拉取粉丝牌失败: {e}"})
+    finally:
+        _cat_fetch_state["running"] = False
+
+
+@app.route("/api/cat/run", methods=["POST"])
+def cat_run():
+    for st in cat_task_status.values():
+        if st["status"] == "running":
+            return jsonify({"error": "已有养猫任务在运行"}), 409
+    if _cat_fetch_state["running"]:
+        return jsonify({"error": "正在拉取粉丝牌，请稍候"}), 409
+
+    # 运行前保存前端传来的最新配置
+    data = request.json or {}
+    if "selected" in data or "options" in data:
+        cfg = _load_cat_config()
+        if "selected" in data:
+            cfg["selected"] = [str(r) for r in (data.get("selected") or []) if str(r)]
+        if "options" in data and isinstance(data.get("options"), dict):
+            for k in _CAT_DEFAULT_OPTIONS:
+                if k in data["options"]:
+                    cfg["options"][k] = bool(data["options"][k])
+        _save_cat_config(cfg)
+
+    cfg = _load_cat_config()
+    if not cfg.get("selected"):
+        return jsonify({"error": "请先选择至少一个粉丝牌"}), 400
+    if not any(cfg.get("options", {}).get(k) for k in _CAT_DEFAULT_OPTIONS):
+        return jsonify({"error": "请至少勾选一项功能开关"}), 400
+
+    tid = str(uuid.uuid4())[:8]
+    cat_task_status[tid] = {"status": "queued", "start": time.time(), "end": None}
+    stop_event = threading.Event()
+    cat_stop_events[tid] = stop_event
+    with log_lock:
+        log_buffers[tid] = []
+    t = threading.Thread(target=_run_cat_task, args=(tid, stop_event), daemon=True)
+    t.start()
+    return jsonify({"task_id": tid})
+
+
+@app.route("/api/cat/status/<task_id>")
+def cat_status(task_id):
+    st = cat_task_status.get(task_id)
+    if not st:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({**st, "output": _get_log(task_id)})
+
+
+@app.route("/api/cat/stop", methods=["POST"])
+def cat_stop():
+    data = request.json or {}
+    task_id = data.get("task_id")
+    stopped = 0
+    for tid, st in cat_task_status.items():
+        if st["status"] == "running" and tid in cat_stop_events:
+            if task_id and tid != task_id:
+                continue
+            cat_stop_events[tid].set()
+            _append_log(tid, "[SYSTEM] 正在停止，将在当前动作结束后保存进度...")
+            stopped += 1
+    return jsonify({"success": True, "stopped": stopped})
+
+
+@app.route("/api/cat/progress/clear", methods=["POST"])
+def cat_progress_clear():
+    for st in cat_task_status.values():
+        if st["status"] == "running":
+            return jsonify({"success": False, "message": "任务运行中，不能清空今日进度"}), 409
+    _save_cat_progress({"date": time.strftime("%Y-%m-%d"), "completed_ruids": []})
+    return jsonify({"success": True})
+
+
+@app.route("/api/cat/overview")
+def cat_overview():
+    """总览页卡片数据。"""
+    cred = _read_auto_cred()
+    cfg = _load_cat_config()
+    medals_data = _load_cat_medals_raw()
+    progress = _load_cat_progress()
+    completed = set(str(r) for r in progress.get("completed_ruids", []))
+    selected = [str(r) for r in cfg.get("selected", [])]
+    return jsonify({
+        "logged_in": bool(cred.get("sessdata")),
+        "medals_count": len(medals_data.get("medals", [])),
+        "selected_count": len(selected),
+        "done": len([r for r in selected if r in completed]),
+        "total": len(selected),
+        "running": any(st["status"] == "running" for st in cat_task_status.values()),
+    })
+
+
+# ---- 养猫定时任务：每天定点执行一次 ----
+_cat_schedule = {
+    "running": False,
+    "stop_event": threading.Event(),
+    "last_run": None,
+    "next_run": None,
+}
+
+
+def _cat_any_running() -> bool:
+    return any(st["status"] in ("queued", "running") for st in cat_task_status.values())
+
+
+def _cat_schedule_time_str() -> str:
+    t = str((_load_cat_config().get("schedule") or {}).get("time", "08:00"))
+    try:
+        hh, mm = t.split(":")
+        if 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59:
+            return f"{int(hh):02d}:{int(mm):02d}"
+    except Exception:
+        pass
+    return "08:00"
+
+
+def _cat_schedule_next_ts(time_str: str) -> float:
+    hh, mm = (int(x) for x in time_str.split(":"))
+    now = datetime.now()
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target.timestamp()
+
+
+def _cat_schedule_spawn_task() -> None:
+    """定时触发：创建一次养猫任务（日志镜像到 cat-schedule）。"""
+    tid = str(uuid.uuid4())[:8]
+    cat_task_status[tid] = {"status": "queued", "start": time.time(), "end": None}
+    stop_event = threading.Event()
+    cat_stop_events[tid] = stop_event
+    with log_lock:
+        log_buffers[tid] = []
+    _append_log("cat-schedule", f"已创建养猫任务 {tid}，执行进度见「粉丝节养猫」页或本日志")
+    threading.Thread(target=_run_cat_task, args=(tid, stop_event, "cat-schedule"), daemon=True).start()
+
+
+def _cat_schedule_loop():
+    """养猫定时任务主循环：每天到点执行一次；若已有养猫任务在运行则跳过。"""
+    while not _cat_schedule["stop_event"].is_set():
+        time_str = _cat_schedule_time_str()
+        next_ts = _cat_schedule_next_ts(time_str)
+        _cat_schedule["next_run"] = next_ts
+        _append_log("cat-schedule",
+                    f"=== 下次执行时间: {datetime.fromtimestamp(next_ts).strftime('%Y-%m-%d %H:%M')} ===")
+
+        # 分段等待，便于快速响应停止
+        while not _cat_schedule["stop_event"].is_set() and time.time() < next_ts:
+            time.sleep(1)
+        if _cat_schedule["stop_event"].is_set():
+            break
+
+        _cat_schedule["last_run"] = time.time()
+        if _cat_any_running():
+            _append_log("cat-schedule", "[SYSTEM] 检测到养猫任务正在运行，跳过本次定时执行")
+            continue
+        _append_log("cat-schedule", f"=== 定时养猫执行 ({datetime.now().strftime('%Y-%m-%d %H:%M')}) ===")
+        _cat_schedule_spawn_task()
+
+    _cat_schedule["running"] = False
+    _append_log("cat-schedule", "定时养猫任务已停止")
+
+
+@app.route("/api/cat/schedule/config", methods=["GET"])
+def cat_schedule_config_get():
+    return jsonify({"time": _cat_schedule_time_str()})
+
+
+@app.route("/api/cat/schedule/config", methods=["POST"])
+def cat_schedule_config_save():
+    data = request.json or {}
+    time_str = str(data.get("time", "")).strip()
+    try:
+        hh, mm = time_str.split(":")
+        if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+            raise ValueError
+        time_str = f"{int(hh):02d}:{int(mm):02d}"
+    except Exception:
+        return jsonify({"success": False, "message": "时间格式不正确，应为 HH:MM"}), 400
+    cfg = _load_cat_config()
+    cfg.setdefault("schedule", {})["time"] = time_str
+    _save_cat_config(cfg)
+    return jsonify({"success": True, "time": time_str})
+
+
+@app.route("/api/cat/schedule/start", methods=["POST"])
+def cat_schedule_start():
+    if _cat_schedule["running"]:
+        return jsonify({"success": False, "message": "定时养猫已在运行"})
+    _cat_schedule["stop_event"] = threading.Event()
+    _cat_schedule["running"] = True
+    with log_lock:
+        log_buffers.setdefault("cat-schedule", [])
+    _append_log("cat-schedule", f"定时养猫已启动（每天 {_cat_schedule_time_str()} 执行一次）")
+    t = threading.Thread(target=_cat_schedule_loop, daemon=True)
+    t.start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/cat/schedule/stop", methods=["POST"])
+def cat_schedule_stop():
+    if not _cat_schedule["running"]:
+        return jsonify({"success": False, "message": "定时养猫未运行"})
+    _cat_schedule["stop_event"].set()
+    return jsonify({"success": True})
+
+
+@app.route("/api/cat/schedule/status")
+def cat_schedule_status():
+    return jsonify({
+        "running": _cat_schedule["running"],
+        "time": _cat_schedule_time_str(),
+        "last_run": _cat_schedule["last_run"],
+        "next_run": _cat_schedule["next_run"],
+        "cat_running": _cat_any_running(),
+        "log": _get_log("cat-schedule"),
+    })
+
+
+# =========================================================================
+#  九、前端入口
 # =========================================================================
 
 # =========================================================================

@@ -754,6 +754,24 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 }
 .inline-field .form-input:focus { border: none; box-shadow: none; }
 .inline-input { width: 80px; text-align: center; }
+
+/* 自定义时间选择器 */
+.time-picker { position: relative; }
+.time-picker-btn { cursor: pointer; width: auto; min-width: 92px; }
+.time-picker-btn:hover { border-color: var(--pink); }
+.time-picker-pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+  display: flex; gap: 6px; padding: 8px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.28);
+}
+.tp-col { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; min-width: 58px; }
+.tp-item {
+  padding: 5px 10px; border: none; border-radius: 6px; background: transparent;
+  color: var(--text-secondary); font-size: 13px; text-align: center; cursor: pointer;
+}
+.tp-item:hover { background: var(--bg-hover); color: var(--text); }
+.tp-item.active { background: var(--pink); color: #fff; }
 /* 投币数量下拉（单币/双币） */
 .coin-num-select {
   margin-left: auto;
@@ -1681,6 +1699,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         标签助手
       </button>
 
+      <button class="tab-btn" onclick="switchTab('cat')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.5V4.8L8.3 7.4M19 9.5V4.8L15.7 7.4"/><path d="M5 9.5a7 7 0 0 1 14 0v3.7a6.3 6.3 0 0 1-6.3 6.3H11.3A6.3 6.3 0 0 1 5 13.2z"/><circle cx="9.8" cy="11.6" r=".5" fill="currentColor"/><circle cx="14.2" cy="11.6" r=".5" fill="currentColor"/><path d="M12 13.8v1.4M10 15.8c.6.6 1.4.6 2 .0M14 15.8c-.6.6-1.4.6-2 0"/></svg>
+        粉丝节养猫
+      </button>
+
       <button class="tab-btn" onclick="switchTab('schedmgr')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         定时任务
@@ -1720,7 +1743,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
   <div class="dash-summary">
     <div class="dash-stat"><div class="dash-stat-val" id="dash-sum-login">–</div><div class="dash-stat-label">已登录模块</div></div>
     <div class="dash-stat"><div class="dash-stat-val" id="dash-sum-run">–</div><div class="dash-stat-label">运行中任务</div></div>
-    <div class="dash-stat"><div class="dash-stat-val">7</div><div class="dash-stat-label">功能模块</div></div>
+    <div class="dash-stat"><div class="dash-stat-val">8</div><div class="dash-stat-label">功能模块</div></div>
   </div>
 
   <div class="dash-grid">
@@ -1809,6 +1832,19 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
     </div>
     <div class="dash-card">
       <div class="dash-card-top">
+        <div class="dash-icon" style="background:rgba(251,114,153,0.1);color:#fb7299"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.5V4.8L8.3 7.4M19 9.5V4.8L15.7 7.4"/><path d="M5 9.5a7 7 0 0 1 14 0v3.7a6.3 6.3 0 0 1-6.3 6.3H11.3A6.3 6.3 0 0 1 5 13.2z"/></svg></div>
+        <button class="dash-goto" onclick="switchTab('cat')">进入 →</button>
+      </div>
+      <div class="dash-name">粉丝节养猫</div>
+      <div class="dash-desc">按粉丝牌养猫：签到 / 喂食 / 摸猫，自动保存当日进度</div>
+      <div class="dash-badges">
+        <span class="dash-badge off" id="dash-cat-login">检测中…</span>
+        <span class="dash-badge off" id="dash-cat-run">空闲</span>
+        <span class="dash-badge off" id="dash-cat-extra">–</span>
+      </div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-top">
         <div class="dash-icon" style="background:rgba(111,168,207,0.1);color:#6fa8cf"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
         <button class="dash-goto" onclick="switchTab('schedmgr')">进入 →</button>
       </div>
@@ -1817,6 +1853,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="dash-badges">
         <span class="dash-badge off" id="dash-schedmgr-auto">自动互动 · 空闲</span>
         <span class="dash-badge off" id="dash-schedmgr-booster">低播放刷量 · 空闲</span>
+        <span class="dash-badge off" id="dash-schedmgr-cat">养猫定时 · 空闲</span>
       </div>
     </div>
   </div>
@@ -3035,6 +3072,91 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 </div>
 
 <!-- ============================================================ -->
+<!--  TAB: 粉丝节养猫 (cat)                                       -->
+<!-- ============================================================ -->
+<div id="panel-cat" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-left">
+      <div class="panel-hero-icon" style="color:#fb7299"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.5V4.8L8.3 7.4M19 9.5V4.8L15.7 7.4"/><path d="M5 9.5a7 7 0 0 1 14 0v3.7a6.3 6.3 0 0 1-6.3 6.3H11.3A6.3 6.3 0 0 1 5 13.2z"/><circle cx="9.8" cy="11.6" r=".5" fill="currentColor"/><circle cx="14.2" cy="11.6" r=".5" fill="currentColor"/></svg></div>
+      <div>
+        <div class="panel-hero-title">粉丝节养猫</div>
+        <div class="panel-hero-desc">按粉丝牌选择要养的猫，自动执行领养 / 签到 / 投喂手幅 / 喂食 / 摸猫，进度按天保存。</div>
+      </div>
+    </div>
+    <span class="hero-badge off" id="hero-cat-badge">检测中…</span>
+  </div>
+
+  <!-- 登录状态 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">1</span>账号登录</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span id="cat-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
+        <span style="font-size:12px;color:var(--text-tertiary)">复用「自动互动」扫码登录凭证</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 粉丝牌 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">2</span>粉丝牌</div>
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-pink btn-sm" id="cat-fetch-btn" onclick="catFetchMedals()">获取全部粉丝牌</button>
+        <button class="btn btn-outline btn-sm" onclick="catClearProgress()">清空今日进度</button>
+        <span id="cat-medal-meta" style="font-size:12px;color:var(--text-secondary)">缓存：未加载</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 功能开关 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">3</span>功能开关</div>
+    <div class="card-body">
+      <div style="display:flex;gap:14px 22px;flex-wrap:wrap">
+        <label class="switch-row"><span class="sw-ico">📅</span><span>签到</span><input type="checkbox" id="cat-opt-sign" checked onchange="catPersist()"></label>
+        <label class="switch-row" title="消耗 1 电池投喂粉丝手幅*1"><span class="sw-ico">🎗️</span><span>投喂粉丝手幅*1</span><input type="checkbox" id="cat-opt-feedBanner" onchange="catPersist()"></label>
+        <label class="switch-row"><span class="sw-ico">🍚</span><span>喂食（消耗猫粮）</span><input type="checkbox" id="cat-opt-feed" checked onchange="catPersist()"></label>
+        <label class="switch-row"><span class="sw-ico">🐾</span><span>摸自己猫</span><input type="checkbox" id="cat-opt-pet" checked onchange="catPersist()"></label>
+        <label class="switch-row"><span class="sw-ico">🏆</span><span>摸前20猫咪</span><input type="checkbox" id="cat-opt-petTop20" onchange="catPersist()"></label>
+        <label class="switch-row"><span class="sw-ico">🐈</span><span>摸全部猫咪</span><input type="checkbox" id="cat-opt-petAll" onchange="catPersist()"></label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 搜索与选择 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">4</span>搜索与选择</div>
+    <div class="card-body">
+      <input type="text" id="cat-search" class="form-input" placeholder="模糊搜索：主播名 / 粉丝牌 / ruid（空格分隔多关键词）" autocomplete="off" oninput="catFilter()">
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-outline btn-sm" onclick="catSelectAllMatch()">全选匹配结果</button>
+        <button class="btn btn-outline btn-sm" onclick="catSelectPage()">本页全选</button>
+        <button class="btn btn-outline btn-sm" onclick="catClearSelected()">清空选择</button>
+        <label class="switch-row" style="border:none;padding:0" title="匹配结果中隐藏账号已注销的主播，并将其从已选中移除"><span>排除账号已注销</span><input type="checkbox" id="cat-exclude-dead" onchange="catOnExcludeChange()"></label>
+        <span id="cat-selected-count" style="font-size:12px;color:var(--text-secondary)">已选 0 个</span>
+      </div>
+      <div id="cat-result-list" style="margin-top:10px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto"></div>
+      <div id="cat-pagination" style="display:flex;gap:4px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:10px"></div>
+    </div>
+  </div>
+
+  <!-- 运行控制 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">5</span>运行控制</div>
+    <div class="card-body">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-pink" id="cat-run-btn" onclick="catRun()">开始养猫</button>
+        <button class="btn btn-stop" id="cat-stop-btn" onclick="catStop()" disabled>停止</button>
+        <button class="btn btn-outline" onclick="catSaveConfig()">💾 保存配置</button>
+        <span id="cat-progress-text" style="font-size:13px;color:var(--text-secondary)">今日进度：0 / 0</span>
+      </div>
+      <div id="cat-log" class="log-box" style="margin-top:12px;height:220px;overflow-y:auto">等待任务开始...</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!--  TAB: 定时任务管理 (schedmgr) — 集中管理所有定时任务        -->
 <!-- ============================================================ -->
 <div id="panel-schedmgr" class="panel">
@@ -3061,6 +3183,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="sub-tabs">
         <button class="sub-tab-btn active" onclick="switchSchedSubTab('auto')">⚡ 自动互动</button>
         <button class="sub-tab-btn" onclick="switchSchedSubTab('booster')">📈 低播放量刷量</button>
+        <button class="sub-tab-btn" onclick="switchSchedSubTab('cat')">🐱 粉丝节养猫</button>
       </div>
 
       <!-- ===== 子任务 1：自动互动 ===== -->
@@ -3124,6 +3247,37 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           <button class="btn btn-pink" onclick="bstScheduleRunOnce()">▶ 立即执行一次</button>
         </div>
         <div class="log-box" id="bst-sched-log" style="margin-top:12px">等待运行...</div>
+      </div>
+
+      <!-- ===== 子任务 3：粉丝节养猫 ===== -->
+      <div id="sched-subtab-cat" class="sub-tab-panel" style="display:none">
+        <div class="soft-note pink">💡 每天定点自动执行一次「粉丝节养猫」（使用养猫页已选的粉丝牌与功能开关）。若触发时已有养猫任务在运行，则自动跳过本次。</div>
+        <div class="form-group">
+          <label class="form-label">每日执行时间</label>
+          <div class="schedule-row">
+            <div class="inline-field">
+              <span>时间</span>
+              <div class="time-picker">
+                <button type="button" class="form-input inline-input time-picker-btn" id="cat-sched-time-btn" onclick="catTimeToggle(event)">08:00</button>
+                <div class="time-picker-pop" id="cat-sched-pop" style="display:none">
+                  <div class="tp-col" id="cat-tp-hours"></div>
+                  <div class="tp-col" id="cat-tp-mins"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span class="status-dot dot-off" id="cat-sched-dot"></span>
+            <span id="cat-sched-text" style="color:var(--text-secondary)">定时任务未运行</span>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="catScheduleSave()" style="margin:0;padding:4px 14px;font-size:12px">💾 保存配置</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-pink" id="cat-sched-btn" onclick="catScheduleToggle()">🕐 启动定时任务</button>
+        </div>
+        <div class="log-box" id="cat-sched-log" style="margin-top:12px">等待运行...</div>
       </div>
     </div>
   </div>
@@ -3203,7 +3357,8 @@ function switchTab(name){
   if(name==='livehelper'){ withPanelLoader('panel-livehelper', () => lhLoadConfig(), '正在加载弹幕助手配置…'); }
   if(name==='collection'){ withPanelLoader('panel-collection', () => collLoadStatus(), '正在加载合集助手状态…'); }
   if(name==='tagsearch'){ withPanelLoader('panel-tagsearch', () => tsLoadStatus(), '正在加载标签助手状态…'); }
-  if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad()]), '正在加载定时任务状态…'); }
+  if(name==='cat'){ withPanelLoader('panel-cat', () => catLoad(), '正在加载粉丝节养猫…'); }
+  if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad(), catScheduleLoad()]), '正在加载定时任务状态…'); }
 }
 
 /* ===== BV 动态列表 ===== */
@@ -3291,7 +3446,7 @@ function autoLoadConfig(){
   return fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('auto-login-info');
     if(d.login_uid){
-      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>'+(d.uname?' <span style="color:var(--text-secondary)">· '+_escHtml(d.uname)+'</span>':'');
       el.style.color='var(--success)';
     } else {
       el.textContent='未登录';
@@ -3325,6 +3480,7 @@ function autoStartPoll(key){
         const el=document.getElementById('auto-login-info');
         el.innerHTML='已登录 <b>UID: '+(d.login_uid||'?')+'</b>';
         el.style.color='var(--success)';
+        autoLoadConfig(); // 刷新以补充用户名
       }else if(d.status==='waiting'){
         st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
       }else if(d.status==='confirming'){
@@ -3729,7 +3885,7 @@ function mgrAutoLoad(){
   const p2 = fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('sched-login-info');
     if(d.login_uid){
-      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>';
+      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>'+(d.uname?' <span style="color:var(--text-secondary)">· '+_escHtml(d.uname)+'</span>':'');
       el.style.color='var(--success)';
     } else {
       el.innerHTML='<span>未登录，请先在「自动互动」页面扫码登录</span>';
@@ -3805,7 +3961,7 @@ function mgrAutoTick(){
 
 /* --- 定时任务页：子标签切换 --- */
 function switchSchedSubTab(tab){
-  const tabs=['auto','booster'];
+  const tabs=['auto','booster','cat'];
   tabs.forEach(t=>{
     const panel=document.getElementById('sched-subtab-'+t);
     const btn=document.querySelector(`.sub-tab-btn[onclick="switchSchedSubTab('${t}')"]`);
@@ -4132,7 +4288,7 @@ function bstLoadLoginStatus(){
   return fetch('/api/auto/login/config').then(r=>r.json()).then(d=>{
     const el=document.getElementById('bst-login-info');
     if(d.login_uid){
-      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b> （复用「自动互动」登录凭证）';
+      el.innerHTML='已登录 <b>UID: '+d.login_uid+'</b>'+(d.uname?' <span style="color:var(--text-secondary)">· '+_escHtml(d.uname)+'</span>':'')+' （复用「自动互动」登录凭证）';
       el.style.color='var(--success)';
     } else {
       el.innerHTML='<span>未登录，请先在「自动互动」页面扫码登录</span>';
@@ -4346,6 +4502,148 @@ function bstSchedulePollTick(){
   }).catch(()=>{});
 }
 
+/* --- 自定义时间选择器 --- */
+let catTimeVal = '08:00';
+function catTimeInit(){
+  const hc=document.getElementById('cat-tp-hours');
+  const mc=document.getElementById('cat-tp-mins');
+  if(hc.children.length) return;
+  for(let h=0;h<24;h++){
+    const b=document.createElement('button');
+    b.type='button'; b.className='tp-item'; b.textContent=String(h).padStart(2,'0');
+    b.onclick=()=>{ catTimeVal=String(h).padStart(2,'0')+':'+catTimeVal.slice(3); catTimeRender(); };
+    hc.appendChild(b);
+  }
+  for(let m=0;m<60;m++){
+    const b=document.createElement('button');
+    b.type='button'; b.className='tp-item'; b.textContent=String(m).padStart(2,'0');
+    b.onclick=()=>{ catTimeVal=catTimeVal.slice(0,3)+String(m).padStart(2,'0'); catTimeRender(); };
+    mc.appendChild(b);
+  }
+}
+function catTimeRender(){
+  document.getElementById('cat-sched-time-btn').textContent=catTimeVal;
+  const hh=catTimeVal.slice(0,2), mm=catTimeVal.slice(3);
+  document.querySelectorAll('#cat-tp-hours .tp-item').forEach(b=>b.classList.toggle('active',b.textContent===hh));
+  document.querySelectorAll('#cat-tp-mins .tp-item').forEach(b=>b.classList.toggle('active',b.textContent===mm));
+}
+function catTimeToggle(e){
+  if(e) e.stopPropagation();
+  const pop=document.getElementById('cat-sched-pop');
+  if(pop.style.display==='none'){
+    catTimeInit(); catTimeRender();
+    pop.style.display='flex';
+    const hc=document.getElementById('cat-tp-hours'), mc=document.getElementById('cat-tp-mins');
+    const ah=hc.querySelector('.tp-item.active'), am=mc.querySelector('.tp-item.active');
+    if(ah) hc.scrollTop=Math.max(0,ah.offsetTop-hc.clientHeight/2+ah.clientHeight/2);
+    if(am) mc.scrollTop=Math.max(0,am.offsetTop-mc.clientHeight/2+am.clientHeight/2);
+  }else{
+    pop.style.display='none';
+  }
+}
+document.addEventListener('click', e=>{
+  const pop=document.getElementById('cat-sched-pop');
+  if(!pop||pop.style.display==='none') return;
+  if(e.target.closest('.time-picker')) return;
+  pop.style.display='none';
+});
+
+/* --- 定时任务页：粉丝节养猫每日定时 --- */
+let catSchedPollTimer=null;
+let catSchedLastLogLen=-1;
+let catSchedIdleTicks=0;
+
+function catScheduleLoad(){
+  const p = fetch('/api/cat/schedule/config').then(r=>r.json()).then(c=>{
+    catTimeVal=c.time||'08:00'; catTimeRender();
+  }).catch(()=>{});
+  catSchedulePollTick();
+  return p;
+}
+
+function catScheduleSave(silent){
+  const time=catTimeVal||'08:00';
+  return fetch('/api/cat/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({time})
+  }).then(r=>r.json()).then(d=>{
+    if(d.success&&!silent)alert('配置已保存');
+    return d.success;
+  }).catch(e=>{if(!silent)alert('保存失败: '+e);return false;});
+}
+
+function catScheduleUpdateBtn(s){
+  const btn=document.getElementById('cat-sched-btn');
+  if(s&&s.running){
+    btn.textContent='⏹ 停止';
+    btn.className='btn btn-stop';
+  }else{
+    btn.textContent='🕐 启动定时任务';
+    btn.className='btn btn-pink';
+  }
+}
+
+function catScheduleUpdateStatus(s){
+  if(s.running){
+    setDot('cat-sched-dot','run');
+    let txt=`定时中 · 每天 ${s.time||'08:00'} 执行`;
+    if(s.next_run){
+      txt+=` · 下次 ${new Date(s.next_run*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}`;
+    }
+    if(s.cat_running) txt+=' · 养猫任务运行中';
+    setText('cat-sched-text',txt);
+  }else{
+    setDot('cat-sched-dot','off');
+    setText('cat-sched-text','定时任务未运行');
+  }
+  const log=document.getElementById('cat-sched-log');
+  if(s.log){log.textContent=s.log;log.scrollTop=log.scrollHeight;}
+}
+
+function catScheduleToggle(){
+  fetch('/api/cat/schedule/status').then(r=>r.json()).then(s=>{
+    if(s.running){
+      fetch('/api/cat/schedule/stop',{method:'POST'}).then(()=>{
+        catScheduleUpdateBtn({running:false});
+        setDot('cat-sched-dot','off');
+        setText('cat-sched-text','正在停止...');
+        catScheduleStartPoll();
+        catSchedulePollTick();
+      });
+    }else{
+      catScheduleSave(true).then(ok=>{
+        if(!ok)return null;
+        return fetch('/api/cat/schedule/start',{method:'POST'});
+      }).then(()=>{
+        catScheduleUpdateBtn({running:true});
+        catScheduleStartPoll();
+        catSchedulePollTick();
+      });
+    }
+  }).catch(e=>alert('操作失败: '+e));
+}
+
+function catScheduleStartPoll(){
+  if(catSchedPollTimer)return;
+  catSchedLastLogLen=-1;catSchedIdleTicks=0;
+  catSchedPollTimer=setInterval(catSchedulePollTick,5000);
+}
+
+function catScheduleStopPoll(){
+  if(catSchedPollTimer){clearInterval(catSchedPollTimer);catSchedPollTimer=null;}
+}
+
+function catSchedulePollTick(){
+  fetch('/api/cat/schedule/status').then(r=>r.json()).then(s=>{
+    catScheduleUpdateBtn(s);
+    catScheduleUpdateStatus(s);
+    const logLen=(s.log||'').length;
+    if(s.running){catSchedIdleTicks=0;catSchedLastLogLen=logLen;return;}
+    if(logLen!==catSchedLastLogLen){catSchedLastLogLen=logLen;catSchedIdleTicks=0;}
+    else{catSchedIdleTicks++;}
+    if(catSchedIdleTicks>=6)catScheduleStopPoll();
+  }).catch(()=>{});
+}
+
 // ── Webhook（活动助手推送） ──
 let bstWebhookPollTimer=null;
 let bstWebhookReceived=[];
@@ -4533,7 +4831,7 @@ function plLoadConfig(){
     infoEl.style.color='var(--success)';
     listEl.innerHTML=accounts.map(a=>`
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-bottom:6px;background:var(--bg-tertiary);border-radius:10px">
-        <span style="font-size:13px">UID: <b>${a.login_uid||'?'}</b></span>
+        <span style="font-size:13px">UID: <b>${a.login_uid||'?'}</b>${a.uname?' <span style="color:var(--text-secondary)">· '+_escHtml(a.uname)+'</span>':''}</span>
         <button class="btn btn-sm btn-danger" style="padding:2px 8px;font-size:12px" onclick="plDeleteAccount('${a.login_uid||''}')">删除</button>
       </div>`).join('');
   });
@@ -6141,6 +6439,7 @@ async function dashRefresh(){
     _dget('/api/auto/schedule/status', j => { d.autoRun = !!(j && j.running); }),
     _dget('/api/booster/tasks', j => { d.boosterRun = _anyTaskStatus(j, 'running'); d.boosterErr = _anyTaskStatus(j, 'error'); }),
     _dget('/api/booster/schedule/status', j => { d.boosterSched = !!(j && j.running); if(d.boosterSched || (j && j.active_tasks && j.active_tasks.length)) d.boosterRun = true; }),
+    _dget('/api/cat/schedule/status', j => { d.catSched = !!(j && j.running); }),
     _dget('/api/player/config', j => { d.playerLogin = !!(j && (j.accounts || []).some(a => a.login_uid && a.has_sessdata)); }),
     _dget('/api/player/tasks', j => { d.playerRun = _anyTaskStatus(j, 'running'); }),
     _dget('/api/redpocket/config', j => { d.rpLogin = !!(j && (j.sessdata || j.login_uid)); }),
@@ -6151,6 +6450,11 @@ async function dashRefresh(){
     _dget('/api/tag-search/status', j => {
       d.tsLogin = !!(j && j.logged_in);
       d.tsExtra = j ? `${j.video_count || 0} 稿件 · ${j.tag_count || 0} 标签` : '–';
+    }),
+    _dget('/api/cat/overview', j => {
+      d.catLogin = !!(j && j.logged_in);
+      d.catRun = !!(j && j.running);
+      d.catExtra = j ? `${j.done || 0}/${j.total || 0} 已养` : '–';
     })
   ]);
   dashRender();
@@ -6174,11 +6478,15 @@ function dashRender(){
   _dashBadge('dash-collection-login', d.collLogin ? 'ok' : 'off', d.collLogin ? '已登录' : '未登录');
   _dashBadge('dash-tagsearch-login', d.tsLogin ? 'ok' : 'off', d.tsLogin ? '已登录' : '未登录');
   _dashBadge('dash-tagsearch-extra', 'off', d.tsExtra || '–');
+  _dashBadge('dash-cat-login', d.catLogin ? 'ok' : 'off', d.catLogin ? '已登录' : '未登录');
+  _dashBadge('dash-cat-run', d.catRun ? 'run' : 'off', d.catRun ? '运行中' : '空闲');
+  _dashBadge('dash-cat-extra', 'off', d.catExtra || '–');
 
   // 定时任务聚合徽章（任一子指标在跑即认为运行中，避免接口偶发失败导致误显空闲）
   _dashBadge('dash-schedmgr-auto', d.autoRun ? 'run' : 'off', '自动互动 · ' + (d.autoRun ? '运行中' : '空闲'));
   const _bstSchedOn = !!(d.boosterSched || d.boosterRun);
   _dashBadge('dash-schedmgr-booster', _bstSchedOn ? 'run' : 'off', '低播放刷量 · ' + (_bstSchedOn ? '运行中' : '空闲'));
+  _dashBadge('dash-schedmgr-cat', d.catSched ? 'run' : 'off', '养猫定时 · ' + (d.catSched ? '运行中' : '空闲'));
 
   _heroBadge('hero-auto-badge', d.autoLogin, d.autoLogin ? '已登录' : '未登录');
   _heroBadge('hero-booster-badge', d.boosterRun, d.boosterRun ? '运行中' : '空闲');
@@ -6187,13 +6495,262 @@ function dashRender(){
   _heroBadge('hero-livehelper-badge', d.lhRun, d.lhRun ? '运行中' : '未运行');
   _heroBadge('hero-collection-badge', d.collLogin, d.collLogin ? '已登录' : '未登录');
   _heroBadge('hero-tagsearch-badge', d.tsLogin, d.tsLogin ? '已登录' : '未登录');
+  _heroBadge('hero-cat-badge', d.catRun ? true : d.catLogin, d.catRun ? '运行中' : (d.catLogin ? '已登录' : '未登录'));
 
-  const loginCount = [d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin].filter(Boolean).length;
-  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun].filter(Boolean).length;
+  const loginCount = [d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin, d.catLogin].filter(Boolean).length;
+  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun, d.catRun].filter(Boolean).length;
   const sl = document.getElementById('dash-sum-login');
-  if(sl) sl.textContent = loginCount + ' / 7';
+  if(sl) sl.textContent = loginCount + ' / 8';
   const sr = document.getElementById('dash-sum-run');
   if(sr) sr.textContent = runCount;
+}
+
+/* ===== 粉丝节养猫 ===== */
+const catState = {
+  medals: [], selected: new Set(), filtered: [], page: 1, pageSize: 50,
+  query: '', taskId: null, progress: {date:'', completed_ruids: []},
+  medalsUpdatedAt: '', running: false
+};
+function catEsc(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function catOptions(){
+  return {
+    sign: document.getElementById('cat-opt-sign').checked,
+    feedBanner: document.getElementById('cat-opt-feedBanner').checked,
+    feed: document.getElementById('cat-opt-feed').checked,
+    pet: document.getElementById('cat-opt-pet').checked,
+    petTop20: document.getElementById('cat-opt-petTop20').checked,
+    petAll: document.getElementById('cat-opt-petAll').checked,
+  };
+}
+function catLoad(){
+  return fetch('/api/cat/config').then(r=>r.json()).then(cfg=>{
+    catState.medals = cfg.medals||[];
+    catState.selected = new Set((cfg.selected||[]).map(String));
+    catState.progress = cfg.progress||{date:'',completed_ruids:[]};
+    catState.medalsUpdatedAt = (cfg.medals_updated_at||'').replace('T',' ');
+    const o = cfg.options||{};
+    document.getElementById('cat-opt-sign').checked = o.sign!==false;
+    document.getElementById('cat-opt-feedBanner').checked = !!o.feedBanner;
+    document.getElementById('cat-opt-feed').checked = o.feed!==false;
+    document.getElementById('cat-opt-pet').checked = o.pet!==false;
+    document.getElementById('cat-opt-petTop20').checked = !!o.petTop20;
+    document.getElementById('cat-opt-petAll').checked = !!o.petAll;
+    document.getElementById('cat-exclude-dead').checked = !!cfg.exclude_dead;
+    if(catApplyExclude()>0) catPersist();
+    const loginEl = document.getElementById('cat-login-info');
+    if (cfg.logged_in) {
+      loginEl.innerHTML = '已登录 <b>UID: ' + (cfg.uid || '?') + '</b>' + (cfg.uname ? ' <span style="color:var(--text-secondary)">· ' + _escHtml(cfg.uname) + '</span>' : '') + ' （复用「自动互动」登录凭证）';
+      loginEl.style.color = 'var(--success)';
+    } else {
+      loginEl.innerHTML = '❌ 未登录，请先在「自动互动」页扫码登录';
+      loginEl.style.color = 'var(--warn)';
+    }
+    catRenderMeta();
+    catFilter();
+    catRenderProgress();
+  }).catch(()=>{});
+}
+function catRenderMeta(){
+  const el = document.getElementById('cat-medal-meta');
+  const n = catState.medals.length;
+  if(!n){ el.textContent = '缓存：未加载'; return; }
+  el.textContent = `缓存：${n} 个粉丝牌 ｜ 已选：${catState.selected.size} 个 ｜ 更新：${catState.medalsUpdatedAt||'未知'}`;
+}
+function catFilter(){
+  const input = document.getElementById('cat-search');
+  const q = (input?input.value:'').trim().toLowerCase();
+  const excludeDead = document.getElementById('cat-exclude-dead').checked;
+  catState.query = q; catState.page = 1;
+  let base = catState.medals;
+  if(excludeDead){
+    base = base.filter(m=>String(m.target_name||'').trim() !== '账号已注销');
+  }
+  if(!q){
+    catState.filtered = base.slice();
+  }else{
+    const terms = q.split(/\s+/).filter(Boolean);
+    const score = item=>{
+      const name = String(item.target_name||'').toLowerCase();
+      const medal = String(item.medal_name||'').toLowerCase();
+      const ruid = String(item.ruid||'').toLowerCase();
+      let s = 0;
+      for(const t of terms){
+        let ts = 0;
+        if(ruid===t||name===t||medal===t) ts = 4;
+        else if(name.startsWith(t)||medal.startsWith(t)||ruid.startsWith(t)) ts = 3;
+        else if(name.includes(t)||medal.includes(t)||ruid.includes(t)) ts = 2;
+        else return -1;
+        s += ts;
+      }
+      return s;
+    };
+    catState.filtered = base
+      .map(item=>({item, score: score(item)}))
+      .filter(x=>x.score>=0)
+      .sort((a,b)=>b.score-a.score||String(a.item.target_name).localeCompare(String(b.item.target_name),'zh-Hans-CN'))
+      .map(x=>x.item);
+  }
+  catRenderResults();
+}
+function catRenderResults(){
+  const list = document.getElementById('cat-result-list');
+  const pg = document.getElementById('cat-pagination');
+  const total = catState.filtered.length;
+  const cnt = document.getElementById('cat-selected-count');
+  if(cnt) cnt.textContent = `已选 ${catState.selected.size} 个`;
+  catRenderMeta();
+  catRenderProgress();
+  if(!total){
+    list.innerHTML = `<div style="color:var(--text-tertiary);font-size:13px;padding:8px">${catState.medals.length?'没有匹配结果':'暂无缓存，请先获取粉丝牌'}</div>`;
+    pg.innerHTML = '';
+    return;
+  }
+  const totalPages = Math.ceil(total/catState.pageSize)||1;
+  if(catState.page>totalPages) catState.page = totalPages;
+  if(catState.page<1) catState.page = 1;
+  const start = (catState.page-1)*catState.pageSize;
+  const items = catState.filtered.slice(start, start+catState.pageSize);
+  list.innerHTML = items.map(item=>{
+    const checked = catState.selected.has(String(item.ruid))?'checked':'';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--card-border);border-radius:var(--radius-sm);cursor:pointer">
+      <input type="checkbox" ${checked} onchange="catToggle('${catEsc(item.ruid)}',this.checked)">
+      <span style="overflow:hidden;flex:1">
+        <span style="display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.target_name)}</span>
+        <span style="display:block;font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.medal_name||'无牌子')} · ${catEsc(item.ruid)}</span>
+      </span>
+    </label>`;
+  }).join('');
+  let html = `<button class="btn btn-outline btn-sm" ${catState.page<=1?'disabled':''} onclick="catGoPage(${catState.page-1})">上一页</button>`;
+  for(let i=1;i<=totalPages;i++){
+    if(totalPages<=7||Math.abs(i-catState.page)<=1||i===1||i===totalPages){
+      html += `<button class="btn btn-sm ${i===catState.page?'btn-pink':'btn-outline'}" onclick="catGoPage(${i})">${i}</button>`;
+    }else if(i===2&&catState.page>3){
+      html += '<span style="color:var(--text-tertiary)">…</span>';
+    }else if(i===totalPages-1&&catState.page<totalPages-2){
+      html += '<span style="color:var(--text-tertiary)">…</span>';
+    }
+  }
+  html += `<button class="btn btn-outline btn-sm" ${catState.page>=totalPages?'disabled':''} onclick="catGoPage(${catState.page+1})">下一页</button>`;
+  pg.innerHTML = html;
+}
+function catGoPage(p){ catState.page = p; catRenderResults(); }
+function catToggle(ruid, force){
+  ruid = String(ruid);
+  if(force===true) catState.selected.add(ruid);
+  else if(force===false) catState.selected.delete(ruid);
+  else if(catState.selected.has(ruid)) catState.selected.delete(ruid);
+  else catState.selected.add(ruid);
+  catPersist();
+  catRenderResults();
+}
+function catPersist(){
+  return fetch('/api/cat/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    selected:[...catState.selected],
+    options:catOptions(),
+    exclude_dead:document.getElementById('cat-exclude-dead').checked,
+  })}).catch(()=>{});
+}
+function catSaveConfig(){
+  catPersist().then(()=>alert('配置已保存'));
+}
+function catApplyExclude(){
+  // 勾选「排除账号已注销」时，把已注销主播从已选集合中移除
+  if(!document.getElementById('cat-exclude-dead').checked) return 0;
+  let removed = 0;
+  catState.medals.forEach(m=>{
+    if(String(m.target_name||'').trim()==='账号已注销'){
+      if(catState.selected.delete(String(m.ruid))) removed++;
+    }
+  });
+  return removed;
+}
+function catOnExcludeChange(){
+  const removed = catApplyExclude();
+  if(removed>0) alert(`已从已选中移除 ${removed} 个账号已注销的主播`);
+  catPersist();
+  catFilter();
+}
+function catSelectAllMatch(){
+  if(!catState.filtered.length) return;
+  const ruids = catState.filtered.map(m=>String(m.ruid));
+  const all = ruids.every(r=>catState.selected.has(r));
+  ruids.forEach(r=>{ if(all) catState.selected.delete(r); else catState.selected.add(r); });
+  catPersist(); catRenderResults();
+}
+function catSelectPage(){
+  const start = (catState.page-1)*catState.pageSize;
+  const items = catState.filtered.slice(start, start+catState.pageSize);
+  if(!items.length) return;
+  const ruids = items.map(m=>String(m.ruid));
+  const all = ruids.every(r=>catState.selected.has(r));
+  ruids.forEach(r=>{ if(all) catState.selected.delete(r); else catState.selected.add(r); });
+  catPersist(); catRenderResults();
+}
+function catClearSelected(){
+  catState.selected.clear();
+  catPersist(); catRenderResults();
+}
+function catRenderProgress(){
+  const el = document.getElementById('cat-progress-text');
+  if(!el) return;
+  const completed = new Set((catState.progress.completed_ruids||[]).map(String));
+  const done = [...catState.selected].filter(r=>completed.has(r)).length;
+  el.textContent = `今日进度：已完成 ${done} / 已选 ${catState.selected.size}`;
+}
+function catFetchMedals(){
+  const btn = document.getElementById('cat-fetch-btn');
+  btn.disabled = true; btn.textContent = '拉取中…';
+  fetch('/api/cat/fetch-medals',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){ alert(`拉取完成，共 ${d.count} 个粉丝牌`); catLoad(); }
+    else alert(d.message||'拉取失败');
+  }).catch(e=>alert('拉取失败: '+e)).finally(()=>{
+    btn.disabled = false; btn.textContent = '获取全部粉丝牌';
+  });
+}
+function catClearProgress(){
+  fetch('/api/cat/progress/clear',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.success){
+      catState.progress = {date:'', completed_ruids:[]};
+      catRenderProgress();
+    }else alert(d.message||'清空失败');
+  }).catch(()=>{});
+}
+function catRun(){
+  if(!catState.selected.size){ alert('请先选择至少一个粉丝牌'); return; }
+  const body = {selected:[...catState.selected], options:catOptions()};
+  fetch('/api/cat/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{
+    if(!d.task_id){ alert(d.error||d.message||'启动失败'); return; }
+    catState.taskId = d.task_id; catState.running = true;
+    document.getElementById('cat-run-btn').disabled = true;
+    document.getElementById('cat-run-btn').textContent = '运行中…';
+    document.getElementById('cat-stop-btn').disabled = false;
+    document.getElementById('cat-log').textContent = '任务已启动，等待日志…';
+    startPoll(`/api/cat/status/${catState.taskId}`,2000,catUpdate);
+  }).catch(e=>alert('启动失败: '+e));
+}
+function catUpdate(d){
+  if(!d||!d.status) return;
+  const box = document.getElementById('cat-log');
+  if(d.output) box.textContent = d.output;
+  box.scrollTop = box.scrollHeight;
+  if(d.status!=='running'&&d.status!=='queued'){
+    stopPoll(`/api/cat/status/${catState.taskId}`);
+    catState.running = false;
+    document.getElementById('cat-run-btn').disabled = false;
+    document.getElementById('cat-run-btn').textContent = '开始养猫';
+    document.getElementById('cat-stop-btn').disabled = true;
+    fetch('/api/cat/config').then(r=>r.json()).then(cfg=>{
+      catState.progress = cfg.progress||catState.progress;
+      catRenderProgress();
+      dashRefresh();
+    }).catch(()=>{});
+  }
+}
+function catStop(){
+  fetch('/api/cat/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:catState.taskId||null})})
+    .then(r=>r.json()).then(d=>{ if(!d.success) alert(d.message||'停止失败'); }).catch(()=>{});
 }
 
 /* ===== 按钮点击反馈动画 ===== */
@@ -6213,7 +6770,7 @@ function toggleTheme(){
   try{ localStorage.setItem('bili-theme', isDark ? 'light' : 'dark'); }catch(e){}
 }
 
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();catScheduleLoad();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
 </script>
 <!-- 联想下拉（挂在 body 末尾，fixed 定位，不受 .card overflow/transform 影响） -->
 <div id="ts-autocomplete" style="display:none;position:fixed;z-index:9999;max-height:200px;overflow-y:auto;border-radius:var(--radius-sm)"></div>
