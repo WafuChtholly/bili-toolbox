@@ -1704,6 +1704,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         粉丝节养猫
       </button>
 
+      <button class="tab-btn" onclick="switchTab('medal')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9.2 13.2 7.5 20l4.5-2.6L16.5 20l-1.7-6.8"/></svg>
+        灯牌管理
+      </button>
+
       <button class="tab-btn" onclick="switchTab('schedmgr')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         定时任务
@@ -1743,7 +1748,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
   <div class="dash-summary">
     <div class="dash-stat"><div class="dash-stat-val" id="dash-sum-login">–</div><div class="dash-stat-label">已登录模块</div></div>
     <div class="dash-stat"><div class="dash-stat-val" id="dash-sum-run">–</div><div class="dash-stat-label">运行中任务</div></div>
-    <div class="dash-stat"><div class="dash-stat-val">8</div><div class="dash-stat-label">功能模块</div></div>
+    <div class="dash-stat"><div class="dash-stat-val">9</div><div class="dash-stat-label">功能模块</div></div>
   </div>
 
   <div class="dash-grid">
@@ -1841,6 +1846,17 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <span class="dash-badge off" id="dash-cat-login">检测中…</span>
         <span class="dash-badge off" id="dash-cat-run">空闲</span>
         <span class="dash-badge off" id="dash-cat-extra">–</span>
+      </div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-top">
+        <div class="dash-icon" style="background:rgba(255,152,0,0.1);color:#ff9800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9.2 13.2 7.5 20l4.5-2.6L16.5 20l-1.7-6.8"/></svg></div>
+        <button class="dash-goto" onclick="switchTab('medal')">进入 →</button>
+      </div>
+      <div class="dash-name">灯牌管理</div>
+      <div class="dash-desc">粉丝灯牌搜索 / 筛选 / 锁定与批量移除</div>
+      <div class="dash-badges">
+        <span class="dash-badge off" id="dash-medal-login">复用主账号</span>
       </div>
     </div>
     <div class="dash-card">
@@ -3161,6 +3177,73 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 </div>
 
 <!-- ============================================================ -->
+<!--  TAB: 灯牌管理 (medal)                                       -->
+<!-- ============================================================ -->
+<style>
+  .md-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:10px; align-content:start; }
+  .md-card { position:relative; display:flex; align-items:center; gap:8px; padding:12px; border:1px solid var(--card-border); border-radius:10px; background:var(--card-bg); cursor:pointer; user-select:none; transition:border-color .15s; }
+  .md-card:hover { border-color:var(--card-border-hover); }
+  .md-card.off { opacity:.65; border-style:dashed; }
+  .md-card.locked { border-color:var(--warn); background:rgba(229,148,43,0.08); }
+  .md-card.selected { border-color:var(--pink); background:rgba(247,113,159,0.10); }
+  .md-chip { padding:4px 12px; border:1px solid var(--card-border); border-radius:6px; background:var(--card-bg); color:var(--text-secondary); font-size:12px; cursor:pointer; }
+  .md-chip:hover { border-color:var(--pink); color:var(--pink); }
+  .md-chip.active { border-color:var(--pink); background:var(--pink); color:#fff; }
+</style>
+<div id="panel-medal" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-left">
+      <div class="panel-hero-icon" style="color:#ff9800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9.2 13.2 7.5 20l4.5-2.6L16.5 20l-1.7-6.8"/></svg></div>
+      <div>
+        <div class="panel-hero-title">灯牌管理</div>
+        <div class="panel-hero-desc">批量管理粉丝灯牌：搜索、筛选、排序、锁定保护与批量移除。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 账号 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">1</span>账号</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span id="md-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
+        <span style="font-size:12px;color:var(--text-tertiary)">复用「自动互动」主账号凭证</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 灯牌列表 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">2</span>灯牌列表</div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-pink btn-sm" id="md-fetch-btn" onclick="mdFetch()">拉取灯牌</button>
+        <input type="text" id="md-search" class="form-input" style="width:220px" placeholder="搜索：主播名 / 灯牌名 / UID" autocomplete="off" oninput="mdState.q=this.value;mdRender()">
+        <span id="md-filters" style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="md-chip active" onclick="mdSetFilter('all',this)">全部</button>
+          <button class="md-chip" onclick="mdSetFilter('lit',this)">已点亮</button>
+          <button class="md-chip" onclick="mdSetFilter('unlit',this)">未点亮</button>
+          <button class="md-chip" onclick="mdSetFilter('locked',this)">已锁定</button>
+        </span>
+        <select id="md-sort" class="form-input" style="width:auto" onchange="mdState.sort=this.value;mdRender()">
+          <option value="level">按等级 ↓</option>
+          <option value="name">按主播名</option>
+        </select>
+        <span id="md-meta" style="margin-left:auto;font-size:12px;color:var(--text-tertiary)">共 0 个灯牌</span>
+      </div>
+      <div id="md-grid" class="md-grid" style="margin-top:12px;max-height:520px;overflow-y:auto"></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+        <button class="btn btn-outline btn-sm" onclick="mdSelectAllVisible()">全选当前列表</button>
+        <button class="btn btn-outline btn-sm" onclick="mdClearSel()">清空选择</button>
+        <span id="md-selected-count" style="font-size:12px;color:var(--text-secondary)">已选 0 个</span>
+        <button class="btn btn-danger btn-sm" id="md-remove-btn" onclick="mdRemoveSelected()" style="margin-left:auto">批量移除所选</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:8px">锁定的灯牌受保护：不可勾选、批量移除时自动跳过。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!--  TAB: 定时任务管理 (schedmgr) — 集中管理所有定时任务        -->
 <!-- ============================================================ -->
 <div id="panel-schedmgr" class="panel">
@@ -3362,7 +3445,122 @@ function switchTab(name){
   if(name==='collection'){ withPanelLoader('panel-collection', () => collLoadStatus(), '正在加载合集助手状态…'); }
   if(name==='tagsearch'){ withPanelLoader('panel-tagsearch', () => tsLoadStatus(), '正在加载标签助手状态…'); }
   if(name==='cat'){ withPanelLoader('panel-cat', () => catLoad(), '正在加载粉丝节养猫…'); }
+  if(name==='medal'){ withPanelLoader('panel-medal', () => mdLoad(), '正在加载灯牌管理…'); }
   if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad(), catScheduleLoad()]), '正在加载定时任务状态…'); }
+}
+
+/* ===== TAB: 灯牌管理 (medal) ===== */
+const mdState = { medals: [], locks: new Set(), selected: new Set(), filter: 'all', sort: 'level', q: '' };
+
+function mdLoad(){
+  const info = document.getElementById('md-login-info');
+  return fetch('/api/medal/list').then(r=>r.json()).then(d=>{
+    if(!d.success){
+      if(info){ info.textContent = d.message || '未登录'; info.style.color = 'var(--warn)'; }
+      mdState.medals = [];
+      mdState.locks = new Set();
+      mdState.selected.clear();
+      mdRender();
+      return;
+    }
+    if(info){
+      info.innerHTML = '已登录 <b>UID: ' + d.uid + '</b>' + (d.uname ? ' · ' + _escHtml(d.uname) : '');
+      info.style.color = 'var(--success)';
+    }
+    mdState.medals = d.medals || [];
+    mdState.locks = new Set(d.locks || []);
+    mdState.selected.clear();
+    mdRender();
+  }).catch(()=>{ if(info){ info.textContent='加载失败'; info.style.color='var(--warn)'; } });
+}
+
+function mdSetFilter(f, btn){
+  mdState.filter = f;
+  document.querySelectorAll('#md-filters .md-chip').forEach(c=>c.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  mdRender();
+}
+
+function mdFiltered(){
+  let list = mdState.medals.slice();
+  const q = (mdState.q || '').trim().toLowerCase();
+  if(q) list = list.filter(m =>
+    (m.anchor_name || '').toLowerCase().includes(q) ||
+    (m.medal_name || '').toLowerCase().includes(q) ||
+    String(m.target_id || '').includes(q));
+  if(mdState.filter === 'lit') list = list.filter(m=>m.lit);
+  else if(mdState.filter === 'unlit') list = list.filter(m=>!m.lit);
+  else if(mdState.filter === 'locked') list = list.filter(m=>mdState.locks.has(m.target_id));
+  if(mdState.sort === 'name') list.sort((a,b)=>(a.anchor_name||'').localeCompare(b.anchor_name||'','zh'));
+  else list.sort((a,b)=>((b.level||0)-(a.level||0)) || (a.anchor_name||'').localeCompare(b.anchor_name||'','zh'));
+  return list;
+}
+
+function mdRender(){
+  const grid = document.getElementById('md-grid');
+  if(!grid) return;
+  const list = mdFiltered();
+  const meta = document.getElementById('md-meta');
+  if(meta) meta.textContent = '共 ' + mdState.medals.length + ' 个灯牌 · 显示 ' + list.length;
+  const sel = document.getElementById('md-selected-count');
+  if(sel) sel.textContent = '已选 ' + mdState.selected.size;
+  grid.innerHTML = list.map(m=>{
+    const locked = mdState.locks.has(m.target_id);
+    const seld = mdState.selected.has(m.target_id);
+    return '<div class="md-card' + (locked?' locked':'') + (seld?' selected':'') + (m.lit?'':' off') + '" onclick="mdToggleSel(\'' + m.target_id + '\')">'
+      + '<input type="checkbox" ' + (seld?'checked':'') + (locked?' disabled':'') + ' onclick="event.stopPropagation()" onchange="mdToggleSel(\'' + m.target_id + '\')">'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(m.anchor_name) + '</div>'
+      + '<div style="font-size:12px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + _escHtml(m.medal_name) + ' · Lv.' + (m.level||0) + (m.lit?'':' · 未点亮') + '</div>'
+      + '</div>'
+      + '<button class="btn btn-outline btn-sm" style="padding:2px 8px;font-size:12px" onclick="event.stopPropagation();mdToggleLock(\'' + m.target_id + '\',' + (!locked) + ')">' + (locked?'🔒 已锁':'锁定') + '</button>'
+      + '</div>';
+  }).join('') || '<div style="grid-column:1/-1;color:var(--text-tertiary);font-size:13px">暂无数据，点击「拉取灯牌」开始</div>';
+}
+
+function mdToggleSel(tid){
+  if(mdState.locks.has(tid)) return;
+  if(mdState.selected.has(tid)) mdState.selected.delete(tid); else mdState.selected.add(tid);
+  mdRender();
+}
+function mdSelectAllVisible(){
+  mdFiltered().forEach(m=>{ if(!mdState.locks.has(m.target_id)) mdState.selected.add(m.target_id); });
+  mdRender();
+}
+function mdClearSel(){ mdState.selected.clear(); mdRender(); }
+
+function mdToggleLock(tid, locked){
+  fetch('/api/medal/lock', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target_id:tid, locked:locked})})
+    .then(r=>r.json()).then(d=>{
+      if(d.success){
+        mdState.locks = new Set(d.locks || []);
+        if(locked) mdState.selected.delete(tid);
+        mdRender();
+      } else {
+        alert(d.message || '操作失败');
+      }
+    });
+}
+
+function mdFetch(){
+  const btn = document.getElementById('md-fetch-btn');
+  if(btn){ btn.disabled = true; btn.textContent = '拉取中…'; }
+  mdLoad().finally(()=>{ if(btn){ btn.disabled = false; btn.textContent = '拉取灯牌'; } });
+}
+
+function mdRemoveSelected(){
+  const ids = [...mdState.selected].filter(id=>!mdState.locks.has(id));
+  if(!ids.length){ alert('请先勾选要移除的灯牌（锁定项不可移除）'); return; }
+  if(!confirm('将移除 ' + ids.length + ' 个灯牌，操作不可撤销，继续？')) return;
+  const btn = document.getElementById('md-remove-btn');
+  if(btn){ btn.disabled = true; btn.textContent = '移除中…'; }
+  fetch('/api/medal/remove', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({target_ids:ids})})
+    .then(r=>r.json()).then(d=>{
+      if(!d.success){ alert(d.message || '移除失败'); return; }
+      alert('移除完成：成功 ' + d.ok + '，失败 ' + d.fail);
+      mdState.selected.clear();
+      return mdLoad();
+    }).finally(()=>{ if(btn){ btn.disabled = false; btn.textContent = '批量移除所选'; } });
 }
 
 /* ===== BV 动态列表 ===== */
@@ -6515,6 +6713,7 @@ function dashRender(){
   _dashBadge('dash-auto-login', d.autoLogin ? 'ok' : 'off', d.autoLogin ? '已登录' : '未登录');
   _dashBadge('dash-auto-run', d.autoRun ? 'run' : 'off', d.autoRun ? '运行中' : '空闲');
   _dashBadge('dash-booster-login', d.autoLogin ? 'ok' : 'off', '复用主账号');
+  _dashBadge('dash-medal-login', d.autoLogin ? 'ok' : 'off', '复用主账号');
   _dashBadge('dash-booster-run', d.boosterRun ? 'run' : (d.boosterErr ? 'err' : 'off'),
     d.boosterRun ? '运行中' : (d.boosterErr ? '有任务出错' : '空闲'));
   _dashBadge('dash-player-login', d.playerLogin ? 'ok' : 'off', d.playerLogin ? '已登录' : '未登录');
@@ -6545,10 +6744,10 @@ function dashRender(){
   _heroBadge('hero-tagsearch-badge', d.tsLogin, d.tsLogin ? '已登录' : '未登录');
   _heroBadge('hero-cat-badge', d.catRun ? true : d.catLogin, d.catRun ? '运行中' : (d.catLogin ? '已登录' : '未登录'));
 
-  const loginCount = [d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin, d.catLogin].filter(Boolean).length;
+  const loginCount = [d.autoLogin, d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin, d.catLogin].filter(Boolean).length;
   const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun, d.catRun].filter(Boolean).length;
   const sl = document.getElementById('dash-sum-login');
-  if(sl) sl.textContent = loginCount + ' / 8';
+  if(sl) sl.textContent = loginCount + ' / 9';
   const sr = document.getElementById('dash-sum-run');
   if(sr) sr.textContent = runCount;
 }

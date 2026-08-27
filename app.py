@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
 sys.path.insert(0, str(ROOT / "bili-cat"))
+sys.path.insert(0, str(ROOT / "bili-medal"))
 
 # Windows 控制台安全输出：避免 print() 因编码/fd 问题抛 [Errno 22] 导致业务中断
 class _SafeStream:
@@ -4886,6 +4887,86 @@ if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _signal_handler)
     except (ValueError, OSError, AttributeError):
         pass
+
+
+# =========================================================================
+#  粉丝灯牌管理模块 (bili-medal)
+# =========================================================================
+
+def _medal_cookies():
+    """从 auto 主账号凭证构建直播接口所需 cookies。"""
+    cred = _read_auto_cred()
+    if not cred:
+        return None, None
+    cookies = {
+        "SESSDATA": cred.get("sessdata", ""),
+        "bili_jct": cred.get("bili_jct", ""),
+        "DedeUserID": str(cred.get("dedeuserid", "")),
+    }
+    return cookies, cred
+
+
+@app.route("/api/medal/list")
+def medal_list():
+    """拉取当前主账号的全部粉丝灯牌 + 锁定列表。"""
+    from medal_helper import fetch_medals, read_locks
+    cookies, cred = _medal_cookies()
+    if not cookies:
+        return jsonify({"success": False, "message": "未登录，请先在「自动互动」模块扫码登录", "medals": [], "locks": []})
+    uid = str(cred.get("dedeuserid", ""))
+    loop = asyncio.new_event_loop()
+    try:
+        medals = loop.run_until_complete(fetch_medals(cookies))
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e), "medals": [], "locks": read_locks(uid)})
+    finally:
+        loop.close()
+    return jsonify({
+        "success": True,
+        "uid": uid,
+        "uname": cred.get("name", "") or _fetch_bili_uname(cred.get("sessdata", ""), uid),
+        "medals": medals,
+        "locks": read_locks(uid),
+    })
+
+
+@app.route("/api/medal/remove", methods=["POST"])
+def medal_remove():
+    """批量移除灯牌（锁定项由前端排除，后端二次校验）。"""
+    from medal_helper import batch_remove, read_locks
+    data = request.json or {}
+    ids = [str(x) for x in (data.get("target_ids") or [])]
+    if not ids:
+        return jsonify({"success": False, "message": "未选择任何灯牌"})
+    cookies, cred = _medal_cookies()
+    if not cookies:
+        return jsonify({"success": False, "message": "未登录，请先在「自动互动」模块扫码登录"})
+    uid = str(cred.get("dedeuserid", ""))
+    locked = set(read_locks(uid))
+    ids = [x for x in ids if x not in locked]
+    if not ids:
+        return jsonify({"success": False, "message": "所选灯牌均已锁定"})
+    loop = asyncio.new_event_loop()
+    try:
+        out = loop.run_until_complete(batch_remove(cookies, cred.get("bili_jct", ""), ids))
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+    finally:
+        loop.close()
+    return jsonify({"success": True, **out})
+
+
+@app.route("/api/medal/lock", methods=["POST"])
+def medal_lock():
+    """设置单个灯牌锁定状态。"""
+    from medal_helper import set_lock
+    data = request.json or {}
+    cred = _read_auto_cred()
+    if not cred:
+        return jsonify({"success": False, "message": "未登录"})
+    uid = str(cred.get("dedeuserid", ""))
+    locks = set_lock(uid, str(data.get("target_id", "")), bool(data.get("locked")))
+    return jsonify({"success": True, "locks": locks})
 
 
 @app.route("/")
