@@ -30,9 +30,8 @@ _ua_instance = UserAgent()
 # =========================================================================
 
 def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7):
-    day = date.today()
-    for _ in range(max_lookback_days):
-        day = day - timedelta(days=1)
+    for offset in range(max_lookback_days):
+        day = date.today() - timedelta(days=offset)
         proxy_url = f'https://checkerproxy.net/v1/landing/archive/{day.strftime("%Y-%m-%d")}'
         log(f'getting proxies from {proxy_url} ...')
         try:
