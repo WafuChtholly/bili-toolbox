@@ -517,6 +517,64 @@ def load_enabled_credentials() -> list:
     return result
 
 
+def load_enabled_account_dicts(limit: int = 0) -> list:
+    """加载所有启用账号的凭证（普通 dict 形式，主账号在前）。
+
+    返回 [(uid, cred_dict, meta), ...]，cred_dict 含
+    sessdata/bili_jct/ac_time_value/dedeuserid，可直接用于
+    需要普通 dict 凭证的接口（如刷量定时任务的投稿扫描）。
+    limit > 0 时只取前 limit 个账号。
+    """
+    _migrate_legacy_credential()
+    data = _load_accounts_data()
+    primary = str(data.get("primary", ""))
+    accounts = data.get("accounts", {})
+    ordered = sorted(
+        accounts.items(),
+        key=lambda kv: (kv[0] != primary, -float(kv[1].get("saved_at") or 0)),
+    )
+    result = []
+    for uid, acc in ordered:
+        if not acc.get("enabled", True):
+            continue
+        if not acc.get("sessdata"):
+            continue
+        result.append((uid, {
+            "sessdata": acc.get("sessdata", ""),
+            "bili_jct": acc.get("bili_jct", ""),
+            "ac_time_value": acc.get("ac_time_value", ""),
+            "dedeuserid": uid,
+        }, {"name": acc.get("name", "")}))
+        if limit and len(result) >= limit:
+            break
+    return result
+
+
+def load_account_dicts_by_uids(uids: list) -> list:
+    """按给定 UID 顺序返回对应账号的 dict 凭证 [(uid, cred_dict, meta), ...]。
+
+    跳过不存在或无 sessdata 的账号（不校验 enabled，由调用方决定范围）。
+    """
+    _migrate_legacy_credential()
+    data = _load_accounts_data()
+    accounts = data.get("accounts", {})
+    result = []
+    for raw in uids or []:
+        uid = str(raw or "").strip()
+        if not uid:
+            continue
+        acc = accounts.get(uid)
+        if not acc or not acc.get("sessdata"):
+            continue
+        result.append((uid, {
+            "sessdata": acc.get("sessdata", ""),
+            "bili_jct": acc.get("bili_jct", ""),
+            "ac_time_value": acc.get("ac_time_value", ""),
+            "dedeuserid": uid,
+        }, {"name": acc.get("name", "")}))
+    return result
+
+
 # 兼容旧调用（CLI 模式下不再需要）
 def qr_login(stop_event=None):
     """兼容接口，返回 None。请使用 WebUI 扫码登录。"""

@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
+import sys
 import threading
 import time
 
@@ -37,7 +39,15 @@ DEFAULT_OPTIONS = {
     "pet": True,         # 摸自己猫
     "petTop20": False,   # 摸前20猫咪
     "petAll": False,     # 摸全部猫咪
+    "lightMedal": False, # 弹幕保牌：熄灭发10句点亮，未熄灭发1句保持
 }
+
+# 弹幕保牌用语池（熄灭时随机取 10 句，需 >= 10）
+DANMAKU_POOL = [
+    "[喝彩]",
+    "[喝彩][喝彩]",
+    "[喝彩][喝彩][喝彩]"
+]
 
 # 浏览器 UA：B 站风控会拦截 python-httpx 默认 UA（返回 412）
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -110,12 +120,50 @@ def _live_headers() -> dict:
 
 
 # ==================== 粉丝牌拉取 ====================
-async def fetch_all_medals(cookies: dict, log=None, stop_event=None) -> list:
-    """分页拉取全部粉丝牌，返回 [{ruid, target_name, medal_name}, ...]"""
+async def _fetch_panel_items(client: httpx.AsyncClient, log=None, stop_event=None) -> list:
+    """分页拉取粉丝牌面板原始条目（去重后返回 item 列表）。"""
     log = log or _no_log
-    medals: list = []
+    items_all: list = []
     seen = set()
     page = 1
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+        url = f"{MEDAL_API}?page={page}&page_size={PAGE_SIZE}"
+        res = await run_action(
+            f"拉取粉丝牌第 {page} 页",
+            lambda u=url: _get_json(client, u),
+            log=log,
+            stop_event=stop_event,
+        )
+        if not res or res.get("code") != 0:
+            msg = (res or {}).get("message") if isinstance(res, dict) else None
+            raise RuntimeError(f"获取粉丝牌失败：{msg or '未知错误'}")
+
+        panel = res.get("data") or {}
+        items = []
+        if page == 1 and isinstance(panel.get("special_list"), list):
+            items.extend(panel["special_list"])
+        if isinstance(panel.get("list"), list):
+            items.extend(panel["list"])
+
+        for item in items:
+            medal = item.get("medal") or {}
+            ruid = medal.get("target_id")
+            if ruid and str(ruid) not in seen:
+                seen.add(str(ruid))
+                items_all.append(item)
+
+        log(f"  -> 第 {page} 页完成，累计 {len(items_all)} 个粉丝牌")
+        has_more = (panel.get("page_info") or {}).get("has_more")
+        if not has_more:
+            break
+        page += 1
+        await asyncio.sleep(1)
+    return items_all
+
+
+def _panel_client(cookies: dict) -> httpx.AsyncClient:
     headers = {
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9",
@@ -123,46 +171,38 @@ async def fetch_all_medals(cookies: dict, log=None, stop_event=None) -> list:
         "Origin": "https://link.bilibili.com",
         "Referer": "https://link.bilibili.com/p/center/index",
     }
-    async with httpx.AsyncClient(cookies=cookies, headers=headers, timeout=15) as client:
-        while True:
-            if stop_event is not None and stop_event.is_set():
-                break
-            url = f"{MEDAL_API}?page={page}&page_size={PAGE_SIZE}"
-            res = await run_action(
-                f"拉取粉丝牌第 {page} 页",
-                lambda u=url: _get_json(client, u),
-                log=log,
-                stop_event=stop_event,
-            )
-            if not res or res.get("code") != 0:
-                msg = (res or {}).get("message") if isinstance(res, dict) else None
-                raise RuntimeError(f"获取粉丝牌失败：{msg or '未知错误'}")
+    return httpx.AsyncClient(cookies=cookies, headers=headers, timeout=15)
 
-            panel = res.get("data") or {}
-            items = []
-            if page == 1 and isinstance(panel.get("special_list"), list):
-                items.extend(panel["special_list"])
-            if isinstance(panel.get("list"), list):
-                items.extend(panel["list"])
 
-            for item in items:
-                medal = item.get("medal") or {}
-                ruid = medal.get("target_id")
-                if ruid and str(ruid) not in seen:
-                    seen.add(str(ruid))
-                    medals.append({
-                        "ruid": str(ruid),
-                        "target_name": (item.get("anchor_info") or {}).get("nick_name") or "未知主播",
-                        "medal_name": medal.get("medal_name") or "",
-                    })
+def _item_summary(item: dict) -> dict:
+    """从面板原始条目提取粉丝牌摘要（含直播间 room_id 与开播状态）。"""
+    medal = item.get("medal") or {}
+    room = item.get("room_info") or {}
+    return {
+        "ruid": str(medal.get("target_id")),
+        "target_name": (item.get("anchor_info") or {}).get("nick_name") or "未知主播",
+        "medal_name": medal.get("medal_name") or "",
+        "is_lighted": int(medal.get("is_lighted") or 0),
+        "room_id": int(room.get("room_id") or 0),
+        "living_status": int(room.get("living_status") or 0),
+    }
 
-            log(f"  -> 第 {page} 页完成，累计 {len(medals)} 个粉丝牌")
-            has_more = (panel.get("page_info") or {}).get("has_more")
-            if not has_more:
-                break
-            page += 1
-            await asyncio.sleep(1)
-    return medals
+
+async def fetch_all_medals(cookies: dict, log=None, stop_event=None) -> list:
+    """分页拉取全部粉丝牌，返回 [{ruid, target_name, medal_name, is_lighted, room_id, living_status}, ...]"""
+    async with _panel_client(cookies) as client:
+        items = await _fetch_panel_items(client, log=log, stop_event=stop_event)
+    return [_item_summary(item) for item in items]
+
+
+async def fetch_medal_light_map(cookies: dict, log=None, stop_event=None) -> dict:
+    """分页拉取粉丝牌面板，返回 {ruid: {lighted, room_id, living}} 的最新状态。"""
+    async with _panel_client(cookies) as client:
+        items = await _fetch_panel_items(client, log=log, stop_event=stop_event)
+    return {
+        s["ruid"]: {"lighted": s["is_lighted"], "room_id": s["room_id"], "living": s["living_status"]}
+        for s in (_item_summary(item) for item in items)
+    }
 
 
 # ==================== 养猫活动 API ====================
@@ -233,6 +273,43 @@ async def api_feed_banner(client: httpx.AsyncClient, csrf: str, uid: str, ruid: 
     )
     resp.raise_for_status()
     return resp.json()
+
+
+# ==================== 弹幕发送（参考 bili-redpocket/livehelper.py 的实现） ====================
+def _ensure_redpocket_importable():
+    """把 bili-redpocket 目录加入 sys.path，便于导入 livehelper / blivelisten。"""
+    rp = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bili-redpocket"))
+    if rp not in sys.path:
+        sys.path.insert(0, rp)
+
+
+def _setup_blive_credential(cookies: dict):
+    """参考 livehelper.init_credential：将当前账号凭证写入 blivelisten 配置。"""
+    import uuid as _uuid
+    from blivelisten.utils import config as blive_cfg
+    sessdata = cookies.get("SESSDATA") or cookies.get("sessdata") or ""
+    bili_jct = cookies.get("bili_jct") or cookies.get("BILI_JCT") or ""
+    buvid3 = cookies.get("buvid3") or ""
+    if not buvid3:
+        buvid3 = f"XY{_uuid.uuid4().hex.upper()}"
+    blive_cfg.set_credential(sessdata, bili_jct, buvid3)
+    try:
+        login_uid = int(cookies.get("DedeUserID") or cookies.get("dedeuserid") or 0)
+    except (TypeError, ValueError):
+        login_uid = 0
+    blive_cfg.set("LOGIN_UID", login_uid)
+
+
+async def send_danmaku_like_livehelper(cookies: dict, room_id: int, text: str) -> bool:
+    """复用 livehelper 的弹幕发送（LiveRoom.send_danmaku，自动识别粉丝团表情标签）。"""
+    _ensure_redpocket_importable()
+    _setup_blive_credential(cookies)
+    import livehelper
+    from blivelisten.core.live import LiveRoom
+    from blivelisten.utils.utils import get_credential
+    live_room = LiveRoom(int(room_id), get_credential())
+    return await livehelper.send_danmaku(live_room, text)
 
 
 # ==================== 猫咪榜单 ====================
@@ -309,13 +386,42 @@ async def run_mass_petting(client: httpx.AsyncClient, csrf: str, my_uid: str,
 
 # ==================== 单房间主流程 ====================
 async def run_room(client: httpx.AsyncClient, csrf: str, uid: str, ruid: str, name: str,
-                   options: dict, log=None, stop_event=None) -> bool:
+                   options: dict, log=None, stop_event=None,
+                   light_info: dict | None = None,
+                   cookies: dict | None = None) -> bool:
     """对单个主播房间执行养猫流程，返回是否完整执行完毕。"""
     log = log or _no_log
     opts = {**DEFAULT_OPTIONS, **(options or {})}
 
     def _stopped() -> bool:
         return stop_event is not None and stop_event.is_set()
+
+    # 0. 弹幕保牌：熄灭发 10 句点亮，未熄灭发 1 句保持（未开播也照常发）
+    if opts.get("lightMedal"):
+        linfo = (light_info or {}).get(str(ruid)) or {}
+        lit = bool(linfo.get("lighted", 1))
+        room_id = int(linfo.get("room_id") or 0)
+        count = 1 if lit else min(10, len(DANMAKU_POOL))
+        live_tip = "" if linfo.get("living", 1) != 0 else "（未开播）"
+        log(f"  -> [保牌] {name} 牌子状态：{'点亮' if lit else '熄灭'}{live_tip}，准备发送 {count} 句弹幕")
+        try:
+            if not room_id:
+                room_id = await get_room_id_by_ruid(client, ruid)
+            for i, msg in enumerate(random.sample(DANMAKU_POOL, count), 1):
+                if _stopped():
+                    return False
+                ok = await send_danmaku_like_livehelper(cookies or {}, room_id, msg)
+                if ok:
+                    log(f"  -> [保牌] ({i}/{count}) ✅ {msg}")
+                else:
+                    log("  -> [保牌] 🛑 弹幕发送失败（风控限制等），跳过保牌")
+                    break
+                if i < count and await _sleep(random.uniform(3.0, 6.0), stop_event):
+                    return False
+        except Exception as e:
+            log(f"  -> [保牌] ⚠️ 跳过：{e}")
+        if await _sleep(1, stop_event):
+            return False
 
     log(f"  -> [领养] {name} ({ruid})")
     select_res = await run_action("领养", lambda: api_select_cat(client, csrf, ruid),
@@ -447,7 +553,8 @@ async def run_cat_loop(
 
     opts = {**DEFAULT_OPTIONS, **(options or {})}
     if not any([opts.get("sign"), opts.get("feedBanner"), opts.get("feed"),
-                opts.get("pet"), opts.get("petTop20"), opts.get("petAll")]):
+                opts.get("pet"), opts.get("petTop20"), opts.get("petAll"),
+                opts.get("lightMedal")]):
         raise RuntimeError("未勾选任何功能，请至少勾选一项功能开关")
 
     selected = [str(r) for r in (selected_ruids or [])]
@@ -467,6 +574,25 @@ async def run_cat_loop(
     summary = {"done": 0, "skipped_completed": completed_selected,
                "failed": 0, "stopped": False}
 
+    # 弹幕保牌：优先拉取最新状态（点亮/开播/room_id），失败时回退到缓存
+    light_info: dict | None = None
+    if opts.get("lightMedal"):
+        log("💡 [保牌] 正在获取最新牌子状态（点亮/开播）...")
+        try:
+            light_info = await fetch_medal_light_map(cookies, log=_no_log, stop_event=stop_event)
+        except Exception as e:
+            log(f"⚠️ [保牌] 获取最新状态失败，使用缓存：{e}")
+            light_info = {
+                str(m.get("ruid")): {
+                    "lighted": int(m.get("is_lighted", 1)),
+                    "room_id": int(m.get("room_id") or 0),
+                    "living": -1,
+                } for m in (medals or [])
+            }
+        unlit = [r for r in valid_selected if not (light_info.get(r) or {}).get("lighted", 1)]
+        not_live = [r for r in valid_selected if (light_info.get(r) or {}).get("living", 1) == 0]
+        log(f"💡 [保牌] 已选牌子中熄灭 {len(unlit)} 个（发10句点亮），其余发1句保持；其中未开播 {len(not_live)} 个（弹幕照常发送）。")
+
     headers = _live_headers()
     async with httpx.AsyncClient(cookies=cookies, headers=headers, timeout=15) as client:
         index = 0
@@ -480,7 +606,9 @@ async def run_cat_loop(
             log(f"📍 [{index}/{len(pending)}] 正在处理：{name} ({ruid})")
             try:
                 finished = await run_room(client, csrf, uid, ruid, name, opts,
-                                          log=log, stop_event=stop_event)
+                                          log=log, stop_event=stop_event,
+                                          light_info=light_info,
+                                          cookies=cookies)
                 if stop_event is not None and stop_event.is_set():
                     log(f"🛑 当前房间 {name} 未完整执行，未标记为已完成。")
                     summary["stopped"] = True

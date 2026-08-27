@@ -1252,8 +1252,15 @@ def _save_booster_config(cfg):
         yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
 
 
+def _booster_end_once(log_target: str):
+    """「once」模式下标记结束并写日志。"""
+    if _booster_schedule["running"] == "once":
+        _booster_schedule["running"] = False
+        _append_log(log_target, "=== 手动执行已结束 ===")
+
+
 def _booster_schedule_once(stop_event: threading.Event, log_target: str = "booster-schedule"):
-    """执行一次：获取投稿列表，为播放量低于阈值的稿件各创建一个 booster 任务。"""
+    """执行一次：按配置的账号数逐账号获取投稿列表，为播放量低于阈值的稿件各创建一个 booster 任务。"""
     cfg = _load_booster_config().get("schedule", {})
     try:
         threshold = int(cfg.get("play_threshold", 200))
@@ -1261,69 +1268,87 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
     except (TypeError, ValueError):
         threshold, target = 200, 200
 
-    cred = _read_auto_cred()
-    sessdata = cred.get("sessdata", "")
-    mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
-    if not sessdata or not mid:
-        _append_log(log_target, "[ERROR] 未登录，请先在「自动互动」页面登录账号")
-        if _booster_schedule["running"] == "once":
-            _booster_schedule["running"] = False
-            _append_log(log_target, "=== 手动执行已结束 ===")
-        return
-
-    _append_log(log_target, f"获取投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
+    account_uids = [str(u).strip() for u in (cfg.get("account_uids") or []) if str(u or "").strip()]
     try:
-        videos = _fetch_my_videos(cred)
+        from core import load_account_dicts_by_uids, load_enabled_account_dicts
+        if account_uids:
+            accounts = load_account_dicts_by_uids(account_uids)
+        else:
+            # 兼容旧配置：account_count 表示取前 N 个启用账号，默认 1（主账号）
+            try:
+                account_count = max(1, int(cfg.get("account_count", 1)))
+            except (TypeError, ValueError):
+                account_count = 1
+            accounts = load_enabled_account_dicts(limit=account_count)
     except Exception as e:
-        _append_log(log_target, f"[ERROR] 获取投稿列表失败: {e}")
-        if _booster_schedule["running"] == "once":
-            _booster_schedule["running"] = False
-            _append_log(log_target, "=== 手动执行已结束 ===")
+        accounts = []
+        _append_log(log_target, f"[ERROR] 加载账号凭证失败: {e}")
+    if not accounts:
+        # 回退：多账号存储为空时直接用主账号凭证文件
+        cred = _read_auto_cred()
+        mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
+        if cred.get("sessdata") and mid:
+            accounts = [("", cred, {"name": ""})]
+    if not accounts:
+        _append_log(log_target, "[ERROR] 未登录，请先在「自动互动」页面登录账号")
+        _booster_end_once(log_target)
         return
 
-    if stop_event.is_set():
-        if _booster_schedule["running"] == "once":
-            _booster_schedule["running"] = False
-            _append_log(log_target, "=== 手动执行已结束 ===")
-        return
-
-    low = [v for v in videos if int(v.get("play", 0) or 0) < threshold]
-    if not low:
-        _append_log(log_target, f"共 {len(videos)} 个投稿，无播放量低于 {threshold} 的稿件，本轮跳过")
-        if _booster_schedule["running"] == "once":
-            _booster_schedule["running"] = False
-            _append_log(log_target, "=== 手动执行已结束 ===")
-        return
-
-    _append_log(log_target, f"共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
-                ", ".join(v["bvid"] for v in low))
-    for v in low:
+    total_created = 0
+    for uid, cred, meta in accounts:
         if stop_event.is_set():
             _append_log(log_target, "[SYSTEM] 正在停止...")
             break
-        tid = str(uuid.uuid4())[:8]
-        with booster_lock:
-            booster_tasks[tid] = {
-                "status": "queued",
-                "start": time.time(),
-                "end": None,
-                "bv": v["bvid"],
-                "title": v.get("title", ""),
-                "target": target,
-                "max_rounds": 5,
-                "refetch_proxies": True,
-                "stop_event": stop_event,
-                "log_target": log_target,  # 便于子任务日志回流
-            }
-        with log_lock:
-            log_buffers[tid] = []
-        _append_log(log_target, f"已创建任务 {tid} → {v['bvid']}《{v.get('title','')}》（当前播放 {v.get('play', 0)}）")
-        t = threading.Thread(target=_run_booster_task, args=(tid, [v["bvid"]], target, stop_event, 5, True), daemon=True)
-        t.start()
+        name = meta.get("name") or (f"UID {uid}" if uid else "主账号")
+        _append_log(log_target, f"获取账号【{name}】的投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
+        try:
+            videos = _fetch_my_videos(cred)
+        except Exception as e:
+            _append_log(log_target, f"[ERROR] 账号【{name}】获取投稿列表失败: {e}")
+            continue
+
+        if stop_event.is_set():
+            _append_log(log_target, "[SYSTEM] 正在停止...")
+            break
+
+        low = [v for v in videos if int(v.get("play", 0) or 0) < threshold]
+        if not low:
+            _append_log(log_target, f"账号【{name}】共 {len(videos)} 个投稿，无播放量低于 {threshold} 的稿件，本轮跳过")
+            continue
+
+        _append_log(log_target, f"账号【{name}】共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
+                    ", ".join(v["bvid"] for v in low))
+        for v in low:
+            if stop_event.is_set():
+                _append_log(log_target, "[SYSTEM] 正在停止...")
+                break
+            tid = str(uuid.uuid4())[:8]
+            with booster_lock:
+                booster_tasks[tid] = {
+                    "status": "queued",
+                    "start": time.time(),
+                    "end": None,
+                    "bv": v["bvid"],
+                    "title": v.get("title", ""),
+                    "target": target,
+                    "max_rounds": 5,
+                    "refetch_proxies": True,
+                    "stop_event": stop_event,
+                    "log_target": log_target,  # 便于子任务日志回流
+                }
+            with log_lock:
+                log_buffers[tid] = []
+            _append_log(log_target, f"已创建任务 {tid} → {v['bvid']}《{v.get('title','')}》（当前播放 {v.get('play', 0)}）")
+            t = threading.Thread(target=_run_booster_task, args=(tid, [v["bvid"]], target, stop_event, 5, True), daemon=True)
+            t.start()
+            total_created += 1
 
     # 「once」模式下不进入循环：等所有派生的 booster 子任务都结束后才标记结束
     if _booster_schedule["running"] == "once":
-        threading.Thread(target=_wait_once_done, args=(log_target,), daemon=True).start()
+        if total_created:
+            threading.Thread(target=_wait_once_done, args=(log_target,), daemon=True).start()
+        else:
+            _booster_end_once(log_target)
 
 
 def _booster_schedule_loop():
@@ -1389,6 +1414,7 @@ def booster_schedule_config_get():
         "interval_minutes": cfg.get("interval_minutes", 60),
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
+        "account_uids": cfg.get("account_uids") or [],
     })
 
 
@@ -1401,13 +1427,17 @@ def booster_schedule_config_save():
         target = int(data.get("target_play", 200))
     except (TypeError, ValueError):
         return jsonify({"success": False, "message": "配置项必须为整数"}), 400
+    account_uids = [str(u).strip() for u in (data.get("account_uids") or []) if str(u or "").strip()]
     if interval < 1 or threshold < 1 or target < 1:
         return jsonify({"success": False, "message": "配置项必须为正整数"}), 400
+    if not account_uids:
+        return jsonify({"success": False, "message": "请至少选择一个刷量账号"}), 400
     cfg = _load_booster_config()
     cfg["schedule"] = {
         "interval_minutes": interval,
         "play_threshold": threshold,
         "target_play": target,
+        "account_uids": account_uids,
     }
     _save_booster_config(cfg)
     return jsonify({"success": True})
@@ -1484,6 +1514,7 @@ def booster_schedule_status():
         "interval_minutes": cfg.get("interval_minutes", 60),
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
+        "account_uids": cfg.get("account_uids") or [],
         "last_run": _booster_schedule["last_run"],
         "run_count": _booster_schedule["run_count"],
         "active_tasks": active_bvids,
@@ -4294,6 +4325,7 @@ CAT_PROGRESS_FILE = CAT_DATA_DIR / "cat_progress.json"
 _CAT_DEFAULT_OPTIONS = {
     "sign": True, "feedBanner": False, "feed": True,
     "pet": True, "petTop20": False, "petAll": False,
+    "lightMedal": False,
 }
 
 cat_task_status: dict = {}

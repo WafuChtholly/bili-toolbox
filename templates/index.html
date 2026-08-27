@@ -3140,6 +3140,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <label class="switch-row"><span class="sw-ico">🐾</span><span>摸自己猫</span><input type="checkbox" id="cat-opt-pet" checked onchange="catPersist()"></label>
         <label class="switch-row"><span class="sw-ico">🏆</span><span>摸前20猫咪</span><input type="checkbox" id="cat-opt-petTop20" onchange="catPersist()"></label>
         <label class="switch-row"><span class="sw-ico">🐈</span><span>摸全部猫咪</span><input type="checkbox" id="cat-opt-petAll" onchange="catPersist()"></label>
+        <label class="switch-row" title="检查牌子点亮状态：熄灭则在直播间发 10 句弹幕点亮，未熄灭发 1 句保持"><span class="sw-ico">💡</span><span>弹幕保牌</span><input type="checkbox" id="cat-opt-lightMedal" onchange="catPersist()"></label>
       </div>
     </div>
   </div>
@@ -3301,7 +3302,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 
       <!-- ===== 子任务 2：低播放量刷量 ===== -->
       <div id="sched-subtab-booster" class="sub-tab-panel" style="display:none">
-        <div class="soft-note blue">💡 定时扫描你的投稿，对播放量低于阈值的稿件自动创建刷量任务（共用主账号凭证）。</div>
+        <div class="soft-note blue">💡 定时扫描投稿，对播放量低于阈值的稿件自动创建刷量任务（勾选要刷量的账号）。</div>
+        <div class="form-group">
+          <label class="form-label">刷量账号</label>
+          <div id="bst-sched-accounts" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
         <div class="form-group">
           <label class="form-label">扫描配置</label>
           <div class="schedule-row">
@@ -4214,6 +4219,13 @@ function switchSchedSubTab(tab){
     if(t===tab){panel.style.display='block';btn.classList.add('active');}
     else{panel.style.display='none';btn.classList.remove('active');}
   });
+  if(tab==='booster'){
+    // 刷新账号列表，保证新登录的账号可选
+    fetch('/api/auto/accounts').then(r=>r.json()).then(d=>{
+      bstSchedAccounts=(d.accounts||[]).filter(a=>a.has_sessdata);
+      bstAccountsRender();
+    }).catch(()=>{});
+  }
 }
 
 /* ============================================================
@@ -4634,11 +4646,52 @@ let bstSchedPollTimer=null;
 let bstSchedLastLogLen=-1;
 let bstSchedIdleTicks=0;
 
+let bstSchedAccounts=[];        // [{uid,name,is_primary,has_sessdata}]
+let bstSchedSelectedUids=null;  // null 表示尚未保存过配置，默认主账号
+
+function bstGetSelectedUids(){
+  if(bstSchedSelectedUids&&bstSchedSelectedUids.length)return bstSchedSelectedUids.slice();
+  const p=bstSchedAccounts.find(a=>a.is_primary)||bstSchedAccounts[0];
+  return p?[p.uid]:[];
+}
+
+function bstAccountsRender(){
+  const box=document.getElementById('bst-sched-accounts');
+  if(!box)return;
+  if(!bstSchedAccounts.length){
+    box.innerHTML='<span style="font-size:12px;color:var(--text-tertiary)">暂无账号，请先在「自动互动」页面登录</span>';
+    return;
+  }
+  const sel=bstGetSelectedUids();
+  box.innerHTML=bstSchedAccounts.map(a=>{
+    const checked=sel.includes(a.uid);
+    const name=a.name?_escHtml(a.name):'(未命名)';
+    return '<label class="video-pick-item'+(checked?' selected':'')+'" style="flex:0 0 auto;padding:6px 12px" title="UID: '+a.uid+'">'
+      +'<input type="checkbox" data-uid="'+a.uid+'"'+(checked?' checked':'')+' onchange="bstAccountCheckChange(this)">'
+      +'<span style="font-size:13px">'+(a.is_primary?'★ ':'')+name+'</span></label>';
+  }).join('');
+}
+
+function bstAccountCheckChange(el){
+  const uid=el.dataset.uid;
+  let cur=bstGetSelectedUids();
+  if(el.checked){ if(!cur.includes(uid))cur.push(uid); }
+  else{ cur=cur.filter(u=>u!==uid); }
+  bstSchedSelectedUids=cur;
+  el.closest('.video-pick-item').classList.toggle('selected',el.checked);
+}
+
 function bstScheduleLoad(){
-  const p = fetch('/api/booster/schedule/config').then(r=>r.json()).then(c=>{
+  const p = Promise.all([
+    fetch('/api/booster/schedule/config').then(r=>r.json()),
+    fetch('/api/auto/accounts').then(r=>r.json()).catch(()=>({accounts:[]})),
+  ]).then(([c,d])=>{
     document.getElementById('bst-sched-interval').value=c.interval_minutes;
     document.getElementById('bst-sched-threshold').value=c.play_threshold;
     document.getElementById('bst-sched-target').value=c.target_play;
+    bstSchedAccounts=(d.accounts||[]).filter(a=>a.has_sessdata);
+    bstSchedSelectedUids=(Array.isArray(c.account_uids)&&c.account_uids.length)?c.account_uids.map(String):null;
+    bstAccountsRender();
   }).catch(()=>{});
   bstSchedulePollTick();
   return p;
@@ -4648,10 +4701,13 @@ function bstScheduleSave(silent){
   const interval=parseInt(document.getElementById('bst-sched-interval').value)||60;
   const threshold=parseInt(document.getElementById('bst-sched-threshold').value)||200;
   const target=parseInt(document.getElementById('bst-sched-target').value)||200;
+  const uids=bstGetSelectedUids();
   if(interval<1||threshold<1||target<1){alert('配置项必须为正整数');return Promise.resolve(false);}
+  if(!uids.length){alert('请至少选择一个刷量账号');return Promise.resolve(false);}
   return fetch('/api/booster/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target})
+    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,account_uids:uids})
   }).then(r=>r.json()).then(d=>{
+    if(!d.success&&!silent)alert(d.message||'保存失败');
     if(d.success&&!silent)alert('配置已保存');
     return d.success;
   }).catch(e=>{if(!silent)alert('保存失败: '+e);return false;});
@@ -4675,7 +4731,9 @@ function bstScheduleUpdateStatus(s){
   if(s.running){
     setDot('bst-sched-dot','run');
     const mode = s.running === true ? '定时' : '手动执行中';
-    let txt=`${mode} · 阈值 ${s.play_threshold} · 目标 ${s.target_play}`;
+    const uids=s.account_uids||[];
+    const names=uids.map(u=>{const a=bstSchedAccounts.find(x=>x.uid===u);return a?(a.name||('UID '+u)):('UID '+u);}).join('、');
+    let txt=`${mode} · 刷量账号 ${names||'主账号'} · 阈值 ${s.play_threshold} · 目标 ${s.target_play}`;
     if(s.last_run){txt+=` · 已执行 ${s.run_count} 次`;}
     if(s.active_tasks&&s.active_tasks.length){
       const summary=s.active_tasks.map(t=>`${t.bv}(${t.status})`).join(' ');
@@ -6769,6 +6827,7 @@ function catOptions(){
     pet: document.getElementById('cat-opt-pet').checked,
     petTop20: document.getElementById('cat-opt-petTop20').checked,
     petAll: document.getElementById('cat-opt-petAll').checked,
+    lightMedal: document.getElementById('cat-opt-lightMedal').checked,
   };
 }
 function catLoad(){
@@ -6784,6 +6843,7 @@ function catLoad(){
     document.getElementById('cat-opt-pet').checked = o.pet!==false;
     document.getElementById('cat-opt-petTop20').checked = !!o.petTop20;
     document.getElementById('cat-opt-petAll').checked = !!o.petAll;
+    document.getElementById('cat-opt-lightMedal').checked = !!o.lightMedal;
     document.getElementById('cat-exclude-dead').checked = !!cfg.exclude_dead;
     if(catApplyExclude()>0) catPersist();
     const loginEl = document.getElementById('cat-login-info');
@@ -6865,14 +6925,14 @@ function catRenderResults(){
       <input type="checkbox" ${checked} onchange="catToggle('${catEsc(item.ruid)}',this.checked)">
       <span style="overflow:hidden;flex:1">
         <span style="display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.target_name)}</span>
-        <span style="display:block;font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.medal_name||'无牌子')} · ${catEsc(item.ruid)}</span>
+        <span style="display:block;font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.medal_name||'无牌子')} · ${catEsc(item.ruid)}${item.is_lighted===0?' <span style="color:var(--warn)">· 已熄灭</span>':''}${item.living_status===0?' <span style="color:var(--text-tertiary)">· 未开播</span>':''}</span>
       </span>
     </label>`;
   }).join('');
   let html = `<button class="btn btn-outline btn-sm" ${catState.page<=1?'disabled':''} onclick="catGoPage(${catState.page-1})">上一页</button>`;
   for(let i=1;i<=totalPages;i++){
     if(totalPages<=7||Math.abs(i-catState.page)<=1||i===1||i===totalPages){
-      html += `<button class="btn btn-sm ${i===catState.page?'btn-pink':'btn-outline'}" onclick="catGoPage(${i})">${i}</button>`;
+      html += `<button class="btn btn-sm ${i===catState.page?'btn-pink':'btn-outline'}" style="width:auto;min-width:36px" onclick="catGoPage(${i})">${i}</button>`;
     }else if(i===2&&catState.page>3){
       html += '<span style="color:var(--text-tertiary)">…</span>';
     }else if(i===totalPages-1&&catState.page<totalPages-2){
