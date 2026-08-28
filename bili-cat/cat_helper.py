@@ -242,6 +242,35 @@ async def get_room_id_by_ruid(client: httpx.AsyncClient, ruid: str) -> int:
     raise RuntimeError(f"未找到主播 {ruid} 的直播间")
 
 
+async def get_living_status_by_ruid(client: httpx.AsyncClient, ruid: str) -> int:
+    """查询主播开播状态：1=开播，0=未开播。"""
+    try:
+        res = await _get_json(
+            client,
+            f"https://api.live.bilibili.com/room/v1/Room/get_status_info_by_uids?uids[]={ruid}")
+        if res.get("code") == 0:
+            info = (res.get("data") or {}).get(str(ruid)) or {}
+            return int(info.get("live_status") or 0)
+    except Exception:
+        pass
+    return 0
+
+
+async def api_like_room(client: httpx.AsyncClient, csrf: str, room_id: int, ruid: str) -> bool:
+    """直播间点赞 1 次（粉丝牌任务：开播时点赞30次）。"""
+    resp = await client.post(
+        "https://api.live.bilibili.com/xlive/web-ucenter/v1/interact/likeInteract",
+        data={"click_time": "1", "roomid": str(room_id), "csrf": csrf, "csrf_token": csrf},
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": BROWSER_UA,
+            "Referer": f"https://live.bilibili.com/{room_id}",
+        },
+    )
+    resp.raise_for_status()
+    return (resp.json() or {}).get("code") == 0
+
+
 async def api_feed_banner(client: httpx.AsyncClient, csrf: str, uid: str, ruid: str) -> dict:
     """投喂粉丝手幅*1（消耗1电池），需先查 room_id。"""
     room_id = await get_room_id_by_ruid(client, ruid)
@@ -396,28 +425,60 @@ async def run_room(client: httpx.AsyncClient, csrf: str, uid: str, ruid: str, na
     def _stopped() -> bool:
         return stop_event is not None and stop_event.is_set()
 
-    # 0. 弹幕保牌：熄灭发 10 句点亮，未熄灭发 1 句保持（未开播也照常发）
+    # 0. 保牌：开播点 30 赞；未开播时牌子点亮发 10 句弹幕、牌子熄灭跳过
     if opts.get("lightMedal"):
         linfo = (light_info or {}).get(str(ruid)) or {}
         lit = bool(linfo.get("lighted", 1))
         room_id = int(linfo.get("room_id") or 0)
-        count = 1 if lit else min(10, len(DANMAKU_POOL))
-        live_tip = "" if linfo.get("living", 1) != 0 else "（未开播）"
-        log(f"  -> [保牌] {name} 牌子状态：{'点亮' if lit else '熄灭'}{live_tip}，准备发送 {count} 句弹幕")
+        living = int(linfo.get("living", -1))
         try:
-            if not room_id:
-                room_id = await get_room_id_by_ruid(client, ruid)
-            for i, msg in enumerate(random.sample(DANMAKU_POOL, count), 1):
-                if _stopped():
-                    return False
-                ok = await send_danmaku_like_livehelper(cookies or {}, room_id, msg)
-                if ok:
-                    log(f"  -> [保牌] ({i}/{count}) ✅ {msg}")
-                else:
-                    log("  -> [保牌] 🛑 弹幕发送失败（风控限制等），跳过保牌")
-                    break
-                if i < count and await _sleep(random.uniform(3.0, 6.0), stop_event):
-                    return False
+            if living < 0:  # 状态未知（缓存回退），实时查询开播状态
+                if not room_id:
+                    room_id = await get_room_id_by_ruid(client, ruid)
+                living = await get_living_status_by_ruid(client, ruid)
+            if living != 0:
+                # 开播：无论牌子亮灭，点赞 30 次
+                if not room_id:
+                    room_id = await get_room_id_by_ruid(client, ruid)
+                log(f"  -> [保牌] {name} 开播中（牌子{'点亮' if lit else '熄灭'}），准备点赞 30 次")
+                ok_cnt = 0
+                for i in range(1, 31):
+                    if _stopped():
+                        return False
+                    try:
+                        ok = await api_like_room(client, csrf, room_id, ruid)
+                    except Exception as e:
+                        log(f"  -> [保牌] 🛑 点赞失败（{e}），跳过保牌")
+                        break
+                    if ok:
+                        ok_cnt += 1
+                        log(f"  -> [保牌] ({i}/30) ✅ 点赞成功")
+                    else:
+                        log("  -> [保牌] 🛑 点赞失败，跳过保牌")
+                        break
+                    if i < 30 and await _sleep(random.uniform(0.5, 1.5), stop_event):
+                        return False
+                if ok_cnt:
+                    log(f"  -> [保牌] ✅ 点赞完成 {ok_cnt}/30")
+            elif lit:
+                # 未开播 + 牌子点亮：发 10 句弹幕
+                count = min(10, len(DANMAKU_POOL))
+                log(f"  -> [保牌] {name} 牌子点亮、未开播，准备发送 {count} 句弹幕")
+                if not room_id:
+                    room_id = await get_room_id_by_ruid(client, ruid)
+                for i, msg in enumerate(random.sample(DANMAKU_POOL, count), 1):
+                    if _stopped():
+                        return False
+                    ok = await send_danmaku_like_livehelper(cookies or {}, room_id, msg)
+                    if ok:
+                        log(f"  -> [保牌] ({i}/{count}) ✅ {msg}")
+                    else:
+                        log("  -> [保牌] 🛑 弹幕发送失败（风控限制等），跳过保牌")
+                        break
+                    if i < count and await _sleep(random.uniform(3.0, 6.0), stop_event):
+                        return False
+            else:
+                log(f"  -> [保牌] {name} 牌子熄灭且未开播，跳过")
         except Exception as e:
             log(f"  -> [保牌] ⚠️ 跳过：{e}")
         if await _sleep(1, stop_event):
@@ -589,9 +650,12 @@ async def run_cat_loop(
                     "living": -1,
                 } for m in (medals or [])
             }
-        unlit = [r for r in valid_selected if not (light_info.get(r) or {}).get("lighted", 1)]
-        not_live = [r for r in valid_selected if (light_info.get(r) or {}).get("living", 1) == 0]
-        log(f"💡 [保牌] 已选牌子中熄灭 {len(unlit)} 个（发10句点亮），其余发1句保持；其中未开播 {len(not_live)} 个（弹幕照常发送）。")
+        live_set = [r for r in valid_selected if (light_info.get(r) or {}).get("living", -1) == 1]
+        off_set = [r for r in valid_selected if (light_info.get(r) or {}).get("living", -1) == 0]
+        dark_off = sum(1 for r in off_set if not (light_info.get(r) or {}).get("lighted", 1))
+        unk_cnt = len(valid_selected) - len(live_set) - len(off_set)
+        log(f"💡 [保牌] 开播 {len(live_set)} 个（点赞30次）；未开播 {len(off_set)} 个，其中点亮 {len(off_set) - dark_off} 个（发10句弹幕）、熄灭 {dark_off} 个（跳过）"
+            + (f"；状态未知 {unk_cnt} 个（运行时实时查询）" if unk_cnt else "") + "。")
 
     headers = _live_headers()
     async with httpx.AsyncClient(cookies=cookies, headers=headers, timeout=15) as client:
