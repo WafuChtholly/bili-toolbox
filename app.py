@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 
 # ---------------------------------------------------------------------------
 # 路径 & 导入设置
@@ -33,6 +33,7 @@ sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
 sys.path.insert(0, str(ROOT / "bili-cat"))
 sys.path.insert(0, str(ROOT / "bili-medal"))
+sys.path.insert(0, str(ROOT / "bili-monitor"))
 
 # Windows 控制台安全输出：避免 print() 因编码/fd 问题抛 [Errno 22] 导致业务中断
 class _SafeStream:
@@ -958,13 +959,19 @@ def booster_webhook_poll():
     return jsonify({"bvs": bvs, "enabled": booster_webhook_enabled})
 
 
+@app.route("/api/booster/webhook/state")
+def booster_webhook_state():
+    """查询 webhook 监听状态（不消费推送队列），供页面刷新后同步 UI。"""
+    return jsonify({"enabled": booster_webhook_enabled})
+
+
 def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True):
     # 等待信号量：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
     _booster_semaphore.acquire()
     try:
-        # 排队期间可能已被取消（stop 端点会设为 stopping）
+        # 排队期间可能已被取消（stop 端点会设为 stopping），或所属任务组已被停止（event 已置位）
         with booster_lock:
-            if booster_tasks[task_id]["status"] in ("cancelled", "stopping"):
+            if booster_tasks[task_id]["status"] in ("cancelled", "stopping") or (stop_event is not None and stop_event.is_set()):
                 booster_tasks[task_id]["status"] = "cancelled"
                 booster_tasks[task_id]["end"] = time.time()
                 return
@@ -1136,6 +1143,25 @@ def booster_stop():
             se.set()
         st["status"] = "stopping"
     return jsonify({"success": True})
+
+
+@app.route("/api/booster/stop-all", methods=["POST"])
+def booster_stop_all():
+    """停止全部 booster 任务：逐个置位独立 stop_event（手动/webhook 任务与定时子任务互不影响），并停止定时任务。"""
+    stopped = 0
+    with booster_lock:
+        for st in booster_tasks.values():
+            if st.get("status") in ("completed", "error", "cancelled"):
+                continue
+            se = st.get("stop_event")
+            if se:
+                se.set()
+            st["status"] = "cancelled"
+            stopped += 1
+    if _booster_schedule["running"]:
+        _booster_schedule["stop_event"].set()
+    print(f"[BOOSTER] 已请求停止全部任务（{stopped} 个）")
+    return jsonify({"success": True, "stopped": stopped})
 
 
 @app.route("/api/booster/status/<task_id>")
@@ -1467,6 +1493,15 @@ def booster_schedule_stop():
     if not _booster_schedule["running"]:
         return jsonify({"success": True, "message": "未在运行"})
     _booster_schedule["stop_event"].set()
+    # 同步取消持有该 event 的所有未结束子任务（含排队中的），排队任务将直接跳过不再执行
+    with booster_lock:
+        ev = _booster_schedule["stop_event"]
+        for st in booster_tasks.values():
+            if st.get("stop_event") is not ev:
+                continue
+            if st.get("status") in ("completed", "error", "cancelled"):
+                continue
+            st["status"] = "cancelled"
     return jsonify({"success": True})
 
 
@@ -4751,6 +4786,279 @@ def cat_schedule_status():
 
 
 # =========================================================================
+#  八-B、稿件监控 (bili-monitor)
+# =========================================================================
+
+MONITOR_CONFIG_FILE = CONFIG_DIR / "monitor_config.yaml"
+MONITOR_DATA_DIR = ROOT / "data" / "bili-monitor"
+MONITOR_ARCHIVE_DIR = MONITOR_DATA_DIR / "archive"
+MONITOR_INDEX_FILE = MONITOR_ARCHIVE_DIR / "index.json"
+# 监控日志统一挂在 "monitor" 任务名下，前端轮询该缓冲
+MONITOR_LOG_ID = "monitor"
+
+_monitor_status = {
+    "running": False,
+    "task_id": None,
+    "stop_event": threading.Event(),
+    "last_run": None,
+    "next_run": None,
+    "run_count": 0,
+    "last_error": None,
+}
+
+
+def _load_monitor_config() -> dict:
+    import yaml
+    cfg = {}
+    if MONITOR_CONFIG_FILE.exists():
+        try:
+            with open(MONITOR_CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+        except Exception:
+            cfg = {}
+    cfg.setdefault("bvids", [])
+    cfg.setdefault("interval", 3600)
+    return cfg
+
+
+def _save_monitor_config(cfg: dict):
+    import yaml
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(MONITOR_CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+
+def _monitor_cookies_from_cred() -> dict:
+    """从 auto 模块凭证构建监控访问所需的登录 cookies（未登录时返回空 cookie 集）。"""
+    cred = _read_auto_cred()
+    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
+    return {
+        "SESSDATA": cred.get("sessdata", ""),
+        "bili_jct": cred.get("bili_jct", ""),
+        "DedeUserID": uid,
+        "buvid3": cred.get("buvid3", ""),
+    }
+
+
+def _monitor_clean_bvids(bvids) -> list:
+    """去重并提取规范 BV 号（支持 URL / 纯文本，仅保留 12 位合法 BV）。"""
+    from monitor_helper import extract_bvid, is_valid_bvid
+    seen = set()
+    out = []
+    for x in bvids or []:
+        bv = extract_bvid(x)
+        if is_valid_bvid(bv) and bv not in seen:
+            seen.add(bv)
+            out.append(bv)
+    return out
+
+
+def _run_monitor_worker(bvids, interval, task_id):
+    """后台线程：执行监控循环，日志写入 monitor 缓冲。"""
+    from monitor_helper import run_monitor_loop
+
+    def _log(line: str):
+        _append_log(MONITOR_LOG_ID, f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
+
+    def _on_next(deadline_ts: float):
+        _monitor_status["next_run"] = deadline_ts
+        _monitor_status["run_count"] += 1
+
+    # 复用 auto 登录凭证，以登录态截图
+    cookies = _monitor_cookies_from_cred()
+    if not cookies.get("SESSDATA"):
+        _append_log(MONITOR_LOG_ID,
+                    "[SYSTEM] 未检测到登录凭证，将以游客身份访问；如需登录态请先在「自动互动」页扫码登录")
+    else:
+        _append_log(MONITOR_LOG_ID,
+                    "[SYSTEM] 已加载登录凭证，将以登录态访问稿件页面")
+
+    _monitor_status["last_run"] = time.time()
+    try:
+        run_monitor_loop(bvids, interval, MONITOR_ARCHIVE_DIR, MONITOR_INDEX_FILE,
+                         log=_log, stop_event=_monitor_status["stop_event"],
+                         next_cb=_on_next, cookies=cookies)
+    except Exception as e:
+        _monitor_status["last_error"] = str(e)
+        _append_log(MONITOR_LOG_ID, f"[ERROR] {e}")
+    finally:
+        _monitor_status["running"] = False
+        _monitor_status["next_run"] = None
+
+
+@app.route("/api/monitor/config")
+def monitor_config():
+    cfg = _load_monitor_config()
+    return jsonify({
+        "bvids": cfg.get("bvids", []),
+        "interval": cfg.get("interval", 3600),
+        "running": _monitor_status["running"],
+    })
+
+
+@app.route("/api/monitor/config", methods=["POST"])
+def monitor_config_save():
+    data = request.json or {}
+    cfg = _load_monitor_config()
+    if "bvids" in data:
+        cfg["bvids"] = _monitor_clean_bvids(data.get("bvids"))
+    if "interval" in data:
+        try:
+            cfg["interval"] = max(60, int(data["interval"]))
+        except (TypeError, ValueError):
+            pass
+    _save_monitor_config(cfg)
+    return jsonify({"success": True})
+
+
+@app.route("/api/monitor/start", methods=["POST"])
+def monitor_start():
+    if _monitor_status["running"]:
+        return jsonify({"error": "稿件监控已在运行"}), 409
+    data = request.json or {}
+    if data.get("bvids") is not None:
+        bvids = _monitor_clean_bvids(data["bvids"])
+        cfg = _load_monitor_config()
+        cfg["bvids"] = bvids
+    else:
+        cfg = _load_monitor_config()
+        bvids = cfg.get("bvids", [])
+    if not bvids:
+        return jsonify({"error": "请先添加至少一个 BV 号"}), 400
+    try:
+        interval = max(60, int(data.get("interval", cfg.get("interval", 3600))))
+    except (TypeError, ValueError):
+        interval = int(cfg.get("interval", 3600))
+    cfg["interval"] = interval
+    _save_monitor_config(cfg)
+
+    _monitor_status["stop_event"] = threading.Event()
+    _monitor_status["task_id"] = str(uuid.uuid4())[:8]
+    _monitor_status["running"] = True
+    _monitor_status["run_count"] = 0
+    _monitor_status["last_error"] = None
+    with log_lock:
+        log_buffers[MONITOR_LOG_ID] = []
+    tid = _monitor_status["task_id"]
+    threading.Thread(target=_run_monitor_worker, args=(bvids, interval, tid),
+                     daemon=True).start()
+    return jsonify({"success": True, "task_id": tid})
+
+
+@app.route("/api/monitor/stop", methods=["POST"])
+def monitor_stop():
+    if _monitor_status["running"]:
+        _monitor_status["stop_event"].set()
+        _append_log(MONITOR_LOG_ID, "[SYSTEM] 正在停止，将在当前截图结束后退出...")
+    return jsonify({"success": True})
+
+
+@app.route("/api/monitor/status")
+def monitor_status_api():
+    return jsonify({
+        "running": _monitor_status["running"],
+        "task_id": _monitor_status["task_id"],
+        "last_run": _monitor_status["last_run"],
+        "next_run": _monitor_status["next_run"],
+        "run_count": _monitor_status["run_count"],
+        "last_error": _monitor_status["last_error"],
+        "output": _get_log(MONITOR_LOG_ID),
+    })
+
+
+@app.route("/api/monitor/archive")
+def monitor_archive():
+    """列出本地存档（按时间倒序，最近 100 条，仅保留文件仍存在的）。"""
+    entries = []
+    if MONITOR_INDEX_FILE.exists():
+        try:
+            entries = json.loads(MONITOR_INDEX_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            entries = []
+    if not isinstance(entries, list):
+        entries = []
+    entries = [e for e in entries
+               if isinstance(e, dict) and os.path.exists(str(e.get("file", "")))]
+    entries.sort(key=lambda e: e.get("ts", ""), reverse=True)
+    return jsonify({"entries": entries[:100], "dir": str(MONITOR_ARCHIVE_DIR)})
+
+
+@app.route("/api/monitor/file")
+def monitor_file():
+    """读取本地存档截图（限制在存档目录内，防目录穿越）。"""
+    p = request.args.get("path", "")
+    try:
+        fp = Path(p).resolve()
+    except Exception:
+        fp = Path()
+    root = MONITOR_ARCHIVE_DIR.resolve()
+    if not str(fp).startswith(str(root)) or not fp.is_file():
+        return jsonify({"error": "not found"}), 404
+    return send_file(str(fp), mimetype="image/png")
+
+
+@app.route("/api/monitor/open-dir", methods=["POST"])
+def monitor_open_dir():
+    """打开本地存档目录。"""
+    MONITOR_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        try:
+            subprocess.Popen(["explorer", str(MONITOR_ARCHIVE_DIR)])
+        except Exception as e:
+            return jsonify({"success": False, "message": str(e)})
+    return jsonify({"success": True})
+
+
+@app.route("/api/monitor/shot", methods=["POST"])
+def monitor_shot():
+    """立即对所有 BV 号截图一次（同步执行，前端等待）。"""
+    if _monitor_status["running"]:
+        return jsonify({"success": False, "message": "监控运行中，停止后方可手动截图"}), 409
+    cfg = _load_monitor_config()
+    bvids = cfg.get("bvids", [])
+    if not bvids:
+        return jsonify({"success": False, "message": "请先添加至少一个 BV 号"}), 400
+
+    from monitor_helper import monitor_once
+
+    def _log(line: str):
+        _append_log(MONITOR_LOG_ID, f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
+
+    _append_log(MONITOR_LOG_ID, f"━━━ 手动截图 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ━━━")
+    cookies = _monitor_cookies_from_cred()
+    if not cookies.get("SESSDATA"):
+        _append_log(MONITOR_LOG_ID, "[SYSTEM] 未检测到登录凭证，将以游客身份访问")
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        results = loop.run_until_complete(monitor_once(
+            bvids, MONITOR_ARCHIVE_DIR, MONITOR_INDEX_FILE,
+            log=_log, stop_event=threading.Event(), cookies=cookies))
+    finally:
+        loop.close()
+    ok = sum(1 for r in results if r.get("ok"))
+    return jsonify({"success": True, "ok": ok, "total": len(results)})
+
+
+@app.route("/api/monitor/overview")
+def monitor_overview():
+    """总览页卡片数据。"""
+    cfg = _load_monitor_config()
+    shots = 0
+    if MONITOR_INDEX_FILE.exists():
+        try:
+            shots = len(json.loads(MONITOR_INDEX_FILE.read_text(encoding="utf-8")) or [])
+        except Exception:
+            shots = 0
+    return jsonify({
+        "running": _monitor_status["running"],
+        "bvids": len(cfg.get("bvids", [])),
+        "shots": shots,
+        "last_run": _monitor_status["last_run"],
+    })
+
+
+# =========================================================================
 #  九、前端入口
 # =========================================================================
 
@@ -4792,6 +5100,11 @@ def _shutdown(label: str = "shutdown"):
             _booster_schedule["stop_event"].set()
     except Exception as e:
         print(f"[{label}] set booster schedule stop_event failed: {e}", flush=True)
+    try:
+        if _monitor_status.get("stop_event"):
+            _monitor_status["stop_event"].set()
+    except Exception as e:
+        print(f"[{label}] set monitor stop_event failed: {e}", flush=True)
 
     # 2) 触发所有 active task 的 stop_event
     try:
@@ -4892,6 +5205,132 @@ def _kill_child_processes():
             continue
     if killed:
         print(f"[shutdown] 已杀 {killed} 个子进程", flush=True)
+
+
+def _port_in_use(port: int) -> bool:
+    """用「能否连上」判断端口是否有监听者（bind 测试在 Windows 上受 TIME_WAIT/SO_REUSEADDR 干扰，不可靠）。"""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        s.connect(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def _kill_stale_app_instances(port: int):
+    """启动前清理本安装目录残留的旧实例进程，保证同一安装只有一个服务在跑。
+
+    背景：旧版本 app.run(debug=True) 启用 werkzeug reloader，会拆成「reloader 父进程 +
+    真实服务子进程」两个 python 进程；pyappify 关窗只杀它启动的那个，另一个变成孤儿——
+    继续跑所有定时任务并占住端口，且收不到任何关闭清理信号。更新到新版后，用户机器上
+    可能仍留着这样的孤儿，所以新实例必须在绑定端口前清场：
+      1) 按「cmdline 指向本目录 app.py 的 python 进程」匹配并杀掉（跳过自己），
+         相对路径按目标进程自己的 cwd 解析，避免误杀其它目录的同名脚本；
+      2) 兜底：端口仍被 python 进程占用时按端口补杀（5678 为本应用专用端口）；
+      3) 端口被其它程序占用或清理后仍不可用时，报错退出，绝不与旧实例共存
+         （否则用户打开的界面可能连到旧进程，看到的状态是错的）。
+    """
+    my_pid = os.getpid()
+    target_script = str((ROOT / "app.py").resolve()).lower()
+    root_dir = str(ROOT).lower()
+
+    # 自己的祖先链（python 垫片/启动器等）绝不能杀：它们的 cmdline 可能同样以 app.py 结尾
+    # （如 WindowsApps python 别名、pyappify 包装层），误杀会导致自己随 Job 对象一起被终止
+    my_ancestors = set()
+    try:
+        import psutil
+        _proc = psutil.Process(my_pid)
+        while True:
+            _proc = _proc.parent()
+            if _proc is None:
+                break
+            my_ancestors.add(_proc.pid)
+    except Exception:
+        pass
+
+    victims = []
+    try:
+        import psutil
+        for proc in psutil.process_iter(["pid", "name", "cmdline", "cwd"]):
+            try:
+                info = proc.info
+                if info["pid"] == my_pid or info["pid"] in my_ancestors:
+                    continue
+                if "python" not in (info["name"] or "").lower():
+                    continue
+                args = [str(a) for a in (info["cmdline"] or [])]
+                if not any(a.lower().endswith("app.py") for a in args):
+                    continue
+                cwd = info.get("cwd") or ""
+                matched = False
+                for a in args:
+                    if not a.lower().endswith("app.py"):
+                        continue
+                    p = Path(a)
+                    if not p.is_absolute() and cwd:
+                        p = Path(cwd) / a
+                    try:
+                        if str(p.resolve()).lower() == target_script:
+                            matched = True
+                            break
+                    except OSError:
+                        continue
+                if not matched and cwd:
+                    # cmdline 是相对路径且读不到足够信息时，cwd 在本目录即视为本应用实例
+                    try:
+                        matched = str(Path(cwd).resolve()).lower() == root_dir
+                    except OSError:
+                        matched = False
+                if matched:
+                    victims.append(proc)
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                continue
+        for proc in victims:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if victims:
+            psutil.wait_procs(victims, timeout=5)
+            print(f"[startup] 已清理 {len(victims)} 个残留旧实例进程", flush=True)
+            # 残留实例若在跑 playwright 播放，杀掉后会留下 chromium 孤儿，顺手清理
+            try:
+                from bili_player.player import cleanup_leftover_browsers
+                cleanup_leftover_browsers(log=lambda m: print(f"[startup] {m}", flush=True))
+            except Exception:
+                pass
+    except ImportError:
+        print("[startup] psutil 未安装，跳过残留实例清理", flush=True)
+
+    # 端口兜底校验
+    if _port_in_use(port):
+        try:
+            import psutil
+            holder_pids = [c.pid for c in psutil.net_connections(kind="inet")
+                           if c.status == psutil.CONN_LISTEN and c.laddr
+                           and c.laddr.port == port and c.pid and c.pid != my_pid]
+            for pid in holder_pids:
+                try:
+                    proc = psutil.Process(pid)
+                    pname = proc.name() or ""
+                    if "python" in pname.lower():
+                        proc.kill()
+                        print(f"[startup] 端口 {port} 被 python 进程 {pid} 占用，已补杀", flush=True)
+                    else:
+                        print(f"[startup][ERROR] 端口 {port} 被其它程序占用（{pname}，PID {pid}），请关闭后重试", flush=True)
+                        sys.exit(1)
+                except psutil.NoSuchProcess:
+                    continue
+        except ImportError:
+            pass
+        time.sleep(1.5)
+        if _port_in_use(port):
+            print(f"[startup][ERROR] 端口 {port} 仍被占用，无法启动。请重启电脑或手动结束相关 python 进程", flush=True)
+            sys.exit(1)
 
 
 def _signal_handler(signum, frame):
@@ -5006,8 +5445,14 @@ def index():
     return render_template("index.html")
 
 
+APP_PORT = 5678
+
 if __name__ == "__main__":
     import webbrowser
+    # 绑定端口前先清掉旧版本残留的实例进程（孤儿/端口占用），否则新实例起不来或连到旧进程
+    _kill_stale_app_instances(APP_PORT)
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        webbrowser.open("http://localhost:5678")
-    app.run(debug=True, host="0.0.0.0", port=5678)
+        webbrowser.open(f"http://localhost:{APP_PORT}")
+    # 禁止 debug/reloader：debug=True 会拆成父+子两个 python 进程，pyappify 关窗只杀父进程，
+    # 真实服务子进程会变成孤儿，继续跑定时任务且收不到任何关闭清理（这就是「关了还在刷」的根源）
+    app.run(debug=False, use_reloader=False, host="0.0.0.0", port=APP_PORT)

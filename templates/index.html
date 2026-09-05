@@ -1704,6 +1704,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         粉丝节养猫
       </button>
 
+      <button class="tab-btn" onclick="switchTab('monitor')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        稿件监控
+      </button>
+
       <button class="tab-btn" onclick="switchTab('medal')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9.2 13.2 7.5 20l4.5-2.6L16.5 20l-1.7-6.8"/></svg>
         灯牌管理
@@ -1748,7 +1753,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
   <div class="dash-summary">
     <div class="dash-stat"><div class="dash-stat-val" id="dash-sum-login">–</div><div class="dash-stat-label">已登录模块</div></div>
     <div class="dash-stat"><div class="dash-stat-val" id="dash-sum-run">–</div><div class="dash-stat-label">运行中任务</div></div>
-    <div class="dash-stat"><div class="dash-stat-val">9</div><div class="dash-stat-label">功能模块</div></div>
+    <div class="dash-stat"><div class="dash-stat-val">10</div><div class="dash-stat-label">功能模块</div></div>
   </div>
 
   <div class="dash-grid">
@@ -1846,6 +1851,18 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <span class="dash-badge off" id="dash-cat-login">检测中…</span>
         <span class="dash-badge off" id="dash-cat-run">空闲</span>
         <span class="dash-badge off" id="dash-cat-extra">–</span>
+      </div>
+    </div>
+    <div class="dash-card">
+      <div class="dash-card-top">
+        <div class="dash-icon" style="background:rgba(34,176,125,0.1);color:#22b07d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
+        <button class="dash-goto" onclick="switchTab('monitor')">进入 →</button>
+      </div>
+      <div class="dash-name">稿件监控</div>
+      <div class="dash-desc">输入 BV 号，定时截图稿件页面并拼接百度「北京时间」时钟，本地存档</div>
+      <div class="dash-badges">
+        <span class="dash-badge off" id="dash-monitor-run">空闲</span>
+        <span class="dash-badge off" id="dash-monitor-extra">–</span>
       </div>
     </div>
     <div class="dash-card">
@@ -2287,6 +2304,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           <div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">
             POST <code id="bst-webhook-url"></code>
           </div>
+          <div style="margin-top:6px;font-size:12px;color:var(--warn)">⚠ 监听在程序运行期间持续有效，关闭/刷新页面不会停止；推送确认后将以<b>独立任务</b>刷量（停止定时任务不会停掉它们，如需全部停止请点「停止全部任务」）</div>
           <div style="margin-top:4px;font-size:11px;color:var(--text-tertiary)">
             Body: <code>{"bvid":"BVxxx"}</code> 或 <code>{"bvid":["BV1","BV2"]}</code>
           </div>
@@ -2345,6 +2363,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="btn-row">
         <button class="btn btn-pink" id="bst-run-btn" onclick="boosterRun()">▶ 开始提升</button>
         <button class="btn btn-stop" id="bst-stop-btn" onclick="boosterStop()" style="display:none">⏹ 停止</button>
+        <button class="btn btn-stop" id="bst-stop-all-btn" onclick="bstStopAll()">⏹ 停止全部任务</button>
       </div>
     </div>
   </div>
@@ -3178,6 +3197,75 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 </div>
 
 <!-- ============================================================ -->
+<!--  TAB: 稿件监控 (monitor)                                     -->
+<!-- ============================================================ -->
+<div id="panel-monitor" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-left">
+      <div class="panel-hero-icon" style="color:#22b07d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
+      <div>
+        <div class="panel-hero-title">稿件监控</div>
+        <div class="panel-hero-desc">输入 BV 号，每隔固定时间自动截图稿件页面，百度搜索「北京时间」的真实时钟会以小浮窗叠加在截图右上角，本地存档。</div>
+      </div>
+    </div>
+    <span class="hero-badge off" id="hero-monitor-badge">空闲</span>
+  </div>
+
+  <!-- 监控稿件 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">1</span>监控稿件（BV 号）</div>
+    <div class="card-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="text" id="mon-bv-input" class="form-input" style="flex:1;min-width:260px" placeholder="输入 BV 号（支持完整链接，多个用逗号分隔）" autocomplete="off">
+        <button class="btn btn-pink" onclick="monAddBV()">＋ 添加</button>
+        <button class="btn btn-outline" onclick="monSaveConfig()">💾 保存配置</button>
+      </div>
+      <div id="mon-bv-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+  </div>
+
+  <!-- 监控设置 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">2</span>监控设置</div>
+    <div class="card-body">
+      <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)">
+          截图间隔：
+          <select id="mon-interval" class="form-input" style="width:auto;padding:6px 10px">
+            <option value="3600" selected>每 1 小时</option>
+            <option value="7200">每 2 小时</option>
+            <option value="10800">每 3 小时</option>
+            <option value="21600">每 6 小时</option>
+            <option value="43200">每 12 小时</option>
+            <option value="86400">每 24 小时</option>
+          </select>
+        </label>
+        <span id="mon-status-text" style="font-size:13px;color:var(--text-secondary)">未运行</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">
+        <button class="btn btn-pink" id="mon-run-btn" onclick="monStart()">▶ 开始监控</button>
+        <button class="btn btn-stop" id="mon-stop-btn" onclick="monStop()" disabled>停止</button>
+        <button class="btn btn-outline" onclick="monOpenDir()">📁 打开存档目录</button>
+        <button class="btn btn-outline" onclick="monShotNow(this)">📸 立即截一屏</button>
+      </div>
+      <div id="mon-log" class="log-box" style="margin-top:12px;height:200px;overflow-y:auto">等待任务开始...</div>
+    </div>
+  </div>
+
+  <!-- 本地存档 -->
+  <div class="card">
+    <div class="card-head pink"><span class="card-step">3</span>本地存档</div>
+    <div class="card-body">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn btn-outline btn-sm" onclick="monLoadArchive()">↻ 刷新存档</button>
+        <span id="mon-archive-meta" style="font-size:12px;color:var(--text-secondary)"></span>
+      </div>
+      <div id="mon-archive" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;max-height:520px;overflow-y:auto"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
 <!--  TAB: 灯牌管理 (medal)                                       -->
 <!-- ============================================================ -->
 <style>
@@ -3450,6 +3538,7 @@ function switchTab(name){
   if(name==='collection'){ withPanelLoader('panel-collection', () => collLoadStatus(), '正在加载合集助手状态…'); }
   if(name==='tagsearch'){ withPanelLoader('panel-tagsearch', () => tsLoadStatus(), '正在加载标签助手状态…'); }
   if(name==='cat'){ withPanelLoader('panel-cat', () => catLoad(), '正在加载粉丝节养猫…'); }
+  if(name==='monitor'){ withPanelLoader('panel-monitor', () => monLoad(), '正在加载稿件监控…'); }
   if(name==='medal'){ withPanelLoader('panel-medal', () => mdLoad(), '正在加载灯牌管理…'); }
   if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad(), catScheduleLoad()]), '正在加载定时任务状态…'); }
 }
@@ -4640,6 +4729,16 @@ function boosterStop(){
   fetch('/api/booster/stop',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({task_id:bstTaskId})});
 }
+function bstStopAll(){
+  if(!confirm('确定停止全部 booster 任务？\n（定时任务、手动任务、webhook 确认的任务都会被停止）'))return;
+  fetch('/api/booster/stop-all',{method:'POST'}).then(r=>r.json()).then(d=>{
+    if(d.error){alert('停止失败: '+d.error);return;}
+    setDot('bst-dot','off');setText('bst-status-text','已停止全部任务');
+    // 刷新定时任务状态（运行中的手动任务 UI 由其轮询在收到 cancelled 后自动复位）
+    bstScheduleStartPoll();
+    bstSchedulePollTick();
+  }).catch(e=>alert('停止失败: '+e));
+}
 
 // ── 定时任务：低播放量自动刷量 ──
 let bstSchedPollTimer=null;
@@ -4751,22 +4850,23 @@ function bstScheduleUpdateStatus(s){
 function bstScheduleToggle(){
   fetch('/api/booster/schedule/status').then(r=>r.json()).then(s=>{
     if(s.running){
-      fetch('/api/booster/schedule/stop',{method:'POST'}).then(()=>{
-        bstScheduleUpdateBtn({running:false});
-        setDot('bst-sched-dot','off');
-        setText('bst-sched-text','正在停止...');
+      // 停止：校验响应，按钮保持「停止」直到轮询确认 running=false 后由 bstScheduleUpdateBtn 复位
+      fetch('/api/booster/schedule/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(!d.success){alert('停止失败: '+(d.message||'未知错误'));}
+        else{setDot('bst-sched-dot','off');setText('bst-sched-text','正在停止...');}
         bstScheduleStartPoll();
         bstSchedulePollTick();
-      });
+      }).catch(e=>alert('停止失败: '+e));
     }else{
       bstScheduleSave(true).then(ok=>{
         if(!ok)return null;
-        return fetch('/api/booster/schedule/start',{method:'POST'});
-      }).then(()=>{
-        bstScheduleUpdateBtn({running:true});
-        bstScheduleStartPoll();
-        bstSchedulePollTick();
-      });
+        return fetch('/api/booster/schedule/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+          if(!d||!d.success){alert('启动失败: '+((d&&d.message)||'未知错误'));return null;}
+          bstScheduleUpdateBtn({running:true});
+          bstScheduleStartPoll();
+          bstSchedulePollTick();
+        });
+      }).catch(e=>alert('操作失败: '+e));
     }
   }).catch(e=>alert('操作失败: '+e));
 }
@@ -4780,6 +4880,8 @@ function bstScheduleRunOnce(){
       bstScheduleUpdateBtn({running:'once'});
       bstScheduleStartPoll();
       bstSchedulePollTick();
+    }else if(d){
+      alert('触发失败: '+(d.message||'未知错误'));
     }
   }).catch(e=>alert('触发失败: '+e));
 }
@@ -5009,6 +5111,24 @@ function bstWebhookStopPoll(){
   if(bstWebhookPollTimer){clearInterval(bstWebhookPollTimer);bstWebhookPollTimer=null;}
 }
 
+function bstWebhookSyncState(){
+  // 页面加载/刷新后同步 webhook 实际监听状态（服务端开关在程序重启前一直保持）
+  fetch('/api/booster/webhook/state').then(r=>r.json()).then(d=>{
+    if(!d.enabled)return;
+    const area=document.getElementById('bst-webhook-area');
+    const btn=document.getElementById('bst-webhook-btn');
+    if(!area||!btn)return;
+    area.style.display='block';
+    btn.textContent='🔗 监听中...';
+    btn.style.borderColor='var(--info)';
+    btn.style.color='var(--info)';
+    const loc=window.location;
+    document.getElementById('bst-webhook-url').textContent=loc.protocol+'//'+loc.host+'/booster';
+    document.getElementById('bst-webhook-status').textContent='监听恢复（页面刷新不影响后台监听）...';
+    bstWebhookStartPoll();
+  }).catch(()=>{});
+}
+
 function bstWebhookFillBVs(bvs){
   const list=document.getElementById('booster-bv-list');
   // 清除空行
@@ -5098,11 +5218,13 @@ function bstUpdate(d){
     bstParseResults(d.output);
   }
   log.scrollTop=log.scrollHeight;
-  const done=d.status==='completed'||d.status==='error';
+  const done=d.status==='completed'||d.status==='error'||d.status==='cancelled';
   if(d.status==='completed'){
     setDot('bst-dot','off');setText('bst-status-text','已完成');
   }else if(d.status==='error'){
     setDot('bst-dot','err');setText('bst-status-text','出错');
+  }else if(d.status==='cancelled'){
+    setDot('bst-dot','off');setText('bst-status-text','已停止');
   }else if(d.status==='stopping'){
     setText('bst-status-text','正在停止...');
   }
@@ -6759,6 +6881,10 @@ async function dashRefresh(){
       d.catLogin = !!(j && j.logged_in);
       d.catRun = !!(j && j.running);
       d.catExtra = j ? `${j.done || 0}/${j.total || 0} 已养` : '–';
+    }),
+    _dget('/api/monitor/overview', j => {
+      d.monRun = !!(j && j.running);
+      d.monExtra = j ? `${j.bvids || 0} 稿件 · ${j.shots || 0} 截图` : '–';
     })
   ]);
   dashRender();
@@ -6786,6 +6912,8 @@ function dashRender(){
   _dashBadge('dash-cat-login', d.catLogin ? 'ok' : 'off', d.catLogin ? '已登录' : '未登录');
   _dashBadge('dash-cat-run', d.catRun ? 'run' : 'off', d.catRun ? '运行中' : '空闲');
   _dashBadge('dash-cat-extra', 'off', d.catExtra || '–');
+  _dashBadge('dash-monitor-run', d.monRun ? 'run' : 'off', d.monRun ? '运行中' : '空闲');
+  _dashBadge('dash-monitor-extra', 'off', d.monExtra || '–');
 
   // 定时任务聚合徽章（任一子指标在跑即认为运行中，避免接口偶发失败导致误显空闲）
   _dashBadge('dash-schedmgr-auto', d.autoRun ? 'run' : 'off', '自动互动 · ' + (d.autoRun ? '运行中' : '空闲'));
@@ -6801,9 +6929,10 @@ function dashRender(){
   _heroBadge('hero-collection-badge', d.collLogin, d.collLogin ? '已登录' : '未登录');
   _heroBadge('hero-tagsearch-badge', d.tsLogin, d.tsLogin ? '已登录' : '未登录');
   _heroBadge('hero-cat-badge', d.catRun ? true : d.catLogin, d.catRun ? '运行中' : (d.catLogin ? '已登录' : '未登录'));
+  _heroBadge('hero-monitor-badge', d.monRun, d.monRun ? '运行中' : '空闲');
 
   const loginCount = [d.autoLogin, d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin, d.catLogin].filter(Boolean).length;
-  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun, d.catRun].filter(Boolean).length;
+  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun, d.catRun, d.monRun].filter(Boolean).length;
   const sl = document.getElementById('dash-sum-login');
   if(sl) sl.textContent = loginCount + ' / 9';
   const sr = document.getElementById('dash-sum-run');
@@ -7060,6 +7189,174 @@ function catStop(){
     .then(r=>r.json()).then(d=>{ if(!d.success) alert(d.message||'停止失败'); }).catch(()=>{});
 }
 
+/* ===== 稿件监控 ===== */
+const monState = { bvids: [], running: false, lastCount: -1 };
+function monLoad(){
+  return fetch('/api/monitor/config').then(r=>r.json()).then(cfg=>{
+    monState.bvids = cfg.bvids||[];
+    const sel = document.getElementById('mon-interval');
+    if(sel && cfg.interval) sel.value = String(cfg.interval);
+    monRenderBV();
+    return monLoadStatus().then(()=>monLoadArchive());
+  }).catch(()=>{});
+}
+function monLoadStatus(){
+  return fetch('/api/monitor/status').then(r=>r.json()).then(s=>{
+    monState.running = !!s.running;
+    if(s.output) document.getElementById('mon-log').textContent = s.output;
+    monRenderStatus(s);
+    if(s.running){
+      document.getElementById('mon-run-btn').disabled = true;
+      document.getElementById('mon-stop-btn').disabled = false;
+      if(s.run_count !== monState.lastCount){ monState.lastCount = s.run_count; monLoadArchive(); }
+      startPoll('/api/monitor/status',3000,monUpdate);
+    }else{
+      document.getElementById('mon-run-btn').disabled = false;
+      document.getElementById('mon-stop-btn').disabled = true;
+      stopPoll('/api/monitor/status');
+    }
+  }).catch(()=>{});
+}
+function monUpdate(s){
+  if(!s) return;
+  const box = document.getElementById('mon-log');
+  if(s.output){ box.textContent = s.output; box.scrollTop = box.scrollHeight; }
+  const wasRunning = monState.running;
+  monState.running = !!s.running;
+  if(s.running){
+    if(s.run_count !== monState.lastCount){ monState.lastCount = s.run_count; monLoadArchive(); }
+    document.getElementById('mon-run-btn').disabled = true;
+    document.getElementById('mon-stop-btn').disabled = false;
+  }else if(wasRunning){
+    stopPoll('/api/monitor/status');
+    document.getElementById('mon-run-btn').disabled = false;
+    document.getElementById('mon-stop-btn').disabled = true;
+    monLoadArchive();
+    dashRefresh();
+  }
+  monRenderStatus(s);
+}
+function monRenderStatus(s){
+  s = s || {};
+  const el = document.getElementById('mon-status-text');
+  const badge = document.getElementById('hero-monitor-badge');
+  const running = monState.running || !!s.running;
+  if(running){
+    let txt = '🟢 监控运行中';
+    if(s.next_run) txt += ' · 下次 ' + new Date(s.next_run*1000).toLocaleString('zh-CN',{hour12:false});
+    if(el) el.textContent = txt;
+    if(badge){ badge.textContent = '运行中'; badge.classList.remove('off'); }
+  }else{
+    if(el) el.textContent = '未运行';
+    if(badge){ badge.textContent = '空闲'; badge.classList.add('off'); }
+  }
+}
+function monRenderBV(){
+  const list = document.getElementById('mon-bv-list');
+  if(!monState.bvids.length){
+    list.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;padding:6px 0">暂无监控稿件，请在上方输入 BV 号。</div>';
+    return;
+  }
+  list.innerHTML = monState.bvids.map((b,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--card-border);border-radius:var(--radius-sm);font-size:13px">
+      <span style="flex:1;font-family:monospace">${_escHtml(b)}</span>
+      <button class="btn btn-outline btn-sm" onclick="monRemoveBV(${i})">移除</button>
+    </div>`).join('');
+}
+function monRemoveBV(i){
+  monState.bvids.splice(i,1);
+  monPersist();
+  monRenderBV();
+}
+function monAddBV(){
+  const input = document.getElementById('mon-bv-input');
+  const raw = (input.value||'').trim();
+  if(!raw){ alert('请输入 BV 号'); return; }
+  const parts = raw.split(/[,，\s]+/).map(x=>x.trim()).filter(Boolean);
+  let added = 0, skipped = 0;
+  parts.forEach(p=>{
+    const m = p.match(/BV[0-9A-Za-z]{10}/i);
+    // BV 号区分大小写，只统一 BV 前缀，不能整体 toUpperCase
+    const bv = m ? ('BV' + m[0].slice(2)) : null;
+    if(bv && monState.bvids.indexOf(bv)===-1){ monState.bvids.push(bv); added++; }
+    else if(!bv){ skipped++; }
+  });
+  input.value = '';
+  if(!added && skipped){ alert('未识别到有效的 BV 号（请输入 12 位 BV 或包含 BV 的链接）'); }
+  monPersist();
+  monRenderBV();
+}
+function monPersist(){
+  const sel = document.getElementById('mon-interval');
+  return fetch('/api/monitor/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    bvids: monState.bvids,
+    interval: parseInt(sel?sel.value:'3600',10)||3600,
+  })}).catch(()=>{});
+}
+function monSaveConfig(){
+  monPersist().then(()=>alert('配置已保存'));
+}
+function monStart(){
+  if(!monState.bvids.length){ alert('请先添加至少一个 BV 号'); return; }
+  const sel = document.getElementById('mon-interval');
+  const interval = parseInt(sel?sel.value:'3600',10)||3600;
+  fetch('/api/monitor/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bvids: monState.bvids, interval})})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){ alert(d.error); return; }
+      monState.lastCount = 0;
+      monState.running = true;
+      document.getElementById('mon-run-btn').disabled = true;
+      document.getElementById('mon-stop-btn').disabled = false;
+      document.getElementById('mon-log').textContent = '任务已启动，等待截图...';
+      startPoll('/api/monitor/status',3000,monUpdate);
+    }).catch(e=>alert('启动失败: '+e));
+}
+function monStop(){
+  fetch('/api/monitor/stop',{method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json()).then(d=>{ if(!d.success) alert(d.message||'停止失败'); }).catch(()=>{});
+}
+function monShotNow(btn){
+  if(!monState.bvids.length){ alert('请先添加至少一个 BV 号'); return; }
+  const old = btn ? btn.textContent : '';
+  if(btn){ btn.disabled = true; btn.textContent = '截图中…'; }
+  fetch('/api/monitor/shot',{method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json()).then(d=>{
+      if(d.success===false) alert(d.message||'截图失败');
+      else alert(`截图完成：成功 ${d.ok}/${d.total}`);
+      monLoadStatus();
+      monLoadArchive();
+    }).catch(e=>alert('截图失败: '+e)).finally(()=>{
+      if(btn){ btn.disabled = false; btn.textContent = old; }
+    });
+}
+function monOpenDir(){
+  fetch('/api/monitor/open-dir',{method:'POST',headers:{'Content-Type':'application/json'}})
+    .then(r=>r.json()).then(d=>{ if(d.success===false) alert(d.message||'打开失败'); }).catch(()=>{});
+}
+function monLoadArchive(){
+  return fetch('/api/monitor/archive').then(r=>r.json()).then(d=>{
+    const box = document.getElementById('mon-archive');
+    const meta = document.getElementById('mon-archive-meta');
+    const entries = d.entries||[];
+    if(meta) meta.textContent = `共 ${entries.length} 条 · ${d.dir||''}`;
+    if(!entries.length){
+      box.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px">暂无截图存档，开始监控或点击「立即截一屏」后这里会显示截图。</div>';
+      return;
+    }
+    box.innerHTML = entries.map(e=>`
+      <div style="border:1px solid var(--card-border);border-radius:10px;overflow:hidden;background:var(--card-bg)">
+        <a href="/api/monitor/file?path=${encodeURIComponent(e.file)}" target="_blank" title="点击查看原图">
+          <img src="/api/monitor/file?path=${encodeURIComponent(e.file)}" loading="lazy" style="width:100%;display:block;max-height:190px;object-fit:cover;object-position:top" onerror="this.style.display='none'">
+        </a>
+        <div style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">
+          <div style="font-weight:500;color:var(--text)">${_escHtml(e.bvid)}</div>
+          <div>${_escHtml(e.ts||'')}</div>
+          <div style="color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${_escHtml(e.title||'')}">${_escHtml(e.title||'无标题')}</div>
+        </div>
+      </div>`).join('');
+  }).catch(()=>{});
+}
+
 /* ===== 按钮点击反馈动画 ===== */
 document.addEventListener('click', function(e){
   const b = e.target.closest('.btn, .theme-toggle');
@@ -7077,7 +7374,7 @@ function toggleTheme(){
   try{ localStorage.setItem('bili-theme', isDark ? 'light' : 'dark'); }catch(e){}
 }
 
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();catScheduleLoad();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();catScheduleLoad();bstWebhookSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
 </script>
 <!-- 联想下拉（挂在 body 末尾，fixed 定位，不受 .card overflow/transform 影响） -->
 <div id="ts-autocomplete" style="display:none;position:fixed;z-index:9999;max-height:200px;overflow-y:auto;border-radius:var(--radius-sm)"></div>
