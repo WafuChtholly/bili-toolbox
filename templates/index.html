@@ -3160,6 +3160,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <label class="switch-row"><span class="sw-ico">🏆</span><span>摸前20猫咪</span><input type="checkbox" id="cat-opt-petTop20" onchange="catPersist()"></label>
         <label class="switch-row"><span class="sw-ico">🐈</span><span>摸全部猫咪</span><input type="checkbox" id="cat-opt-petAll" onchange="catPersist()"></label>
         <label class="switch-row" title="保牌策略：开播中点赞 30 次（牌子亮灭均可）；未开播且牌子点亮发 10 句弹幕点亮；未开播且牌子熄灭则跳过"><span class="sw-ico">💡</span><span>弹幕保牌</span><input type="checkbox" id="cat-opt-lightMedal" onchange="catPersist()"></label>
+        <label class="switch-row" title="领取亲密度礼物（自动放入包裹），并把包裹中的活动礼物（gift_id 35829）全部送进该直播间"><span class="sw-ico">🎁</span><span>亲密度礼物</span><input type="checkbox" id="cat-opt-claimGift" onchange="catPersist()"></label>
       </div>
     </div>
   </div>
@@ -6957,6 +6958,7 @@ function catOptions(){
     petTop20: document.getElementById('cat-opt-petTop20').checked,
     petAll: document.getElementById('cat-opt-petAll').checked,
     lightMedal: document.getElementById('cat-opt-lightMedal').checked,
+    claimGift: document.getElementById('cat-opt-claimGift').checked,
   };
 }
 function catLoad(){
@@ -6973,6 +6975,7 @@ function catLoad(){
     document.getElementById('cat-opt-petTop20').checked = !!o.petTop20;
     document.getElementById('cat-opt-petAll').checked = !!o.petAll;
     document.getElementById('cat-opt-lightMedal').checked = !!o.lightMedal;
+    document.getElementById('cat-opt-claimGift').checked = !!o.claimGift;
     document.getElementById('cat-exclude-dead').checked = !!cfg.exclude_dead;
     if(catApplyExclude()>0) catPersist();
     const loginEl = document.getElementById('cat-login-info');
@@ -7086,7 +7089,12 @@ function catPersist(){
     selected:[...catState.selected],
     options:catOptions(),
     exclude_dead:document.getElementById('cat-exclude-dead').checked,
-  })}).catch(()=>{});
+  })}).then(r=>{
+    if(!r.ok) throw new Error('HTTP '+r.status);
+  }).catch(e=>{
+    console.warn('catPersist failed:', e);
+    alert('⚠️ 养猫配置保存失败（' + e + '）：请确认服务已启动，重新勾选开关后再操作');
+  });
 }
 function catSaveConfig(){
   catPersist().then(()=>alert('配置已保存'));

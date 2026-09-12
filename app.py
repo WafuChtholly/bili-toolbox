@@ -4360,7 +4360,7 @@ CAT_PROGRESS_FILE = CAT_DATA_DIR / "cat_progress.json"
 _CAT_DEFAULT_OPTIONS = {
     "sign": True, "feedBanner": False, "feed": True,
     "pet": True, "petTop20": False, "petAll": False,
-    "lightMedal": False,
+    "lightMedal": False, "claimGift": False,
 }
 
 cat_task_status: dict = {}
@@ -4432,14 +4432,20 @@ def _save_cat_progress(progress: dict):
 
 
 def _cat_cookies_from_cred() -> dict:
-    """从 auto 模块凭证构建养猫所需 cookies。"""
+    """从 auto 模块凭证构建养猫所需 cookies。透传全部字段（含 buvid3/buvid4/ac_time_value），
+    web-room 端点对 cookie 完整性敏感——B 站风控用 ac_time_value 判定"用户身份稳定性"。"""
     cred = _read_auto_cred()
     uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
-    return {
+    cookies = {
         "SESSDATA": cred.get("sessdata", ""),
         "bili_jct": cred.get("bili_jct", ""),
         "DedeUserID": uid,
     }
+    for k in ("buvid3", "buvid4", "ac_time_value"):
+        v = cred.get(k)
+        if v:
+            cookies[k] = v
+    return cookies
 
 
 def _run_cat_task(task_id: str, stop_event: threading.Event, mirror: str | None = None):

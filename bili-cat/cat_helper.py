@@ -12,21 +12,26 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import random
 import sys
 import threading
 import time
+import uuid
 
 import httpx
 
 # ==================== 常量 ====================
 ACT_ID = 110505
 RANK_ID = 300155
+CLAIM_GIFT_ID = 35829  # 亲密度礼物（领取后进入包裹，需送出）
 MEDAL_API = "https://api.live.bilibili.com/xlive/app-ucenter/v1/fansMedal/panel"
 ACTIVITY_BASE = "https://api.live.bilibili.com/xlive/custom-activity-interface/activities2026"
 RANK_API = "https://api.live.bilibili.com/xlive/custom-activity-interface/baseActivity/Rank"
+BAG_LIST_API = "https://api.live.bilibili.com/xlive/web-room/v1/gift/bag_list"
+SEND_BAG_API = "https://api.live.bilibili.com/xlive/revenue/v1/gift/sendBag"
 PAGE_SIZE = 50
 MAX_RETRY = 2
 ROOM_DELAY_MIN = 3.0
@@ -40,6 +45,7 @@ DEFAULT_OPTIONS = {
     "petTop20": False,   # 摸前20猫咪
     "petAll": False,     # 摸全部猫咪
     "lightMedal": False, # 弹幕保牌：熄灭发10句点亮，未熄灭发1句保持
+    "claimGift": False,  # 领取亲密度礼物并送出（gift_id 35829）
 }
 
 # 弹幕保牌用语池（熄灭时随机取 10 句，需 >= 10）
@@ -226,6 +232,12 @@ async def api_pet_cat(client: httpx.AsyncClient, csrf: str, uid: str, ruid: str)
     return await _post_json(client, url, {"act_id": ACT_ID, "ruid": str(ruid), "target_uid": str(uid)})
 
 
+async def api_claim_gift(client: httpx.AsyncClient, csrf: str, ruid: str) -> dict:
+    """领取亲密度礼物（按亲密度折算，自动放入礼物包裹）。"""
+    url = f"{ACTIVITY_BASE}/Q3FansS1MiaoZaiClaimGift?csrf={csrf}"
+    return await _post_json(client, url, {"act_id": ACT_ID, "ruid": str(ruid)})
+
+
 async def get_room_id_by_ruid(client: httpx.AsyncClient, ruid: str) -> int:
     """通过主播 uid 查询直播间 room_id。"""
     try:
@@ -302,6 +314,180 @@ async def api_feed_banner(client: httpx.AsyncClient, csrf: str, uid: str, ruid: 
     )
     resp.raise_for_status()
     return resp.json()
+
+
+async def _livehelper_credential(cookies: dict):
+    """把 cookies 写入 blivelisten 全局配置（与弹幕发送走同一路径），返回 get_credential() 实例。"""
+    _setup_blive_credential(cookies or {})
+    _ensure_redpocket_importable()
+    from blivelisten.utils.utils import get_credential
+    return get_credential()
+
+
+async def _fetch_wbi_keys(cookies: dict) -> tuple:
+    """裸 aiohttp 调 nav 接口拿 wbi keys + bili_ticket。"""
+    import aiohttp, hmac as _hmac
+    sessdata = (cookies or {}).get("SESSDATA") or (cookies or {}).get("sessdata") or ""
+    bili_jct = (cookies or {}).get("bili_jct") or (cookies or {}).get("BILI_JCT") or ""
+    buvid3 = (cookies or {}).get("buvid3") or (cookies or {}).get("BUVID3") or ""
+    buvid4 = (cookies or {}).get("buvid4") or (cookies or {}).get("BUVID4") or ""
+    ac_time = (cookies or {}).get("ac_time_value") or ""
+    if not buvid3:
+        import uuid as _u
+        buvid3 = f"XY{_u.uuid4().hex.upper()}"
+
+    cookie_parts = [f"SESSDATA={sessdata}", f"bili_jct={bili_jct}", f"buvid3={buvid3}"]
+    if buvid4:
+        cookie_parts.append(f"buvid4={buvid4}")
+    if ac_time:
+        cookie_parts.append(f"ac_time_value={ac_time}")
+    cookie_str = "; ".join(cookie_parts)
+    headers = {
+        "User-Agent": BROWSER_UA,
+        "Referer": "https://www.bilibili.com",
+        "Cookie": cookie_str,
+    }
+
+    # 1. nav 拿 wbi_img
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get("https://api.bilibili.com/x/web-interface/nav",
+                            headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            nav = json.loads(await resp.text())
+    if nav.get("code") != 0:
+        raise RuntimeError(f"获取 wbi keys 失败：{nav.get('message') or '未知错误'}")
+    wbi = (nav.get("data") or {}).get("wbi_img") or {}
+    img_key = (wbi.get("img_url") or "").rsplit("/", 1)[-1].split(".")[0]
+    sub_key = (wbi.get("sub_url") or "").rsplit("/", 1)[-1].split(".")[0]
+
+    # 2. bili_ticket（JWT，3 天有效）
+    import time as _t
+    ts = int(_t.time())
+    hexsign = _hmac.new(b"XgwSnGZ1p", f"ts{ts}".encode(), hashlib.sha256).hexdigest()
+    ticket_url = (f"https://api.bilibili.com/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket"
+                  f"?key_id=ec02&hexsign={hexsign}&context[ts]={ts}&csrf={bili_jct}")
+    async with aiohttp.ClientSession() as sess:
+        async with sess.post(ticket_url, headers=headers,
+                             timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            tk = json.loads(await resp.text())
+    bili_ticket = (tk.get("data") or {}).get("ticket") or ""
+
+    return img_key, sub_key, bili_ticket, cookie_str
+
+
+async def get_bag_gift_list(client: httpx.AsyncClient, gift_id: int, room_id: int = 0,
+                            cookies: dict | None = None) -> list:
+    """查询礼物包裹中指定 gift_id 的条目。
+
+    真实浏览器抓包发现：必须传 room_id + receive_users + mobi_app + web_location，
+    且 cookie 头里要带 bili_ticket + ac_time_value；任一缺失会被 40000 风控。
+    """
+    _ensure_redpocket_importable()
+    sessdata = (cookies or {}).get("SESSDATA") or (cookies or {}).get("sessdata") or ""
+    if not sessdata:
+        log(f"⚠️ [亲密度礼][diag] get_bag_gift_list cookies 实际值: {dict(cookies or {})}")
+        raise RuntimeError("未登录：SESSDATA 为空")
+
+    from blivelisten.utils.wbi import enc_wbi
+    img_key, sub_key, bili_ticket, cookie_str = await _fetch_wbi_keys(cookies or {})
+
+    if bili_ticket:
+        cookie_str = cookie_str + f"; bili_ticket={bili_ticket}"
+
+    # 业务参数：room_id 必须传（B 站按房间过滤可用礼物）；receive_users/mobi_app/web_location
+    # 与 web 端一致
+    import aiohttp
+    params = {"room_id": str(room_id), "receive_users": "[]"}
+    signed = enc_wbi(params, img_key, sub_key)
+    qs = (f"wts={signed['wts']}&w_rid={signed['w_rid']}"
+          f"&room_id={room_id}&receive_users=%5B%5D"
+          f"&mobi_app=web&web_location=444.8")
+    url = f"{BAG_LIST_API}?{qs}"
+    headers = {
+        "accept": "*/*",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "origin": "https://live.bilibili.com",
+        "referer": "https://live.bilibili.com/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "user-agent": BROWSER_UA,
+        "Cookie": cookie_str,
+    }
+    async with aiohttp.ClientSession() as sess:
+        async with sess.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            text = await resp.text()
+            data = json.loads(text)
+    if data.get("code") != 0:
+        raise RuntimeError(f"获取礼物包裹失败：{data.get('message') or '未知错误'} (code={data.get('code')})")
+    items = (data.get("data") or {}).get("list") or []
+    out = []
+    for it in items:
+        try:
+            if int(it.get("gift_id") or 0) == gift_id:
+                out.append({
+                    "bag_id": int(it.get("bag_id") or 0),
+                    "gift_num": int(it.get("gift_num") or 0),
+                    "gift_name": it.get("gift_name") or "",
+                })
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+async def api_send_bag_gift(client: httpx.AsyncClient, csrf: str, uid: str, ruid: str,
+                            room_id: int, bag_id: int, gift_id: int, gift_num: int,
+                            cookies: dict | None = None) -> dict:
+    """把包裹中的礼物送进直播间。裸 aiohttp POST（sendBag 端点对自动化开放）。"""
+    _ensure_redpocket_importable()
+    sessdata = (cookies or {}).get("SESSDATA") or (cookies or {}).get("sessdata") or ""
+    bili_jct = (cookies or {}).get("bili_jct") or (cookies or {}).get("BILI_JCT") or ""
+    buvid3 = (cookies or {}).get("buvid3") or (cookies or {}).get("BUVID3") or ""
+    buvid4 = (cookies or {}).get("buvid4") or (cookies or {}).get("BUVID4") or ""
+    ac_time = (cookies or {}).get("ac_time_value") or ""
+    if not buvid3:
+        import uuid as _u
+        buvid3 = f"XY{_u.uuid4().hex.upper()}"
+    if not sessdata or not bili_jct:
+        raise RuntimeError("未登录：SESSDATA/bili_jct 为空")
+
+    import aiohttp
+    url = SEND_BAG_API
+    form = {
+        "uid": str(uid),
+        "ruid": str(ruid),
+        "send_ruid": "0",
+        "gift_id": str(gift_id),
+        "gift_num": str(gift_num),
+        "bag_id": str(bag_id),
+        "price": "0",
+        "biz_id": str(room_id),
+        "biz_code": "live",
+        "platform": "pc",
+        "storm_beat_id": "0",
+        "metadata": "",
+        "csrf": bili_jct,
+        "csrf_token": bili_jct,
+        "rnd": str(int(time.time())),
+    }
+    cookie_parts = [f"SESSDATA={sessdata}", f"bili_jct={bili_jct}", f"buvid3={buvid3}"]
+    if buvid4:
+        cookie_parts.append(f"buvid4={buvid4}")
+    if ac_time:
+        cookie_parts.append(f"ac_time_value={ac_time}")
+    cookie_str = "; ".join(cookie_parts)
+    headers = {
+        "User-Agent": BROWSER_UA,
+        "Referer": f"https://live.bilibili.com/{room_id}",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Cookie": cookie_str,
+    }
+    async with aiohttp.ClientSession() as sess:
+        async with sess.post(url, data=form, headers=headers,
+                             timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            text = await resp.text()
+            return json.loads(text)
 
 
 # ==================== 弹幕发送（参考 bili-redpocket/livehelper.py 的实现） ====================
@@ -586,6 +772,65 @@ async def run_room(client: httpx.AsyncClient, csrf: str, uid: str, ruid: str, na
         if _stopped():
             return False
 
+    # 7. 领取亲密度礼物 → 送出包裹中的活动礼物
+    if opts.get("claimGift"):
+        claim_res = await run_action("领取亲密度礼物",
+                                     lambda: api_claim_gift(client, csrf, ruid),
+                                     log=log, stop_event=stop_event)
+        # 判定本次是否成功领取到礼物
+        claimed_ok = False
+        if claim_res and claim_res.get("code") == 0:
+            d = claim_res.get("data") or {}
+            if d.get("code") == 0:
+                log(f"  -> [亲密度礼] ✅ 领取成功：亲密度 {d.get('gift_intimacy') or 0}"
+                    f"（claim_status: {d.get('gift_claim_status')}），礼物已放入包裹")
+                claimed_ok = True
+            else:
+                # 业务失败（已领完/不在活动期等），用 💡 提示而不是 ⚠️
+                log(f"  -> [亲密度礼] 💡 暂无可领取：{d.get('msg') or '领取失败'}")
+        elif claim_res:
+            log(f"  -> [亲密度礼] ⚠️ {claim_res.get('message') or '非零返回'}")
+        if await _sleep(1, stop_event):
+            return False
+        # 领取失败时跳过查包裹+送礼（没礼物可送）
+        if not claimed_ok:
+            return not _stopped()
+        # 把包裹中 gift_id=CLAIM_GIFT_ID 的礼物全部送进该直播间
+        try:
+            room_id = int(((light_info or {}).get(str(ruid)) or {}).get("room_id") or 0)
+            if not room_id:
+                room_id = await get_room_id_by_ruid(client, ruid)
+            bag_items = await run_action("查询礼物包裹",
+                                         lambda: get_bag_gift_list(client, CLAIM_GIFT_ID, room_id, cookies),
+                                         log=log, stop_event=stop_event)
+            if not bag_items:
+                log("  -> [亲密度礼] 包裹中没有可送出的活动礼物。")
+            else:
+                total = sum(it["gift_num"] for it in bag_items)
+                log(f"  -> [亲密度礼] 包裹中有 {total} 个活动礼物，开始送出...")
+                sent = 0
+                for it in bag_items:
+                    if _stopped():
+                        return False
+                    send_res = await run_action(
+                        "送出包裹礼物",
+                        lambda b=it: api_send_bag_gift(client, csrf, uid, ruid, room_id,
+                                                       b["bag_id"], CLAIM_GIFT_ID, b["gift_num"], cookies),
+                        log=log, stop_event=stop_event)
+                    if send_res and send_res.get("code") == 0:
+                        sent += it["gift_num"]
+                        log(f"  -> [亲密度礼] ✅ 送出 {it['gift_name'] or '活动礼物'} x{it['gift_num']}")
+                    elif send_res:
+                        log(f"  -> [亲密度礼] ⚠️ {send_res.get('message') or '送礼失败'}")
+                    if await _sleep(1, stop_event):
+                        return False
+                if sent:
+                    log(f"  -> [亲密度礼] 🎉 共送出 {sent} 个礼物")
+        except Exception as e:
+            log(f"  -> [亲密度礼] ⚠️ 送礼环节失败：{e}")
+        if await _sleep(1, stop_event):
+            return False
+
     return not _stopped()
 
 
@@ -615,7 +860,7 @@ async def run_cat_loop(
     opts = {**DEFAULT_OPTIONS, **(options or {})}
     if not any([opts.get("sign"), opts.get("feedBanner"), opts.get("feed"),
                 opts.get("pet"), opts.get("petTop20"), opts.get("petAll"),
-                opts.get("lightMedal")]):
+                opts.get("lightMedal"), opts.get("claimGift")]):
         raise RuntimeError("未勾选任何功能，请至少勾选一项功能开关")
 
     selected = [str(r) for r in (selected_ruids or [])]
@@ -631,6 +876,12 @@ async def run_cat_loop(
     if invalid_count > 0:
         log(f"⚠️ 有 {invalid_count} 个已选项在当前粉丝牌缓存中已失效，本次跳过。")
     log(f"🚀 开始养猫：已选 {len(selected)}，今日已完成 {completed_selected}，本次待执行 {len(pending)}。")
+    _opt_labels = {
+        "sign": "签到", "feedBanner": "投喂手幅", "feed": "喂食", "pet": "摸自己",
+        "petTop20": "摸前20", "petAll": "摸全部", "lightMedal": "弹幕保牌", "claimGift": "亲密度礼",
+    }
+    enabled = [label for key, label in _opt_labels.items() if opts.get(key)]
+    log(f"🔧 本次启用功能：{'、'.join(enabled) if enabled else '（无）'}")
 
     summary = {"done": 0, "skipped_completed": completed_selected,
                "failed": 0, "stopped": False}
@@ -658,7 +909,12 @@ async def run_cat_loop(
             + (f"；状态未知 {unk_cnt} 个（运行时实时查询）" if unk_cnt else "") + "。")
 
     headers = _live_headers()
-    async with httpx.AsyncClient(cookies=cookies, headers=headers, timeout=15) as client:
+    # web-room 组接口（如礼物包裹 bag_list）有 buvid 风控，凭证通常只有登录三件套，
+    # 缺 buvid3 会被拒（"网络异常，请稍后再试~"）。与弹幕发送（_setup_blive_credential）同一兜底策略。
+    _cookies = dict(cookies)
+    if not _cookies.get("buvid3"):
+        _cookies["buvid3"] = f"XY{uuid.uuid4().hex.upper()}"
+    async with httpx.AsyncClient(cookies=_cookies, headers=headers, timeout=15) as client:
         index = 0
         for ruid in pending:
             if stop_event is not None and stop_event.is_set():
@@ -672,7 +928,7 @@ async def run_cat_loop(
                 finished = await run_room(client, csrf, uid, ruid, name, opts,
                                           log=log, stop_event=stop_event,
                                           light_info=light_info,
-                                          cookies=cookies)
+                                          cookies=_cookies)
                 if stop_event is not None and stop_event.is_set():
                     log(f"🛑 当前房间 {name} 未完整执行，未标记为已完成。")
                     summary["stopped"] = True
