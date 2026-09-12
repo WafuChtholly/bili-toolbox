@@ -14,3 +14,8 @@ bili-auto/config.yaml
 bili-auto/config.yaml.bak
 bili-player/config.yaml
 bili-redpocket/config.yaml
+# 临时调试/回归脚本（本地工作区）
+_*.py
+_*.log
+_*.png
+*_out/
