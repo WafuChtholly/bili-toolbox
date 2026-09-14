@@ -31,9 +31,7 @@ ROOT = Path(__file__).resolve().parent
 # booster 模块在启动时通过 importlib 一次性加载（见 booster 章节）
 sys.path.insert(0, str(ROOT / "bili-auto"))
 sys.path.insert(0, str(ROOT / "bili-redpocket"))
-sys.path.insert(0, str(ROOT / "bili-cat"))
 sys.path.insert(0, str(ROOT / "bili-medal"))
-sys.path.insert(0, str(ROOT / "bili-monitor"))
 
 # Windows 控制台安全输出：避免 print() 因编码/fd 问题抛 [Errno 22] 导致业务中断
 class _SafeStream:
@@ -680,6 +678,45 @@ def auto_following_list():
         return jsonify({"success": False, "message": str(e)})
 
 
+@app.route("/api/auto/following-groups")
+def auto_following_groups():
+    """拉取登录账号的关注分组列表。
+    返回: {success, groups: [{tagid, name, count}, ...]}
+    """
+    cred_data = _read_auto_cred()
+    sessdata = cred_data.get("sessdata", "")
+    if not sessdata:
+        return jsonify({"success": False, "message": "请先扫码登录"})
+
+    try:
+        from core import get_following_groups
+        return jsonify({"success": True, "groups": get_following_groups(sessdata)})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
+@app.route("/api/auto/following-groups/members")
+def auto_following_groups_members():
+    """拉取指定关注分组的成员。query: tagid
+    返回: {success, members: [{uid, name, face}, ...]}
+    """
+    cred_data = _read_auto_cred()
+    sessdata = cred_data.get("sessdata", "")
+    if not sessdata:
+        return jsonify({"success": False, "message": "请先扫码登录"})
+
+    tagid = request.args.get("tagid", "")
+    if tagid == "":
+        return jsonify({"success": False, "message": "缺少 tagid"})
+
+    try:
+        from core import get_group_members
+        members = get_group_members(sessdata, int(tagid))
+        return jsonify({"success": True, "members": members})
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)})
+
+
 @app.route("/api/auto/schedule/start", methods=["POST"])
 def auto_schedule_start():
     if _auto_schedule["running"]:
@@ -1193,20 +1230,22 @@ def booster_my_videos():
         return jsonify({"success": False, "message": error_msg})
 
 
-def _fetch_my_videos(cred: dict) -> list:
-    """通过 bilibili_api 获取账号投稿列表（自动处理 wbi/buvid），供 my-videos 接口和定时任务共用。"""
+def _fetch_my_videos(cred: dict, mid=None) -> list:
+    """通过 bilibili_api 获取投稿列表（自动处理 wbi/buvid），供 my-videos 接口和定时任务共用。
+    mid 为空时取凭证本人；传入 mid 时取该 UID 的公开投稿（用于监听他人稿件）。"""
     from bilibili_api import Credential
     from bilibili_api.user import User, VideoOrder
 
-    mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
+    own_mid = str(cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or "")
+    target_mid = str(mid or "").strip() or own_mid
     # Credential 会自动处理 SESSDATA 编码和 buvid 获取
     credential = Credential(
         sessdata=cred.get("sessdata", ""),
         bili_jct=cred.get("bili_jct", ""),
-        dedeuserid=str(mid),
+        dedeuserid=own_mid,
         ac_time_value=cred.get("ac_time_value", ""),
     )
-    u = User(int(mid), credential=credential)
+    u = User(int(target_mid), credential=credential)
 
     loop = asyncio.new_event_loop()
     try:
@@ -1285,8 +1324,39 @@ def _booster_end_once(log_target: str):
         _append_log(log_target, "=== 手动执行已结束 ===")
 
 
+def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Event, log_target: str) -> int:
+    """为给定稿件列表各创建一个 booster 子任务，返回创建数量。"""
+    created = 0
+    for v in low_videos:
+        if stop_event.is_set():
+            _append_log(log_target, "[SYSTEM] 正在停止...")
+            break
+        tid = str(uuid.uuid4())[:8]
+        with booster_lock:
+            booster_tasks[tid] = {
+                "status": "queued",
+                "start": time.time(),
+                "end": None,
+                "bv": v["bvid"],
+                "title": v.get("title", ""),
+                "target": target,
+                "max_rounds": 5,
+                "refetch_proxies": True,
+                "stop_event": stop_event,
+                "log_target": log_target,  # 便于子任务日志回流
+            }
+        with log_lock:
+            log_buffers[tid] = []
+        _append_log(log_target, f"已创建任务 {tid} → {v['bvid']}《{v.get('title','')}》（当前播放 {v.get('play', 0)}）")
+        t = threading.Thread(target=_run_booster_task, args=(tid, [v["bvid"]], target, stop_event, 5, True), daemon=True)
+        t.start()
+        created += 1
+    return created
+
+
 def _booster_schedule_once(stop_event: threading.Event, log_target: str = "booster-schedule"):
-    """执行一次：按配置的账号数逐账号获取投稿列表，为播放量低于阈值的稿件各创建一个 booster 任务。"""
+    """执行一次：先为「刷量账号」抓取各自投稿，再为「监控 UID」抓取公开投稿，
+    为播放量低于阈值的稿件各创建一个 booster 任务。两类目标共用阈值与目标播放数。"""
     cfg = _load_booster_config().get("schedule", {})
     try:
         threshold = int(cfg.get("play_threshold", 200))
@@ -1295,40 +1365,36 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
         threshold, target = 200, 200
 
     account_uids = [str(u).strip() for u in (cfg.get("account_uids") or []) if str(u or "").strip()]
-    try:
-        from core import load_account_dicts_by_uids, load_enabled_account_dicts
-        if account_uids:
+    watch_uids = [str(u).strip() for u in (cfg.get("uids") or []) if str(u or "").strip()]
+
+    main_cred = _read_auto_cred()
+    main_mid = main_cred.get("dedeuserid") or main_cred.get("mid") or main_cred.get("login_uid") or ""
+
+    accounts = []
+    if account_uids:
+        try:
+            from core import load_account_dicts_by_uids
             accounts = load_account_dicts_by_uids(account_uids)
-        else:
-            # 兼容旧配置：account_count 表示取前 N 个启用账号，默认 1（主账号）
-            try:
-                account_count = max(1, int(cfg.get("account_count", 1)))
-            except (TypeError, ValueError):
-                account_count = 1
-            accounts = load_enabled_account_dicts(limit=account_count)
-    except Exception as e:
-        accounts = []
-        _append_log(log_target, f"[ERROR] 加载账号凭证失败: {e}")
-    if not accounts:
-        # 回退：多账号存储为空时直接用主账号凭证文件
-        cred = _read_auto_cred()
-        mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
-        if cred.get("sessdata") and mid:
-            accounts = [("", cred, {"name": ""})]
-    if not accounts:
-        _append_log(log_target, "[ERROR] 未登录，请先在「自动互动」页面登录账号")
+        except Exception as e:
+            _append_log(log_target, f"[ERROR] 加载账号凭证失败: {e}")
+        if not accounts and main_cred.get("sessdata") and main_mid:
+            # 回退：多账号存储为空时直接用主账号凭证文件
+            accounts = [("", main_cred, {"name": ""})]
+
+    if not accounts and not watch_uids:
+        _append_log(log_target, "[ERROR] 未配置刷量账号或监控 UID，请先在页面上配置")
         _booster_end_once(log_target)
         return
 
     total_created = 0
-    for uid, cred, meta in accounts:
+    for uid, acc_cred, meta in accounts:
         if stop_event.is_set():
             _append_log(log_target, "[SYSTEM] 正在停止...")
             break
         name = meta.get("name") or (f"UID {uid}" if uid else "主账号")
         _append_log(log_target, f"获取账号【{name}】的投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
         try:
-            videos = _fetch_my_videos(cred)
+            videos = _fetch_my_videos(acc_cred)
         except Exception as e:
             _append_log(log_target, f"[ERROR] 账号【{name}】获取投稿列表失败: {e}")
             continue
@@ -1344,30 +1410,36 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
 
         _append_log(log_target, f"账号【{name}】共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
                     ", ".join(v["bvid"] for v in low))
-        for v in low:
-            if stop_event.is_set():
-                _append_log(log_target, "[SYSTEM] 正在停止...")
-                break
-            tid = str(uuid.uuid4())[:8]
-            with booster_lock:
-                booster_tasks[tid] = {
-                    "status": "queued",
-                    "start": time.time(),
-                    "end": None,
-                    "bv": v["bvid"],
-                    "title": v.get("title", ""),
-                    "target": target,
-                    "max_rounds": 5,
-                    "refetch_proxies": True,
-                    "stop_event": stop_event,
-                    "log_target": log_target,  # 便于子任务日志回流
-                }
-            with log_lock:
-                log_buffers[tid] = []
-            _append_log(log_target, f"已创建任务 {tid} → {v['bvid']}《{v.get('title','')}》（当前播放 {v.get('play', 0)}）")
-            t = threading.Thread(target=_run_booster_task, args=(tid, [v["bvid"]], target, stop_event, 5, True), daemon=True)
-            t.start()
-            total_created += 1
+        total_created += _booster_spawn_tasks(low, target, stop_event, log_target)
+
+    # 监控 UID：统一用主账号凭证抓取其公开投稿
+    if watch_uids and not stop_event.is_set():
+        if not (main_cred.get("sessdata") and main_mid):
+            _append_log(log_target, "[ERROR] 未登录，请先在「自动互动」页面登录主账号")
+        else:
+            for uid in watch_uids:
+                if stop_event.is_set():
+                    _append_log(log_target, "[SYSTEM] 正在停止...")
+                    break
+                _append_log(log_target, f"获取监控 UID {uid} 的投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
+                try:
+                    videos = _fetch_my_videos(main_cred, mid=uid)
+                except Exception as e:
+                    _append_log(log_target, f"[ERROR] UID {uid} 获取投稿列表失败: {e}")
+                    continue
+
+                if stop_event.is_set():
+                    _append_log(log_target, "[SYSTEM] 正在停止...")
+                    break
+
+                low = [v for v in videos if int(v.get("play", 0) or 0) < threshold]
+                if not low:
+                    _append_log(log_target, f"UID {uid} 共 {len(videos)} 个投稿，无播放量低于 {threshold} 的稿件，本轮跳过")
+                    continue
+
+                _append_log(log_target, f"UID {uid} 共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
+                            ", ".join(v["bvid"] for v in low))
+                total_created += _booster_spawn_tasks(low, target, stop_event, log_target)
 
     # 「once」模式下不进入循环：等所有派生的 booster 子任务都结束后才标记结束
     if _booster_schedule["running"] == "once":
@@ -1441,6 +1513,7 @@ def booster_schedule_config_get():
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
         "account_uids": cfg.get("account_uids") or [],
+        "uids": cfg.get("uids") or [],
     })
 
 
@@ -1454,16 +1527,18 @@ def booster_schedule_config_save():
     except (TypeError, ValueError):
         return jsonify({"success": False, "message": "配置项必须为整数"}), 400
     account_uids = [str(u).strip() for u in (data.get("account_uids") or []) if str(u or "").strip()]
+    uids = [str(u).strip() for u in (data.get("uids") or []) if str(u or "").strip()]
     if interval < 1 or threshold < 1 or target < 1:
         return jsonify({"success": False, "message": "配置项必须为正整数"}), 400
-    if not account_uids:
-        return jsonify({"success": False, "message": "请至少选择一个刷量账号"}), 400
+    if not account_uids and not uids:
+        return jsonify({"success": False, "message": "请至少配置一个刷量账号或监控 UID"}), 400
     cfg = _load_booster_config()
     cfg["schedule"] = {
         "interval_minutes": interval,
         "play_threshold": threshold,
         "target_play": target,
         "account_uids": account_uids,
+        "uids": uids,
     }
     _save_booster_config(cfg)
     return jsonify({"success": True})
@@ -1550,6 +1625,7 @@ def booster_schedule_status():
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
         "account_uids": cfg.get("account_uids") or [],
+        "uids": cfg.get("uids") or [],
         "last_run": _booster_schedule["last_run"],
         "run_count": _booster_schedule["run_count"],
         "active_tasks": active_bvids,
@@ -1565,7 +1641,8 @@ player_tasks = {}
 player_lock = threading.Lock()
 
 
-def _run_player_task(task_id: str, bv_list: list[str], rounds: int, stop_event: threading.Event = None):
+def _run_player_task(task_id: str, bv_list: list[str], rounds: int,
+                     stop_event: threading.Event = None, use_proxy: bool = False):
     with player_lock:
         player_tasks[task_id]["status"] = "running"
 
@@ -1659,7 +1736,8 @@ def _run_player_task(task_id: str, bv_list: list[str], rounds: int, stop_event: 
         bv_input = ",".join(bv_list)
         # main() 现在是异步函数，需要用 asyncio.run() 执行
         import asyncio
-        asyncio.run(player.main(bv_input, rounds=rounds, stop_event=stop_event, log_fn=log_fn))
+        asyncio.run(player.main(bv_input, rounds=rounds, stop_event=stop_event, log_fn=log_fn,
+                                use_proxy=use_proxy))
         with player_lock:
             player_tasks[task_id]["status"] = "completed"
     except Exception as e:
@@ -1680,6 +1758,8 @@ def player_run():
     if not bv_list:
         return jsonify({"error": "缺少 BV号"}), 400
 
+    use_proxy = bool(data.get("use_proxy", False))
+
     tid = str(uuid.uuid4())[:8]
     stop_event = threading.Event()
     with player_lock:
@@ -1689,11 +1769,13 @@ def player_run():
             "end": None,
             "bv": bv_str,
             "rounds": rounds,
+            "use_proxy": use_proxy,
             "stop_event": stop_event,
         }
     with log_lock:
         log_buffers[tid] = []
-    t = threading.Thread(target=_run_player_task, args=(tid, bv_list, rounds, stop_event), daemon=True)
+    t = threading.Thread(target=_run_player_task,
+                         args=(tid, bv_list, rounds, stop_event, use_proxy), daemon=True)
     t.start()
     return jsonify({"task_id": tid})
 
@@ -3790,64 +3872,105 @@ def collection_resort_season():
 
 _TAG_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tag_cache.json")
 
+# 创作中心「编辑稿件」页的「分区」栏显示的是稿件详情里的 human_type2（新版分区字段），
+# 与公开接口的 tid/tid_v2 是两套互不同步的分区体系，同一稿件会显示成不同分区。
+# 该字段只能通过创作中心接口（x/vupre/web/archive/view）取，且仅本人稿件有效，故做内存缓存。
+_TC_ZONE_CACHE = {}
+_TC_ZONE_TTL = 6 * 3600
+
 # B站 tid_v2 -> 一级分区名称映射（新版分区体系）
+# 依据视频页 channelKv 官方分区树（31 个一级分区 / 236 个 tid）生成
 _V2_TID_MAP = {
-    # 主分区
-    1001:"影视", 1002:"娱乐", 1003:"音乐", 1004:"舞蹈", 1005:"动画",
-    1006:"番剧", 1007:"鬼畜", 1008:"游戏", 1009:"国创", 1010:"知识",
-    1011:"人工智能", 1012:"科技", 1013:"运动", 1014:"汽车", 1015:"家装房产",
-    1016:"生活", 1017:"美食", 1018:"动物圈", 1019:"时尚", 1020:"资讯",
-    1021:"小剧场", 1022:"纪录片", 1023:"电影", 1024:"电视剧",
-    # 影视子分区
-    2001:"影视", 2002:"影视", 2003:"影视", 2004:"影视", 2005:"影视",
-    2006:"影视", 2007:"影视", 2008:"影视",
-    # 娱乐子分区
-    2009:"娱乐", 2010:"娱乐", 2011:"娱乐", 2012:"娱乐", 2013:"娱乐",
-    2014:"娱乐", 2015:"娱乐",
-    # 音乐子分区
-    2016:"音乐", 2017:"音乐", 2018:"音乐", 2019:"音乐", 2020:"音乐",
-    2021:"音乐", 2022:"音乐", 2023:"音乐", 2024:"音乐", 2025:"音乐",
-    2026:"音乐", 2027:"音乐",
-    # 舞蹈子分区
-    2028:"舞蹈", 2029:"舞蹈", 2030:"舞蹈", 2031:"舞蹈", 2032:"舞蹈",
-    2033:"舞蹈", 2034:"舞蹈", 2035:"舞蹈", 2036:"舞蹈",
-    # 动画子分区
-    2037:"动画", 2038:"动画", 2039:"动画", 2040:"动画", 2041:"动画",
-    2042:"动画", 2043:"动画", 2044:"动画", 2045:"动画", 2046:"动画",
-    2047:"动画", 2048:"动画", 2049:"动画", 2050:"动画", 2051:"动画",
-    2052:"动画", 2053:"动画", 2054:"动画",
-    # 鬼畜子分区
-    2059:"鬼畜", 2060:"鬼畜", 2061:"鬼畜", 2062:"鬼畜", 2063:"鬼畜",
-    # 游戏子分区
-    2064:"游戏", 2065:"游戏", 2066:"游戏", 2067:"游戏", 2068:"游戏",
-    2069:"游戏", 2070:"游戏", 2071:"游戏", 2072:"游戏", 2073:"游戏",
-    2074:"游戏", 2075:"游戏", 2076:"游戏", 2077:"游戏", 2078:"游戏",
-    2079:"游戏",
-    # 知识子分区
-    2084:"知识", 2085:"知识", 2086:"知识", 2087:"知识", 2088:"知识",
-    2089:"知识", 2090:"知识", 2091:"知识", 2092:"知识", 2093:"知识",
-    2094:"知识", 2095:"知识",
-    # 科技子分区
-    2096:"科技", 2097:"科技", 2098:"科技", 2099:"科技",
-    # 生活子分区
-    2100:"生活", 2101:"生活", 2102:"生活", 2103:"生活", 2104:"生活",
-    2105:"生活", 2106:"生活", 2107:"生活", 2108:"生活", 2109:"生活",
-    2110:"生活", 2111:"生活", 2112:"生活", 2113:"生活",
-    # 美食子分区
-    2114:"美食", 2115:"美食", 2116:"美食", 2117:"美食", 2118:"美食",
-    2119:"美食", 2120:"美食",
-    # 动物圈子分区
-    2121:"动物圈", 2122:"动物圈", 2123:"动物圈", 2124:"动物圈",
-    2125:"动物圈", 2126:"动物圈",
-    # 时尚子分区
-    2127:"时尚", 2128:"时尚", 2129:"时尚", 2130:"时尚", 2131:"时尚",
-    2132:"时尚", 2133:"时尚", 2134:"时尚",
-    # 运动子分区
-    2135:"运动", 2136:"运动", 2137:"运动", 2138:"运动", 2139:"运动",
-    2140:"运动", 2141:"运动", 2142:"运动", 2143:"运动",
-    # 汽车子分区
-    2144:"汽车", 2145:"汽车", 2146:"汽车", 2147:"汽车", 2148:"汽车",
-    2149:"汽车", 2150:"汽车", 2151:"汽车", 2152:"汽车", 2153:"汽车",
+    # 人工智能
+    1011:"人工智能", 2096:"人工智能", 2097:"人工智能", 2098:"人工智能",
+    # 动物
+    1024:"动物", 2167:"动物", 2168:"动物", 2169:"动物", 2170:"动物",
+    2171:"动物",
+    # 汽车
+    1013:"汽车", 2106:"汽车", 2107:"汽车", 2108:"汽车", 2109:"汽车",
+    2110:"汽车",
+    # 影视
+    1001:"影视", 2001:"影视", 2002:"影视", 2003:"影视", 2004:"影视",
+    2005:"影视", 2006:"影视", 2007:"影视", 2008:"影视",
+    # 舞蹈
+    1004:"舞蹈", 2028:"舞蹈", 2029:"舞蹈", 2030:"舞蹈", 2031:"舞蹈",
+    2032:"舞蹈", 2033:"舞蹈", 2034:"舞蹈", 2035:"舞蹈", 2036:"舞蹈",
+    # 动画
+    1005:"动画", 2037:"动画", 2038:"动画", 2039:"动画", 2040:"动画",
+    2041:"动画", 2042:"动画", 2043:"动画", 2044:"动画", 2045:"动画",
+    2046:"动画", 2047:"动画", 2048:"动画", 2049:"动画", 2050:"动画",
+    2051:"动画", 2052:"动画", 2053:"动画", 2054:"动画",
+    # 情感
+    1027:"情感", 2185:"情感", 2186:"情感", 2187:"情感", 2188:"情感",
+    # 娱乐
+    1002:"娱乐", 2009:"娱乐", 2010:"娱乐", 2011:"娱乐", 2012:"娱乐",
+    2013:"娱乐", 2014:"娱乐", 2015:"娱乐",
+    # 时尚美妆
+    1014:"时尚美妆", 2111:"时尚美妆", 2112:"时尚美妆", 2113:"时尚美妆", 2114:"时尚美妆",
+    2115:"时尚美妆", 2116:"时尚美妆", 2117:"时尚美妆", 2118:"时尚美妆", 2119:"时尚美妆",
+    # 美食
+    1020:"美食", 2149:"美食", 2150:"美食", 2151:"美食", 2152:"美食",
+    2153:"美食",
+    # 游戏
+    1008:"游戏", 2064:"游戏", 2065:"游戏", 2066:"游戏", 2067:"游戏",
+    2068:"游戏", 2069:"游戏", 2070:"游戏", 2071:"游戏", 2072:"游戏",
+    2073:"游戏", 2074:"游戏", 2075:"游戏", 2076:"游戏", 2077:"游戏",
+    2078:"游戏", 2079:"游戏",
+    # 健身
+    1017:"健身", 2128:"健身", 2129:"健身", 2130:"健身", 2131:"健身",
+    2132:"健身",
+    # 手工
+    1019:"手工", 2143:"手工", 2144:"手工", 2145:"手工", 2146:"手工",
+    2147:"手工", 2148:"手工",
+    # 健康
+    1026:"健康", 2179:"健康", 2180:"健康", 2181:"健康", 2182:"健康",
+    2183:"健康", 2184:"健康",
+    # 家装房产
+    1015:"家装房产", 2120:"家装房产", 2121:"家装房产", 2122:"家装房产", 2123:"家装房产",
+    # 资讯
+    1009:"资讯", 2080:"资讯", 2081:"资讯", 2082:"资讯", 2083:"资讯",
+    # 鬼畜
+    1007:"鬼畜", 2059:"鬼畜", 2060:"鬼畜", 2061:"鬼畜", 2062:"鬼畜",
+    2063:"鬼畜",
+    # 知识
+    1010:"知识", 2084:"知识", 2085:"知识", 2086:"知识", 2087:"知识",
+    2088:"知识", 2089:"知识", 2090:"知识", 2091:"知识", 2092:"知识",
+    2093:"知识", 2094:"知识", 2095:"知识",
+    # 生活经验
+    1031:"生活经验", 2203:"生活经验", 2204:"生活经验", 2205:"生活经验",
+    # 生活兴趣
+    1030:"生活兴趣", 2198:"生活兴趣", 2199:"生活兴趣", 2200:"生活兴趣", 2201:"生活兴趣",
+    2202:"生活兴趣",
+    # 音乐
+    1003:"音乐", 2016:"音乐", 2017:"音乐", 2018:"音乐", 2019:"音乐",
+    2020:"音乐", 2021:"音乐", 2022:"音乐", 2023:"音乐", 2024:"音乐",
+    2025:"音乐", 2026:"音乐", 2027:"音乐",
+    # 神秘学
+    1028:"神秘学", 2189:"神秘学", 2190:"神秘学", 2191:"神秘学", 2192:"神秘学",
+    2193:"神秘学",
+    # 户外潮流
+    1016:"户外潮流", 2124:"户外潮流", 2125:"户外潮流", 2126:"户外潮流", 2127:"户外潮流",
+    # 绘画
+    1006:"绘画", 2055:"绘画", 2056:"绘画", 2057:"绘画", 2058:"绘画",
+    # 亲子
+    1025:"亲子", 2172:"亲子", 2173:"亲子", 2174:"亲子", 2175:"亲子",
+    2176:"亲子", 2177:"亲子", 2178:"亲子",
+    # 三农
+    1023:"三农", 2162:"三农", 2163:"三农", 2164:"三农", 2165:"三农",
+    2166:"三农",
+    # 小剧场
+    1021:"小剧场", 2154:"小剧场", 2155:"小剧场", 2156:"小剧场", 2157:"小剧场",
+    # 体育运动
+    1018:"体育运动", 2133:"体育运动", 2134:"体育运动", 2135:"体育运动", 2136:"体育运动",
+    2137:"体育运动", 2138:"体育运动", 2139:"体育运动", 2140:"体育运动", 2141:"体育运动",
+    2142:"体育运动",
+    # 科技数码
+    1012:"科技数码", 2099:"科技数码", 2100:"科技数码", 2101:"科技数码", 2102:"科技数码",
+    2103:"科技数码", 2104:"科技数码", 2105:"科技数码",
+    # 旅游出行
+    1022:"旅游出行", 2158:"旅游出行", 2159:"旅游出行", 2160:"旅游出行", 2161:"旅游出行",
+    # vlog
+    1029:"vlog", 2194:"vlog", 2195:"vlog", 2196:"vlog", 2197:"vlog",
 }
 
 # 旧版 tid -> 一级分区名称映射（兜底）
@@ -4294,10 +4417,42 @@ def tag_search_stats():
         loop = asyncio.new_event_loop()
         try:
             async def _fetch_stats():
-                sem = asyncio.Semaphore(10)
-                results = []
+                import httpx
 
-                async def _one(aid):
+                sem = asyncio.Semaphore(10)
+                # 创作中心接口有频率限制（-702），并发压到 3 并带退避重试
+                tc_sem = asyncio.Semaphore(3)
+                tc_cookies = _coll_cookies(sessdata, bili_jct, mid)
+
+                async def _tc_zone(client, aid):
+                    """取创作中心口径的分区名（human_type2），取不到返回 None。"""
+                    key = str(aid)
+                    cached = _TC_ZONE_CACHE.get(key)
+                    if cached and time.time() - cached[1] < _TC_ZONE_TTL:
+                        return cached[0]
+                    async with tc_sem:
+                        for attempt in range(3):
+                            try:
+                                resp = await client.get(
+                                    "https://member.bilibili.com/x/vupre/web/archive/view",
+                                    params={"aid": int(aid)},
+                                    headers=COLL_HEADERS, cookies=tc_cookies, timeout=15,
+                                )
+                                data = resp.json()
+                                if data.get("code") == -702:
+                                    await asyncio.sleep(1.5 * (attempt + 1))
+                                    continue
+                                if data.get("code") == 0:
+                                    archive = (data.get("data") or {}).get("archive") or {}
+                                    name = (archive.get("human_type2") or {}).get("name") or None
+                                    _TC_ZONE_CACHE[key] = (name, time.time())
+                                    return name
+                                break
+                            except Exception:
+                                await asyncio.sleep(1.0 * (attempt + 1))
+                    return None
+
+                async def _one(aid, client):
                     async with sem:
                         try:
                             vid = BiliVideo(aid=int(aid), credential=credential)
@@ -4306,6 +4461,10 @@ def tag_search_stats():
                             _tid = info.get("tid", 0)
                             _tid_v2 = info.get("tid_v2", 0)
                             _tname = info.get("tname", "") or info.get("tname_v2", "") or _V2_TID_MAP.get(_tid_v2, "") or _TID_MAP.get(_tid, str(_tid) if _tid else "")
+                            # 与创作中心「分区」栏口径对齐；非本人稿件取不到时回退到上面推算的分区
+                            _tc_name = await _tc_zone(client, aid)
+                            if _tc_name:
+                                _tname = _tc_name
                             return {
                                 "aid": str(aid),
                                 "bvid": info.get("bvid", ""),
@@ -4322,8 +4481,9 @@ def tag_search_stats():
                         except Exception as e:
                             return {"aid": str(aid), "error": str(e)}
 
-                tasks = [_one(a) for a in aids]
-                results = await asyncio.gather(*tasks)
+                async with httpx.AsyncClient() as client:
+                    tasks = [_one(a, client) for a in aids]
+                    results = await asyncio.gather(*tasks)
                 return results
 
             stats_list = loop.run_until_complete(_fetch_stats())
@@ -4346,722 +4506,6 @@ def tag_search_stats():
 
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
-
-
-# =========================================================================
-#  八、粉丝节养猫 (bili-cat)
-# =========================================================================
-
-CAT_CONFIG_FILE = CONFIG_DIR / "cat_config.yaml"
-CAT_DATA_DIR = ROOT / "data" / "bili-cat"
-CAT_MEDALS_FILE = CAT_DATA_DIR / "cat_medals.json"
-CAT_PROGRESS_FILE = CAT_DATA_DIR / "cat_progress.json"
-
-_CAT_DEFAULT_OPTIONS = {
-    "sign": True, "feedBanner": False, "feed": True,
-    "pet": True, "petTop20": False, "petAll": False,
-    "lightMedal": False, "claimGift": False,
-}
-
-cat_task_status: dict = {}
-cat_stop_events: dict = {}
-_cat_run_lock = threading.Lock()
-_cat_fetch_state = {"running": False}
-
-
-def _load_cat_config() -> dict:
-    import yaml
-    cfg = {}
-    if CAT_CONFIG_FILE.exists():
-        try:
-            with open(CAT_CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            cfg = {}
-    cfg.setdefault("selected", [])
-    cfg.setdefault("exclude_dead", False)
-    options = cfg.setdefault("options", {})
-    for k, v in _CAT_DEFAULT_OPTIONS.items():
-        options.setdefault(k, v)
-    return cfg
-
-
-def _save_cat_config(cfg: dict):
-    import yaml
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CAT_CONFIG_FILE, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-
-
-def _load_cat_medals_raw() -> dict:
-    if CAT_MEDALS_FILE.exists():
-        try:
-            data = json.loads(CAT_MEDALS_FILE.read_text(encoding="utf-8"))
-            if isinstance(data.get("medals"), list):
-                return data
-        except Exception:
-            pass
-    return {"medals": [], "updated_at": None}
-
-
-def _save_cat_medals(medals: list, updated_at: str):
-    CAT_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    CAT_MEDALS_FILE.write_text(
-        json.dumps({"medals": medals, "updated_at": updated_at}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
-def _load_cat_progress() -> dict:
-    """读取当日养猫进度，跨天自动重置。"""
-    today = time.strftime("%Y-%m-%d")
-    if CAT_PROGRESS_FILE.exists():
-        try:
-            p = json.loads(CAT_PROGRESS_FILE.read_text(encoding="utf-8"))
-            if p.get("date") == today and isinstance(p.get("completed_ruids"), list):
-                return p
-        except Exception:
-            pass
-    return {"date": today, "completed_ruids": []}
-
-
-def _save_cat_progress(progress: dict):
-    CAT_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    CAT_PROGRESS_FILE.write_text(
-        json.dumps(progress, ensure_ascii=False), encoding="utf-8")
-
-
-def _cat_cookies_from_cred() -> dict:
-    """从 auto 模块凭证构建养猫所需 cookies。透传全部字段（含 buvid3/buvid4/ac_time_value），
-    web-room 端点对 cookie 完整性敏感——B 站风控用 ac_time_value 判定"用户身份稳定性"。"""
-    cred = _read_auto_cred()
-    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
-    cookies = {
-        "SESSDATA": cred.get("sessdata", ""),
-        "bili_jct": cred.get("bili_jct", ""),
-        "DedeUserID": uid,
-    }
-    for k in ("buvid3", "buvid4", "ac_time_value"):
-        v = cred.get(k)
-        if v:
-            cookies[k] = v
-    return cookies
-
-
-def _run_cat_task(task_id: str, stop_event: threading.Event, mirror: str | None = None):
-    """后台线程执行养猫主循环。mirror 为可选的日志镜像目标（如定时任务日志）。"""
-    def _emit(line: str):
-        _append_log(task_id, line)
-        if mirror:
-            _append_log(mirror, line)
-
-    if not _cat_run_lock.acquire(blocking=False):
-        cat_task_status[task_id]["status"] = "error"
-        _emit("[SYSTEM] 已有养猫任务在运行，请等待完成后再试")
-        cat_task_status[task_id]["end"] = time.time()
-        return
-
-    cat_task_status[task_id]["status"] = "running"
-
-    def _log(line: str):
-        _emit(f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
-
-    try:
-        from cat_helper import run_cat_loop
-
-        cookies = _cat_cookies_from_cred()
-        if not cookies["SESSDATA"]:
-            raise RuntimeError("未登录，请先在「自动互动」页扫码登录")
-
-        cfg = _load_cat_config()
-        medals = _load_cat_medals_raw().get("medals", [])
-        progress = _load_cat_progress()
-
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(run_cat_loop(
-                cookies=cookies,
-                options=cfg.get("options", {}),
-                selected_ruids=cfg.get("selected", []),
-                medals=medals,
-                progress=progress,
-                save_progress=_save_cat_progress,
-                log=_log,
-                stop_event=stop_event,
-            ))
-        finally:
-            loop.close()
-        cat_task_status[task_id]["status"] = "completed"
-    except Exception as e:
-        _emit(f"[ERROR] {e}")
-        cat_task_status[task_id]["status"] = "error"
-    finally:
-        cat_task_status[task_id]["end"] = time.time()
-        _cat_run_lock.release()
-
-
-@app.route("/api/cat/login")
-def cat_login_status():
-    cred = _read_auto_cred()
-    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
-    return jsonify({"logged_in": bool(cred.get("sessdata")), "uid": uid,
-                    "uname": _fetch_bili_uname(cred.get("sessdata", ""), uid)})
-
-
-@app.route("/api/cat/config", methods=["GET"])
-def cat_config_get():
-    cfg = _load_cat_config()
-    medals_data = _load_cat_medals_raw()
-    cred = _read_auto_cred()
-    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
-    return jsonify({
-        "options": cfg.get("options", {}),
-        "selected": cfg.get("selected", []),
-        "exclude_dead": cfg.get("exclude_dead", False),
-        "medals": medals_data.get("medals", []),
-        "medals_updated_at": medals_data.get("updated_at"),
-        "progress": _load_cat_progress(),
-        "logged_in": bool(cred.get("sessdata")),
-        "uid": uid,
-        "uname": _fetch_bili_uname(cred.get("sessdata", ""), uid),
-    })
-
-
-@app.route("/api/cat/config", methods=["POST"])
-def cat_config_save():
-    data = request.json or {}
-    cfg = _load_cat_config()
-    if "selected" in data:
-        sel = data.get("selected") or []
-        cfg["selected"] = [str(r) for r in sel if str(r)]
-    if "options" in data and isinstance(data.get("options"), dict):
-        for k in _CAT_DEFAULT_OPTIONS:
-            if k in data["options"]:
-                cfg["options"][k] = bool(data["options"][k])
-    if "exclude_dead" in data:
-        cfg["exclude_dead"] = bool(data.get("exclude_dead"))
-    _save_cat_config(cfg)
-    return jsonify({"success": True})
-
-
-@app.route("/api/cat/fetch-medals", methods=["POST"])
-def cat_fetch_medals():
-    """同步拉取全部粉丝牌（可能耗时，前端需等待）。"""
-    if _cat_fetch_state["running"]:
-        return jsonify({"success": False, "message": "正在拉取中，请稍候"}), 409
-    for st in cat_task_status.values():
-        if st["status"] == "running":
-            return jsonify({"success": False, "message": "养猫任务运行中，请先停止"}), 409
-
-    cookies = _cat_cookies_from_cred()
-    if not cookies["SESSDATA"]:
-        return jsonify({"success": False, "message": "未登录，请先在「自动互动」页扫码登录"})
-
-    _cat_fetch_state["running"] = True
-    try:
-        from cat_helper import fetch_all_medals
-        loop = asyncio.new_event_loop()
-        try:
-            medals = loop.run_until_complete(fetch_all_medals(
-                cookies, log=lambda m: print(f"[CAT] {m}", flush=True)))
-        finally:
-            loop.close()
-        updated_at = datetime.now().isoformat(timespec="seconds")
-        _save_cat_medals(medals, updated_at)
-        return jsonify({"success": True, "count": len(medals), "updated_at": updated_at})
-    except Exception as e:
-        return jsonify({"success": False, "message": f"拉取粉丝牌失败: {e}"})
-    finally:
-        _cat_fetch_state["running"] = False
-
-
-@app.route("/api/cat/run", methods=["POST"])
-def cat_run():
-    for st in cat_task_status.values():
-        if st["status"] == "running":
-            return jsonify({"error": "已有养猫任务在运行"}), 409
-    if _cat_fetch_state["running"]:
-        return jsonify({"error": "正在拉取粉丝牌，请稍候"}), 409
-
-    # 运行前保存前端传来的最新配置
-    data = request.json or {}
-    if "selected" in data or "options" in data:
-        cfg = _load_cat_config()
-        if "selected" in data:
-            cfg["selected"] = [str(r) for r in (data.get("selected") or []) if str(r)]
-        if "options" in data and isinstance(data.get("options"), dict):
-            for k in _CAT_DEFAULT_OPTIONS:
-                if k in data["options"]:
-                    cfg["options"][k] = bool(data["options"][k])
-        _save_cat_config(cfg)
-
-    cfg = _load_cat_config()
-    if not cfg.get("selected"):
-        return jsonify({"error": "请先选择至少一个粉丝牌"}), 400
-    if not any(cfg.get("options", {}).get(k) for k in _CAT_DEFAULT_OPTIONS):
-        return jsonify({"error": "请至少勾选一项功能开关"}), 400
-
-    tid = str(uuid.uuid4())[:8]
-    cat_task_status[tid] = {"status": "queued", "start": time.time(), "end": None}
-    stop_event = threading.Event()
-    cat_stop_events[tid] = stop_event
-    with log_lock:
-        log_buffers[tid] = []
-    t = threading.Thread(target=_run_cat_task, args=(tid, stop_event), daemon=True)
-    t.start()
-    return jsonify({"task_id": tid})
-
-
-@app.route("/api/cat/status/<task_id>")
-def cat_status(task_id):
-    st = cat_task_status.get(task_id)
-    if not st:
-        return jsonify({"error": "not found"}), 404
-    return jsonify({**st, "output": _get_log(task_id)})
-
-
-@app.route("/api/cat/stop", methods=["POST"])
-def cat_stop():
-    data = request.json or {}
-    task_id = data.get("task_id")
-    stopped = 0
-    for tid, st in cat_task_status.items():
-        if st["status"] == "running" and tid in cat_stop_events:
-            if task_id and tid != task_id:
-                continue
-            cat_stop_events[tid].set()
-            _append_log(tid, "[SYSTEM] 正在停止，将在当前动作结束后保存进度...")
-            stopped += 1
-    return jsonify({"success": True, "stopped": stopped})
-
-
-@app.route("/api/cat/progress/clear", methods=["POST"])
-def cat_progress_clear():
-    for st in cat_task_status.values():
-        if st["status"] == "running":
-            return jsonify({"success": False, "message": "任务运行中，不能清空今日进度"}), 409
-    _save_cat_progress({"date": time.strftime("%Y-%m-%d"), "completed_ruids": []})
-    return jsonify({"success": True})
-
-
-@app.route("/api/cat/overview")
-def cat_overview():
-    """总览页卡片数据。"""
-    cred = _read_auto_cred()
-    cfg = _load_cat_config()
-    medals_data = _load_cat_medals_raw()
-    progress = _load_cat_progress()
-    completed = set(str(r) for r in progress.get("completed_ruids", []))
-    selected = [str(r) for r in cfg.get("selected", [])]
-    return jsonify({
-        "logged_in": bool(cred.get("sessdata")),
-        "medals_count": len(medals_data.get("medals", [])),
-        "selected_count": len(selected),
-        "done": len([r for r in selected if r in completed]),
-        "total": len(selected),
-        "running": any(st["status"] == "running" for st in cat_task_status.values()),
-    })
-
-
-# ---- 养猫定时任务：每天定点执行一次 ----
-_cat_schedule = {
-    "running": False,
-    "stop_event": threading.Event(),
-    "last_run": None,
-    "next_run": None,
-}
-
-
-def _cat_any_running() -> bool:
-    return any(st["status"] in ("queued", "running") for st in cat_task_status.values())
-
-
-def _cat_schedule_time_str() -> str:
-    t = str((_load_cat_config().get("schedule") or {}).get("time", "08:00"))
-    try:
-        hh, mm = t.split(":")
-        if 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59:
-            return f"{int(hh):02d}:{int(mm):02d}"
-    except Exception:
-        pass
-    return "08:00"
-
-
-def _cat_schedule_next_ts(time_str: str) -> float:
-    hh, mm = (int(x) for x in time_str.split(":"))
-    now = datetime.now()
-    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return target.timestamp()
-
-
-def _cat_schedule_spawn_task() -> None:
-    """定时触发：创建一次养猫任务（日志镜像到 cat-schedule）。"""
-    tid = str(uuid.uuid4())[:8]
-    cat_task_status[tid] = {"status": "queued", "start": time.time(), "end": None}
-    stop_event = threading.Event()
-    cat_stop_events[tid] = stop_event
-    with log_lock:
-        log_buffers[tid] = []
-    _append_log("cat-schedule", f"已创建养猫任务 {tid}，执行进度见「粉丝节养猫」页或本日志")
-    threading.Thread(target=_run_cat_task, args=(tid, stop_event, "cat-schedule"), daemon=True).start()
-
-
-def _cat_schedule_loop():
-    """养猫定时任务主循环：每天到点执行一次；若已有养猫任务在运行则跳过。"""
-    while not _cat_schedule["stop_event"].is_set():
-        time_str = _cat_schedule_time_str()
-        next_ts = _cat_schedule_next_ts(time_str)
-        _cat_schedule["next_run"] = next_ts
-        _append_log("cat-schedule",
-                    f"=== 下次执行时间: {datetime.fromtimestamp(next_ts).strftime('%Y-%m-%d %H:%M')} ===")
-
-        # 分段等待，便于快速响应停止
-        while not _cat_schedule["stop_event"].is_set() and time.time() < next_ts:
-            time.sleep(1)
-        if _cat_schedule["stop_event"].is_set():
-            break
-
-        _cat_schedule["last_run"] = time.time()
-        if _cat_any_running():
-            _append_log("cat-schedule", "[SYSTEM] 检测到养猫任务正在运行，跳过本次定时执行")
-            continue
-        _append_log("cat-schedule", f"=== 定时养猫执行 ({datetime.now().strftime('%Y-%m-%d %H:%M')}) ===")
-        _cat_schedule_spawn_task()
-
-    _cat_schedule["running"] = False
-    _append_log("cat-schedule", "定时养猫任务已停止")
-
-
-@app.route("/api/cat/schedule/config", methods=["GET"])
-def cat_schedule_config_get():
-    return jsonify({"time": _cat_schedule_time_str()})
-
-
-@app.route("/api/cat/schedule/config", methods=["POST"])
-def cat_schedule_config_save():
-    data = request.json or {}
-    time_str = str(data.get("time", "")).strip()
-    try:
-        hh, mm = time_str.split(":")
-        if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
-            raise ValueError
-        time_str = f"{int(hh):02d}:{int(mm):02d}"
-    except Exception:
-        return jsonify({"success": False, "message": "时间格式不正确，应为 HH:MM"}), 400
-    cfg = _load_cat_config()
-    cfg.setdefault("schedule", {})["time"] = time_str
-    _save_cat_config(cfg)
-    return jsonify({"success": True, "time": time_str})
-
-
-@app.route("/api/cat/schedule/start", methods=["POST"])
-def cat_schedule_start():
-    if _cat_schedule["running"]:
-        return jsonify({"success": False, "message": "定时养猫已在运行"})
-    _cat_schedule["stop_event"] = threading.Event()
-    _cat_schedule["running"] = True
-    with log_lock:
-        log_buffers.setdefault("cat-schedule", [])
-    _append_log("cat-schedule", f"定时养猫已启动（每天 {_cat_schedule_time_str()} 执行一次）")
-    t = threading.Thread(target=_cat_schedule_loop, daemon=True)
-    t.start()
-    return jsonify({"success": True})
-
-
-@app.route("/api/cat/schedule/stop", methods=["POST"])
-def cat_schedule_stop():
-    if not _cat_schedule["running"]:
-        return jsonify({"success": False, "message": "定时养猫未运行"})
-    _cat_schedule["stop_event"].set()
-    return jsonify({"success": True})
-
-
-@app.route("/api/cat/schedule/status")
-def cat_schedule_status():
-    return jsonify({
-        "running": _cat_schedule["running"],
-        "time": _cat_schedule_time_str(),
-        "last_run": _cat_schedule["last_run"],
-        "next_run": _cat_schedule["next_run"],
-        "cat_running": _cat_any_running(),
-        "log": _get_log("cat-schedule"),
-    })
-
-
-# =========================================================================
-#  八-B、稿件监控 (bili-monitor)
-# =========================================================================
-
-MONITOR_CONFIG_FILE = CONFIG_DIR / "monitor_config.yaml"
-MONITOR_DATA_DIR = ROOT / "data" / "bili-monitor"
-MONITOR_ARCHIVE_DIR = MONITOR_DATA_DIR / "archive"
-MONITOR_INDEX_FILE = MONITOR_ARCHIVE_DIR / "index.json"
-# 监控日志统一挂在 "monitor" 任务名下，前端轮询该缓冲
-MONITOR_LOG_ID = "monitor"
-
-_monitor_status = {
-    "running": False,
-    "task_id": None,
-    "stop_event": threading.Event(),
-    "last_run": None,
-    "next_run": None,
-    "run_count": 0,
-    "last_error": None,
-}
-
-
-def _load_monitor_config() -> dict:
-    import yaml
-    cfg = {}
-    if MONITOR_CONFIG_FILE.exists():
-        try:
-            with open(MONITOR_CONFIG_FILE, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            cfg = {}
-    cfg.setdefault("bvids", [])
-    cfg.setdefault("interval", 3600)
-    return cfg
-
-
-def _save_monitor_config(cfg: dict):
-    import yaml
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(MONITOR_CONFIG_FILE, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-
-
-def _monitor_cookies_from_cred() -> dict:
-    """从 auto 模块凭证构建监控访问所需的登录 cookies（未登录时返回空 cookie 集）。"""
-    cred = _read_auto_cred()
-    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or cred.get("mid") or "")
-    return {
-        "SESSDATA": cred.get("sessdata", ""),
-        "bili_jct": cred.get("bili_jct", ""),
-        "DedeUserID": uid,
-        "buvid3": cred.get("buvid3", ""),
-    }
-
-
-def _monitor_clean_bvids(bvids) -> list:
-    """去重并提取规范 BV 号（支持 URL / 纯文本，仅保留 12 位合法 BV）。"""
-    from monitor_helper import extract_bvid, is_valid_bvid
-    seen = set()
-    out = []
-    for x in bvids or []:
-        bv = extract_bvid(x)
-        if is_valid_bvid(bv) and bv not in seen:
-            seen.add(bv)
-            out.append(bv)
-    return out
-
-
-def _run_monitor_worker(bvids, interval, task_id):
-    """后台线程：执行监控循环，日志写入 monitor 缓冲。"""
-    from monitor_helper import run_monitor_loop
-
-    def _log(line: str):
-        _append_log(MONITOR_LOG_ID, f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
-
-    def _on_next(deadline_ts: float):
-        _monitor_status["next_run"] = deadline_ts
-        _monitor_status["run_count"] += 1
-
-    # 复用 auto 登录凭证，以登录态截图
-    cookies = _monitor_cookies_from_cred()
-    if not cookies.get("SESSDATA"):
-        _append_log(MONITOR_LOG_ID,
-                    "[SYSTEM] 未检测到登录凭证，将以游客身份访问；如需登录态请先在「自动互动」页扫码登录")
-    else:
-        _append_log(MONITOR_LOG_ID,
-                    "[SYSTEM] 已加载登录凭证，将以登录态访问稿件页面")
-
-    _monitor_status["last_run"] = time.time()
-    try:
-        run_monitor_loop(bvids, interval, MONITOR_ARCHIVE_DIR, MONITOR_INDEX_FILE,
-                         log=_log, stop_event=_monitor_status["stop_event"],
-                         next_cb=_on_next, cookies=cookies)
-    except Exception as e:
-        _monitor_status["last_error"] = str(e)
-        _append_log(MONITOR_LOG_ID, f"[ERROR] {e}")
-    finally:
-        _monitor_status["running"] = False
-        _monitor_status["next_run"] = None
-
-
-@app.route("/api/monitor/config")
-def monitor_config():
-    cfg = _load_monitor_config()
-    return jsonify({
-        "bvids": cfg.get("bvids", []),
-        "interval": cfg.get("interval", 3600),
-        "running": _monitor_status["running"],
-    })
-
-
-@app.route("/api/monitor/config", methods=["POST"])
-def monitor_config_save():
-    data = request.json or {}
-    cfg = _load_monitor_config()
-    if "bvids" in data:
-        cfg["bvids"] = _monitor_clean_bvids(data.get("bvids"))
-    if "interval" in data:
-        try:
-            cfg["interval"] = max(60, int(data["interval"]))
-        except (TypeError, ValueError):
-            pass
-    _save_monitor_config(cfg)
-    return jsonify({"success": True})
-
-
-@app.route("/api/monitor/start", methods=["POST"])
-def monitor_start():
-    if _monitor_status["running"]:
-        return jsonify({"error": "稿件监控已在运行"}), 409
-    data = request.json or {}
-    if data.get("bvids") is not None:
-        bvids = _monitor_clean_bvids(data["bvids"])
-        cfg = _load_monitor_config()
-        cfg["bvids"] = bvids
-    else:
-        cfg = _load_monitor_config()
-        bvids = cfg.get("bvids", [])
-    if not bvids:
-        return jsonify({"error": "请先添加至少一个 BV 号"}), 400
-    try:
-        interval = max(60, int(data.get("interval", cfg.get("interval", 3600))))
-    except (TypeError, ValueError):
-        interval = int(cfg.get("interval", 3600))
-    cfg["interval"] = interval
-    _save_monitor_config(cfg)
-
-    _monitor_status["stop_event"] = threading.Event()
-    _monitor_status["task_id"] = str(uuid.uuid4())[:8]
-    _monitor_status["running"] = True
-    _monitor_status["run_count"] = 0
-    _monitor_status["last_error"] = None
-    with log_lock:
-        log_buffers[MONITOR_LOG_ID] = []
-    tid = _monitor_status["task_id"]
-    threading.Thread(target=_run_monitor_worker, args=(bvids, interval, tid),
-                     daemon=True).start()
-    return jsonify({"success": True, "task_id": tid})
-
-
-@app.route("/api/monitor/stop", methods=["POST"])
-def monitor_stop():
-    if _monitor_status["running"]:
-        _monitor_status["stop_event"].set()
-        _append_log(MONITOR_LOG_ID, "[SYSTEM] 正在停止，将在当前截图结束后退出...")
-    return jsonify({"success": True})
-
-
-@app.route("/api/monitor/status")
-def monitor_status_api():
-    return jsonify({
-        "running": _monitor_status["running"],
-        "task_id": _monitor_status["task_id"],
-        "last_run": _monitor_status["last_run"],
-        "next_run": _monitor_status["next_run"],
-        "run_count": _monitor_status["run_count"],
-        "last_error": _monitor_status["last_error"],
-        "output": _get_log(MONITOR_LOG_ID),
-    })
-
-
-@app.route("/api/monitor/archive")
-def monitor_archive():
-    """列出本地存档（按时间倒序，最近 100 条，仅保留文件仍存在的）。"""
-    entries = []
-    if MONITOR_INDEX_FILE.exists():
-        try:
-            entries = json.loads(MONITOR_INDEX_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            entries = []
-    if not isinstance(entries, list):
-        entries = []
-    entries = [e for e in entries
-               if isinstance(e, dict) and os.path.exists(str(e.get("file", "")))]
-    entries.sort(key=lambda e: e.get("ts", ""), reverse=True)
-    return jsonify({"entries": entries[:100], "dir": str(MONITOR_ARCHIVE_DIR)})
-
-
-@app.route("/api/monitor/file")
-def monitor_file():
-    """读取本地存档截图（限制在存档目录内，防目录穿越）。"""
-    p = request.args.get("path", "")
-    try:
-        fp = Path(p).resolve()
-    except Exception:
-        fp = Path()
-    root = MONITOR_ARCHIVE_DIR.resolve()
-    if not str(fp).startswith(str(root)) or not fp.is_file():
-        return jsonify({"error": "not found"}), 404
-    return send_file(str(fp), mimetype="image/png")
-
-
-@app.route("/api/monitor/open-dir", methods=["POST"])
-def monitor_open_dir():
-    """打开本地存档目录。"""
-    MONITOR_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "win32":
-        try:
-            subprocess.Popen(["explorer", str(MONITOR_ARCHIVE_DIR)])
-        except Exception as e:
-            return jsonify({"success": False, "message": str(e)})
-    return jsonify({"success": True})
-
-
-@app.route("/api/monitor/shot", methods=["POST"])
-def monitor_shot():
-    """立即对所有 BV 号截图一次（同步执行，前端等待）。"""
-    if _monitor_status["running"]:
-        return jsonify({"success": False, "message": "监控运行中，停止后方可手动截图"}), 409
-    cfg = _load_monitor_config()
-    bvids = cfg.get("bvids", [])
-    if not bvids:
-        return jsonify({"success": False, "message": "请先添加至少一个 BV 号"}), 400
-
-    from monitor_helper import monitor_once
-
-    def _log(line: str):
-        _append_log(MONITOR_LOG_ID, f"[{datetime.now().strftime('%H:%M:%S')}] {line}")
-
-    _append_log(MONITOR_LOG_ID, f"━━━ 手动截图 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ━━━")
-    cookies = _monitor_cookies_from_cred()
-    if not cookies.get("SESSDATA"):
-        _append_log(MONITOR_LOG_ID, "[SYSTEM] 未检测到登录凭证，将以游客身份访问")
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        results = loop.run_until_complete(monitor_once(
-            bvids, MONITOR_ARCHIVE_DIR, MONITOR_INDEX_FILE,
-            log=_log, stop_event=threading.Event(), cookies=cookies))
-    finally:
-        loop.close()
-    ok = sum(1 for r in results if r.get("ok"))
-    return jsonify({"success": True, "ok": ok, "total": len(results)})
-
-
-@app.route("/api/monitor/overview")
-def monitor_overview():
-    """总览页卡片数据。"""
-    cfg = _load_monitor_config()
-    shots = 0
-    if MONITOR_INDEX_FILE.exists():
-        try:
-            shots = len(json.loads(MONITOR_INDEX_FILE.read_text(encoding="utf-8")) or [])
-        except Exception:
-            shots = 0
-    return jsonify({
-        "running": _monitor_status["running"],
-        "bvids": len(cfg.get("bvids", [])),
-        "shots": shots,
-        "last_run": _monitor_status["last_run"],
-    })
 
 
 # =========================================================================
@@ -5106,11 +4550,6 @@ def _shutdown(label: str = "shutdown"):
             _booster_schedule["stop_event"].set()
     except Exception as e:
         print(f"[{label}] set booster schedule stop_event failed: {e}", flush=True)
-    try:
-        if _monitor_status.get("stop_event"):
-            _monitor_status["stop_event"].set()
-    except Exception as e:
-        print(f"[{label}] set monitor stop_event failed: {e}", flush=True)
 
     # 2) 触发所有 active task 的 stop_event
     try:

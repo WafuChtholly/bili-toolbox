@@ -790,6 +790,11 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 .hover-row { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:10px; font-size:12px; transition: background var(--transition); }
 .following-item:hover, .hover-row:hover { background: var(--bg-hover); }
 
+/* 关注分组筛选标签 */
+.group-chip { font-size:12px; padding:4px 10px; border-radius:999px; cursor:pointer; border:1px solid var(--input-border); background:var(--input-bg); color:var(--text-secondary); transition: all var(--transition); }
+.group-chip:hover { background: var(--bg-hover); }
+.group-chip.active { background: var(--accent); border-color: var(--accent); color:#fff; }
+
 /* 柔和提示条（功能页横幅） */
 .soft-note {
   font-size: 12px;
@@ -1699,16 +1704,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         标签助手
       </button>
 
-      <button class="tab-btn" onclick="switchTab('cat')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.5V4.8L8.3 7.4M19 9.5V4.8L15.7 7.4"/><path d="M5 9.5a7 7 0 0 1 14 0v3.7a6.3 6.3 0 0 1-6.3 6.3H11.3A6.3 6.3 0 0 1 5 13.2z"/><circle cx="9.8" cy="11.6" r=".5" fill="currentColor"/><circle cx="14.2" cy="11.6" r=".5" fill="currentColor"/><path d="M12 13.8v1.4M10 15.8c.6.6 1.4.6 2 .0M14 15.8c-.6.6-1.4.6-2 0"/></svg>
-        粉丝节养猫
-      </button>
-
-      <button class="tab-btn" onclick="switchTab('monitor')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-        稿件监控
-      </button>
-
       <button class="tab-btn" onclick="switchTab('medal')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9.2 13.2 7.5 20l4.5-2.6L16.5 20l-1.7-6.8"/></svg>
         灯牌管理
@@ -1842,31 +1837,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
     </div>
     <div class="dash-card">
       <div class="dash-card-top">
-        <div class="dash-icon" style="background:rgba(251,114,153,0.1);color:#fb7299"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.5V4.8L8.3 7.4M19 9.5V4.8L15.7 7.4"/><path d="M5 9.5a7 7 0 0 1 14 0v3.7a6.3 6.3 0 0 1-6.3 6.3H11.3A6.3 6.3 0 0 1 5 13.2z"/></svg></div>
-        <button class="dash-goto" onclick="switchTab('cat')">进入 →</button>
-      </div>
-      <div class="dash-name">粉丝节养猫</div>
-      <div class="dash-desc">按粉丝牌养猫：签到 / 喂食 / 摸猫，自动保存当日进度</div>
-      <div class="dash-badges">
-        <span class="dash-badge off" id="dash-cat-login">检测中…</span>
-        <span class="dash-badge off" id="dash-cat-run">空闲</span>
-        <span class="dash-badge off" id="dash-cat-extra">–</span>
-      </div>
-    </div>
-    <div class="dash-card">
-      <div class="dash-card-top">
-        <div class="dash-icon" style="background:rgba(34,176,125,0.1);color:#22b07d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
-        <button class="dash-goto" onclick="switchTab('monitor')">进入 →</button>
-      </div>
-      <div class="dash-name">稿件监控</div>
-      <div class="dash-desc">输入 BV 号，定时截图稿件页面并拼接百度「北京时间」时钟，本地存档</div>
-      <div class="dash-badges">
-        <span class="dash-badge off" id="dash-monitor-run">空闲</span>
-        <span class="dash-badge off" id="dash-monitor-extra">–</span>
-      </div>
-    </div>
-    <div class="dash-card">
-      <div class="dash-card-top">
         <div class="dash-icon" style="background:rgba(255,152,0,0.1);color:#ff9800"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="9" r="5"/><path d="M9.2 13.2 7.5 20l4.5-2.6L16.5 20l-1.7-6.8"/></svg></div>
         <button class="dash-goto" onclick="switchTab('medal')">进入 →</button>
       </div>
@@ -1886,7 +1856,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="dash-badges">
         <span class="dash-badge off" id="dash-schedmgr-auto">自动互动 · 空闲</span>
         <span class="dash-badge off" id="dash-schedmgr-booster">低播放刷量 · 空闲</span>
-        <span class="dash-badge off" id="dash-schedmgr-cat">养猫定时 · 空闲</span>
       </div>
     </div>
   </div>
@@ -2100,7 +2069,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           <p id="whitelist-status" style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px"></p>
           <!-- 关注列表勾选区 -->
           <div id="following-list-container" style="display:none">
-            <label class="form-label" style="font-size:12px;color:var(--text-secondary)">👥 我的关注列表（点击勾选添加到白名单）</label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <label class="form-label" style="font-size:12px;color:var(--text-secondary);margin:0">👥 我的关注列表（点击勾选添加到白名单）</label>
+              <button type="button" class="btn btn-outline" id="following-selectall" style="display:none;font-size:12px;padding:4px 10px" onclick="selectAllFollowingGroup()">✅ 全选本组</button>
+            </div>
+            <div id="following-groups-row" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
             <input type="text" id="following-search" class="form-input" placeholder="🔍 搜索用户名或 UID..." style="margin-bottom:8px;font-size:12px" oninput="filterFollowingList()">
             <div id="following-list-box" style="max-height:260px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
           </div>
@@ -2396,7 +2369,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="panel-hero-icon" style="color:#6f5bd6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
       <div>
         <div class="panel-hero-title">播放量提升 · 浏览器模拟</div>
-        <div class="panel-hero-desc">使用 Playwright 模拟真实浏览器播放行为，匀速提升播放量（时速约 30）。</div>
+        <div class="panel-hero-desc">用 Playwright 启动真实浏览器逐个播放视频（需登录，可叠加代理池出口分散 IP）。</div>
       </div>
     </div>
     <span class="hero-badge off" id="hero-player-badge">检测中…</span>
@@ -2413,7 +2386,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           <button class="btn btn-outline btn-sm" onclick="plShowQR()">添加播放账号</button>
         </div>
       </div>
-      <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">播放登录用于 Playwright 模拟播放（更有效），可添加多个账号并行播放；投稿获取复用「自动互动」主账号凭证</p>
+      <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">登录账号按账号并行播放，每个账号固定一条代理 IP 出口。可添加多个账号，账号越多越接近真实流量。投稿获取复用「自动互动」主账号凭证</p>
       <div id="pl-accounts-list" style="margin-top:10px"></div>
       <div class="qr-wrap" id="pl-qr-area" style="display:none">
         <img id="pl-qr-img" src="" alt="QR">
@@ -2430,14 +2403,14 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
   </div>
 
   <div class="card">
-    <div class="card-head green"><span class="card-step">2</span>浏览器播放 (Playwright)</div>
+    <div class="card-head green"><span class="card-step">2</span>播放方式与视频</div>
     <div class="card-body">
-      <p style="color:var(--text-secondary);margin-bottom:16px;font-size:13px">
-        使用 Playwright 浏览器模拟真实用户播放行为，登录后播放量更有效
-      </p>
-      <p class="soft-note green">
-        ⚡ 并发模式：最多同时播放 3 个视频，多视频将并行执行
-      </p>
+      <div class="form-group">
+        <label class="switch-row" title="每个账号固定一条代理 IP 出口，只有这条 IP 失效才换下一条；免费代理能真正跑起浏览器的很少，拿不到可用代理时会自动退回直连">
+          <span>🌐 使用代理池出口（每账号固定 IP）</span>
+          <input type="checkbox" id="player-use-proxy">
+        </label>
+      </div>
       <div class="form-group">
         <label class="form-label">视频 BV 号</label>
         <div id="player-bv-list" class="bv-list">
@@ -3111,162 +3084,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 </div>
 
 <!-- ============================================================ -->
-<!--  TAB: 粉丝节养猫 (cat)                                       -->
-<!-- ============================================================ -->
-<div id="panel-cat" class="panel">
-  <div class="panel-hero">
-    <div class="panel-hero-left">
-      <div class="panel-hero-icon" style="color:#fb7299"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 9.5V4.8L8.3 7.4M19 9.5V4.8L15.7 7.4"/><path d="M5 9.5a7 7 0 0 1 14 0v3.7a6.3 6.3 0 0 1-6.3 6.3H11.3A6.3 6.3 0 0 1 5 13.2z"/><circle cx="9.8" cy="11.6" r=".5" fill="currentColor"/><circle cx="14.2" cy="11.6" r=".5" fill="currentColor"/></svg></div>
-      <div>
-        <div class="panel-hero-title">粉丝节养猫</div>
-        <div class="panel-hero-desc">按粉丝牌选择要养的猫，自动执行领养 / 签到 / 投喂手幅 / 喂食 / 摸猫，进度按天保存。</div>
-      </div>
-    </div>
-    <span class="hero-badge off" id="hero-cat-badge">检测中…</span>
-  </div>
-
-  <!-- 登录状态 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">1</span>账号登录</div>
-    <div class="card-body">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <span id="cat-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
-        <span style="font-size:12px;color:var(--text-tertiary)">复用「自动互动」扫码登录凭证</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- 粉丝牌 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">2</span>粉丝牌</div>
-    <div class="card-body">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-pink btn-sm" id="cat-fetch-btn" onclick="catFetchMedals()">获取全部粉丝牌</button>
-        <button class="btn btn-outline btn-sm" onclick="catClearProgress()">清空今日进度</button>
-        <span id="cat-medal-meta" style="font-size:12px;color:var(--text-secondary)">缓存：未加载</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- 功能开关 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">3</span>功能开关</div>
-    <div class="card-body">
-      <div style="display:flex;gap:14px 22px;flex-wrap:wrap">
-        <label class="switch-row"><span class="sw-ico">📅</span><span>签到</span><input type="checkbox" id="cat-opt-sign" checked onchange="catPersist()"></label>
-        <label class="switch-row" title="消耗 1 电池投喂粉丝手幅*1"><span class="sw-ico">🎗️</span><span>投喂粉丝手幅*1</span><input type="checkbox" id="cat-opt-feedBanner" onchange="catPersist()"></label>
-        <label class="switch-row"><span class="sw-ico">🍚</span><span>喂食（消耗猫粮）</span><input type="checkbox" id="cat-opt-feed" checked onchange="catPersist()"></label>
-        <label class="switch-row"><span class="sw-ico">🐾</span><span>摸自己猫</span><input type="checkbox" id="cat-opt-pet" checked onchange="catPersist()"></label>
-        <label class="switch-row"><span class="sw-ico">🏆</span><span>摸前20猫咪</span><input type="checkbox" id="cat-opt-petTop20" onchange="catPersist()"></label>
-        <label class="switch-row"><span class="sw-ico">🐈</span><span>摸全部猫咪</span><input type="checkbox" id="cat-opt-petAll" onchange="catPersist()"></label>
-        <label class="switch-row" title="保牌策略：开播中点赞 30 次（牌子亮灭均可）；未开播且牌子点亮发 10 句弹幕点亮；未开播且牌子熄灭则跳过"><span class="sw-ico">💡</span><span>弹幕保牌</span><input type="checkbox" id="cat-opt-lightMedal" onchange="catPersist()"></label>
-        <label class="switch-row" title="领取亲密度礼物（自动放入包裹），并把包裹中的活动礼物（gift_id 35829）全部送进该直播间"><span class="sw-ico">🎁</span><span>亲密度礼物</span><input type="checkbox" id="cat-opt-claimGift" onchange="catPersist()"></label>
-      </div>
-    </div>
-  </div>
-
-  <!-- 搜索与选择 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">4</span>搜索与选择</div>
-    <div class="card-body">
-      <input type="text" id="cat-search" class="form-input" placeholder="模糊搜索：主播名 / 粉丝牌 / ruid（空格分隔多关键词）" autocomplete="off" oninput="catFilter()">
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-outline btn-sm" onclick="catSelectAllMatch()">全选匹配结果</button>
-        <button class="btn btn-outline btn-sm" onclick="catSelectPage()">本页全选</button>
-        <button class="btn btn-outline btn-sm" onclick="catClearSelected()">清空选择</button>
-        <label class="switch-row" style="border:none;padding:0" title="匹配结果中隐藏账号已注销的主播，并将其从已选中移除"><span>排除账号已注销</span><input type="checkbox" id="cat-exclude-dead" onchange="catOnExcludeChange()"></label>
-        <span id="cat-selected-count" style="font-size:12px;color:var(--text-secondary)">已选 0 个</span>
-      </div>
-      <div id="cat-result-list" style="margin-top:10px;display:flex;flex-direction:column;gap:6px;max-height:320px;overflow-y:auto"></div>
-      <div id="cat-pagination" style="display:flex;gap:4px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:10px"></div>
-    </div>
-  </div>
-
-  <!-- 运行控制 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">5</span>运行控制</div>
-    <div class="card-body">
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn btn-pink" id="cat-run-btn" onclick="catRun()">开始养猫</button>
-        <button class="btn btn-stop" id="cat-stop-btn" onclick="catStop()" disabled>停止</button>
-        <button class="btn btn-outline" onclick="catSaveConfig()">💾 保存配置</button>
-        <span id="cat-progress-text" style="font-size:13px;color:var(--text-secondary)">今日进度：0 / 0</span>
-      </div>
-      <div id="cat-log" class="log-box" style="margin-top:12px;height:220px;overflow-y:auto">等待任务开始...</div>
-    </div>
-  </div>
-</div>
-
-<!-- ============================================================ -->
-<!--  TAB: 稿件监控 (monitor)                                     -->
-<!-- ============================================================ -->
-<div id="panel-monitor" class="panel">
-  <div class="panel-hero">
-    <div class="panel-hero-left">
-      <div class="panel-hero-icon" style="color:#22b07d"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div>
-      <div>
-        <div class="panel-hero-title">稿件监控</div>
-        <div class="panel-hero-desc">输入 BV 号，每隔固定时间自动截图稿件页面，百度搜索「北京时间」的真实时钟会以小浮窗叠加在截图右上角，本地存档。</div>
-      </div>
-    </div>
-    <span class="hero-badge off" id="hero-monitor-badge">空闲</span>
-  </div>
-
-  <!-- 监控稿件 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">1</span>监控稿件（BV 号）</div>
-    <div class="card-body">
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <input type="text" id="mon-bv-input" class="form-input" style="flex:1;min-width:260px" placeholder="输入 BV 号（支持完整链接，多个用逗号分隔）" autocomplete="off">
-        <button class="btn btn-pink" onclick="monAddBV()">＋ 添加</button>
-        <button class="btn btn-outline" onclick="monSaveConfig()">💾 保存配置</button>
-      </div>
-      <div id="mon-bv-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
-    </div>
-  </div>
-
-  <!-- 监控设置 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">2</span>监控设置</div>
-    <div class="card-body">
-      <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)">
-          截图间隔：
-          <select id="mon-interval" class="form-input" style="width:auto;padding:6px 10px">
-            <option value="3600" selected>每 1 小时</option>
-            <option value="7200">每 2 小时</option>
-            <option value="10800">每 3 小时</option>
-            <option value="21600">每 6 小时</option>
-            <option value="43200">每 12 小时</option>
-            <option value="86400">每 24 小时</option>
-          </select>
-        </label>
-        <span id="mon-status-text" style="font-size:13px;color:var(--text-secondary)">未运行</span>
-      </div>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px">
-        <button class="btn btn-pink" id="mon-run-btn" onclick="monStart()">▶ 开始监控</button>
-        <button class="btn btn-stop" id="mon-stop-btn" onclick="monStop()" disabled>停止</button>
-        <button class="btn btn-outline" onclick="monOpenDir()">📁 打开存档目录</button>
-        <button class="btn btn-outline" onclick="monShotNow(this)">📸 立即截一屏</button>
-      </div>
-      <div id="mon-log" class="log-box" style="margin-top:12px;height:200px;overflow-y:auto">等待任务开始...</div>
-    </div>
-  </div>
-
-  <!-- 本地存档 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">3</span>本地存档</div>
-    <div class="card-body">
-      <div style="display:flex;align-items:center;gap:10px">
-        <button class="btn btn-outline btn-sm" onclick="monLoadArchive()">↻ 刷新存档</button>
-        <span id="mon-archive-meta" style="font-size:12px;color:var(--text-secondary)"></span>
-      </div>
-      <div id="mon-archive" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;max-height:520px;overflow-y:auto"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ============================================================ -->
 <!--  TAB: 灯牌管理 (medal)                                       -->
 <!-- ============================================================ -->
 <style>
@@ -3360,7 +3177,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
       <div class="sub-tabs">
         <button class="sub-tab-btn active" onclick="switchSchedSubTab('auto')">⚡ 自动互动</button>
         <button class="sub-tab-btn" onclick="switchSchedSubTab('booster')">📈 低播放量刷量</button>
-        <button class="sub-tab-btn" onclick="switchSchedSubTab('cat')">🐱 粉丝节养猫</button>
       </div>
 
       <!-- ===== 子任务 1：自动互动 ===== -->
@@ -3391,10 +3207,32 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 
       <!-- ===== 子任务 2：低播放量刷量 ===== -->
       <div id="sched-subtab-booster" class="sub-tab-panel" style="display:none">
-        <div class="soft-note blue">💡 定时扫描投稿，对播放量低于阈值的稿件自动创建刷量任务（勾选要刷量的账号）。</div>
+        <div class="soft-note blue">💡 定时扫描投稿，对播放量低于阈值的稿件自动创建刷量任务。「刷量账号」用各自凭证扫描自己的投稿；「监控 UID」用主账号凭证扫描其公开投稿。两者可只填其一，都填则每轮依次执行。</div>
         <div class="form-group">
-          <label class="form-label">刷量账号</label>
+          <label class="form-label">刷量账号（可留空）</label>
           <div id="bst-sched-accounts" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+        </div>
+        <div class="form-group">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <label class="form-label" style="font-size:12px;color:var(--text-secondary);margin:0">监控 UID 列表（可留空；手动输入或从关注列表勾选）</label>
+            <button type="button" class="btn btn-outline" id="bst-user-fetch-following" onclick="bstUserFetchFollowing()" style="font-size:12px;padding:4px 10px">📡 拉取我的关注列表</button>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+            <input class="form-input" id="bst-user-uid-input" placeholder="输入 UID 后回车添加" style="flex:1;min-width:160px" onkeydown="if(event.key==='Enter'){event.preventDefault();bstUserAddUid();}">
+            <button class="btn btn-outline btn-sm" onclick="bstUserAddUid()" style="margin:0;padding:4px 14px;font-size:12px">➕ 添加</button>
+          </div>
+          <div id="bst-user-uid-list" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+          <p id="bst-user-following-status" style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px"></p>
+          <!-- 关注列表勾选区 -->
+          <div id="bst-user-following-container" style="display:none">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <label class="form-label" style="font-size:12px;color:var(--text-secondary);margin:0">👥 我的关注列表（点击勾选添加为监控 UID）</label>
+              <button type="button" class="btn btn-outline" id="bst-user-following-selectall" style="display:none;font-size:12px;padding:4px 10px" onclick="bstUserSelectAllGroup()">✅ 全选本组</button>
+            </div>
+            <div id="bst-user-following-groups" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px"></div>
+            <input type="text" id="bst-user-following-search" class="form-input" placeholder="🔍 搜索用户名或 UID..." style="margin-bottom:8px;font-size:12px" oninput="bstUserFilterFollowing()">
+            <div id="bst-user-following-box" style="max-height:260px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
+          </div>
         </div>
         <div class="form-group">
           <label class="form-label">扫描配置</label>
@@ -3428,37 +3266,6 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           <button class="btn btn-pink" onclick="bstScheduleRunOnce()">▶ 立即执行一次</button>
         </div>
         <div class="log-box" id="bst-sched-log" style="margin-top:12px">等待运行...</div>
-      </div>
-
-      <!-- ===== 子任务 3：粉丝节养猫 ===== -->
-      <div id="sched-subtab-cat" class="sub-tab-panel" style="display:none">
-        <div class="soft-note pink">💡 每天定点自动执行一次「粉丝节养猫」（使用养猫页已选的粉丝牌与功能开关）。若触发时已有养猫任务在运行，则自动跳过本次。</div>
-        <div class="form-group">
-          <label class="form-label">每日执行时间</label>
-          <div class="schedule-row">
-            <div class="inline-field">
-              <span>时间</span>
-              <div class="time-picker">
-                <button type="button" class="form-input inline-input time-picker-btn" id="cat-sched-time-btn" onclick="catTimeToggle(event)">08:00</button>
-                <div class="time-picker-pop" id="cat-sched-pop" style="display:none">
-                  <div class="tp-col" id="cat-tp-hours"></div>
-                  <div class="tp-col" id="cat-tp-mins"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
-          <div>
-            <span class="status-dot dot-off" id="cat-sched-dot"></span>
-            <span id="cat-sched-text" style="color:var(--text-secondary)">定时任务未运行</span>
-          </div>
-          <button class="btn btn-outline btn-sm" onclick="catScheduleSave()" style="margin:0;padding:4px 14px;font-size:12px">💾 保存配置</button>
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-pink" id="cat-sched-btn" onclick="catScheduleToggle()">🕐 启动定时任务</button>
-        </div>
-        <div class="log-box" id="cat-sched-log" style="margin-top:12px">等待运行...</div>
       </div>
     </div>
   </div>
@@ -3538,10 +3345,8 @@ function switchTab(name){
   if(name==='livehelper'){ withPanelLoader('panel-livehelper', () => lhLoadConfig(), '正在加载弹幕助手配置…'); }
   if(name==='collection'){ withPanelLoader('panel-collection', () => collLoadStatus(), '正在加载合集助手状态…'); }
   if(name==='tagsearch'){ withPanelLoader('panel-tagsearch', () => tsLoadStatus(), '正在加载标签助手状态…'); }
-  if(name==='cat'){ withPanelLoader('panel-cat', () => catLoad(), '正在加载粉丝节养猫…'); }
-  if(name==='monitor'){ withPanelLoader('panel-monitor', () => monLoad(), '正在加载稿件监控…'); }
   if(name==='medal'){ withPanelLoader('panel-medal', () => mdLoad(), '正在加载灯牌管理…'); }
-  if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad(), catScheduleLoad()]), '正在加载定时任务状态…'); }
+  if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad()]), '正在加载定时任务状态…'); }
 }
 
 /* ===== TAB: 灯牌管理 (medal) ===== */
@@ -4040,8 +3845,11 @@ function switchListMode(mode){
   }
 }
 
-/* 拉取关注列表 */
-let _followingCache=[];  // 全量关注列表
+/* 拉取关注列表 + 关注分组 */
+let _followingCache=[];     // 全量关注列表
+let _followingGroups=[];    // 分组列表
+let _groupMembersCache={};  // tagid -> 成员列表
+let _currentGroup=null;     // 当前选中的 tagid（null = 全部）
 function fetchFollowingList(){
   const btn=document.getElementById('btn-fetch-following');
   const status=document.getElementById('whitelist-status');
@@ -4051,14 +3859,72 @@ function fetchFollowingList(){
     btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
     if(!d.success){status.textContent='❌ '+( d.message||'拉取失败');return;}
     _followingCache=d.followings||[];
+    _currentGroup=null;_groupMembersCache={};
     status.textContent='✅ 共拉取 '+_followingCache.length+' 个关注用户';
     const container=document.getElementById('following-list-container');
     container.style.display='block';
     renderFollowingList(_followingCache);
+    fetchFollowingGroups();
   }).catch(e=>{
     btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
     status.textContent='❌ 网络错误: '+e;
   });
+}
+
+/* 拉取关注分组列表 */
+function fetchFollowingGroups(){
+  const row=document.getElementById('following-groups-row');
+  if(row)row.innerHTML='<span style="font-size:12px;color:var(--text-tertiary)">正在加载分组...</span>';
+  fetch('/api/auto/following-groups').then(r=>r.json()).then(d=>{
+    if(!d.success){if(row)row.innerHTML='';return;}
+    _followingGroups=d.groups||[];
+    renderFollowingGroups();
+  }).catch(()=>{if(row)row.innerHTML='';});
+}
+
+function renderFollowingGroups(){
+  const row=document.getElementById('following-groups-row');
+  if(!row)return;
+  if(!_followingGroups.length){row.innerHTML='';return;}
+  let html=`<button type="button" class="group-chip${_currentGroup===null?' active':''}" onclick="selectFollowingGroup(null)">全部 ${_followingCache.length}</button>`;
+  html+=_followingGroups.map(g=>`<button type="button" class="group-chip${String(_currentGroup)===String(g.tagid)?' active':''}" onclick="selectFollowingGroup(${g.tagid})">${_escHtml(g.name)} ${g.count}</button>`).join('');
+  row.innerHTML=html;
+}
+
+/* 点击分组：筛选该组成员 */
+function selectFollowingGroup(tagid){
+  _currentGroup=tagid;
+  renderFollowingGroups();
+  const selAllBtn=document.getElementById('following-selectall');
+  if(tagid===null){
+    if(selAllBtn)selAllBtn.style.display='none';
+    renderFollowingList(_followingCache);
+    return;
+  }
+  if(selAllBtn)selAllBtn.style.display='inline-block';
+  const key=String(tagid);
+  if(_groupMembersCache[key]){renderFollowingList(_groupMembersCache[key]);return;}
+  const box=document.getElementById('following-list-box');
+  box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">正在加载分组成员...</p>';
+  fetch('/api/auto/following-groups/members?tagid='+encodeURIComponent(tagid)).then(r=>r.json()).then(d=>{
+    if(!d.success){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">❌ '+_escHtml(d.message||'加载失败')+'</p>';return;}
+    _groupMembersCache[key]=d.members||[];
+    renderFollowingList(_groupMembersCache[key]);
+  }).catch(()=>{
+    box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">❌ 网络错误</p>';
+  });
+}
+
+/* 全选本组：把当前分组成员全部加入白名单 */
+function selectAllFollowingGroup(){
+  if(_currentGroup===null)return;
+  const members=_groupMembersCache[String(_currentGroup)]||[];
+  if(!members.length)return;
+  const wlText=document.getElementById('auto-whitelist').value;
+  let uids=wlText.split('\n').map(s=>s.trim()).filter(s=>s);
+  members.forEach(u=>{const uid=String(u.uid);if(!uids.includes(uid))uids.push(uid);});
+  document.getElementById('auto-whitelist').value=uids.join('\n');
+  renderFollowingList(members);
 }
 
 function renderFollowingList(list){
@@ -4081,8 +3947,9 @@ function renderFollowingList(list){
 
 function filterFollowingList(){
   const q=document.getElementById('following-search').value.trim().toLowerCase();
-  if(!q){renderFollowingList(_followingCache);return;}
-  const filtered=_followingCache.filter(u=>String(u.uid).includes(q)||(u.name||'').toLowerCase().includes(q));
+  const base=(_currentGroup===null)?_followingCache:(_groupMembersCache[String(_currentGroup)]||[]);
+  if(!q){renderFollowingList(base);return;}
+  const filtered=base.filter(u=>String(u.uid).includes(q)||(u.name||'').toLowerCase().includes(q));
   renderFollowingList(filtered);
 }
 
@@ -4302,7 +4169,7 @@ function mgrAutoTick(){
 
 /* --- 定时任务页：子标签切换 --- */
 function switchSchedSubTab(tab){
-  const tabs=['auto','booster','cat'];
+  const tabs=['auto','booster'];
   tabs.forEach(t=>{
     const panel=document.getElementById('sched-subtab-'+t);
     const btn=document.querySelector(`.sub-tab-btn[onclick="switchSchedSubTab('${t}')"]`);
@@ -4747,12 +4614,10 @@ let bstSchedLastLogLen=-1;
 let bstSchedIdleTicks=0;
 
 let bstSchedAccounts=[];        // [{uid,name,is_primary,has_sessdata}]
-let bstSchedSelectedUids=null;  // null 表示尚未保存过配置，默认主账号
+let bstSchedSelectedUids=null;  // 勾选的刷量账号 UID 列表（null = 尚未加载）
 
 function bstGetSelectedUids(){
-  if(bstSchedSelectedUids&&bstSchedSelectedUids.length)return bstSchedSelectedUids.slice();
-  const p=bstSchedAccounts.find(a=>a.is_primary)||bstSchedAccounts[0];
-  return p?[p.uid]:[];
+  return Array.isArray(bstSchedSelectedUids)?bstSchedSelectedUids.slice():[];
 }
 
 function bstAccountsRender(){
@@ -4790,8 +4655,15 @@ function bstScheduleLoad(){
     document.getElementById('bst-sched-threshold').value=c.play_threshold;
     document.getElementById('bst-sched-target').value=c.target_play;
     bstSchedAccounts=(d.accounts||[]).filter(a=>a.has_sessdata);
-    bstSchedSelectedUids=(Array.isArray(c.account_uids)&&c.account_uids.length)?c.account_uids.map(String):null;
+    const savedAccounts=(Array.isArray(c.account_uids)?c.account_uids:[]).map(String);
+    const savedUids=(Array.isArray(c.uids)?c.uids:[]).map(String);
+    // 尚未配置过：默认勾选全部刷量账号；已配置过则严格还原（可为空）
+    bstSchedSelectedUids=(!savedAccounts.length&&!savedUids.length)
+      ? bstSchedAccounts.map(a=>a.uid)
+      : savedAccounts;
+    bstUserUids=savedUids;
     bstAccountsRender();
+    bstUserRenderUids();
   }).catch(()=>{});
   bstSchedulePollTick();
   return p;
@@ -4802,10 +4674,11 @@ function bstScheduleSave(silent){
   const threshold=parseInt(document.getElementById('bst-sched-threshold').value)||200;
   const target=parseInt(document.getElementById('bst-sched-target').value)||200;
   const uids=bstGetSelectedUids();
+  const watchUids=Array.isArray(bstUserUids)?bstUserUids.slice():[];
   if(interval<1||threshold<1||target<1){alert('配置项必须为正整数');return Promise.resolve(false);}
-  if(!uids.length){alert('请至少选择一个刷量账号');return Promise.resolve(false);}
+  if(!uids.length&&!watchUids.length){alert('请至少配置一个刷量账号或一个监控 UID');return Promise.resolve(false);}
   return fetch('/api/booster/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,account_uids:uids})
+    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,account_uids:uids,uids:watchUids})
   }).then(r=>r.json()).then(d=>{
     if(!d.success&&!silent)alert(d.message||'保存失败');
     if(d.success&&!silent)alert('配置已保存');
@@ -4833,7 +4706,8 @@ function bstScheduleUpdateStatus(s){
     const mode = s.running === true ? '定时' : '手动执行中';
     const uids=s.account_uids||[];
     const names=uids.map(u=>{const a=bstSchedAccounts.find(x=>x.uid===u);return a?(a.name||('UID '+u)):('UID '+u);}).join('、');
-    let txt=`${mode} · 刷量账号 ${names||'主账号'} · 阈值 ${s.play_threshold} · 目标 ${s.target_play}`;
+    const watchCount=((s.uids)||[]).length;
+    let txt=`${mode} · 刷量账号 ${names||'无'} · 监控 UID ${watchCount} 个 · 阈值 ${s.play_threshold} · 目标 ${s.target_play}`;
     if(s.last_run){txt+=` · 已执行 ${s.run_count} 次`;}
     if(s.active_tasks&&s.active_tasks.length){
       const summary=s.active_tasks.map(t=>`${t.bv}(${t.status})`).join(' ');
@@ -4909,146 +4783,151 @@ function bstSchedulePollTick(){
   }).catch(()=>{});
 }
 
-/* --- 自定义时间选择器 --- */
-let catTimeVal = '08:00';
-function catTimeInit(){
-  const hc=document.getElementById('cat-tp-hours');
-  const mc=document.getElementById('cat-tp-mins');
-  if(hc.children.length) return;
-  for(let h=0;h<24;h++){
-    const b=document.createElement('button');
-    b.type='button'; b.className='tp-item'; b.textContent=String(h).padStart(2,'0');
-    b.onclick=()=>{ catTimeVal=String(h).padStart(2,'0')+':'+catTimeVal.slice(3); catTimeRender(); };
-    hc.appendChild(b);
-  }
-  for(let m=0;m<60;m++){
-    const b=document.createElement('button');
-    b.type='button'; b.className='tp-item'; b.textContent=String(m).padStart(2,'0');
-    b.onclick=()=>{ catTimeVal=catTimeVal.slice(0,3)+String(m).padStart(2,'0'); catTimeRender(); };
-    mc.appendChild(b);
-  }
-}
-function catTimeRender(){
-  document.getElementById('cat-sched-time-btn').textContent=catTimeVal;
-  const hh=catTimeVal.slice(0,2), mm=catTimeVal.slice(3);
-  document.querySelectorAll('#cat-tp-hours .tp-item').forEach(b=>b.classList.toggle('active',b.textContent===hh));
-  document.querySelectorAll('#cat-tp-mins .tp-item').forEach(b=>b.classList.toggle('active',b.textContent===mm));
-}
-function catTimeToggle(e){
-  if(e) e.stopPropagation();
-  const pop=document.getElementById('cat-sched-pop');
-  if(pop.style.display==='none'){
-    catTimeInit(); catTimeRender();
-    pop.style.display='flex';
-    const hc=document.getElementById('cat-tp-hours'), mc=document.getElementById('cat-tp-mins');
-    const ah=hc.querySelector('.tp-item.active'), am=mc.querySelector('.tp-item.active');
-    if(ah) hc.scrollTop=Math.max(0,ah.offsetTop-hc.clientHeight/2+ah.clientHeight/2);
-    if(am) mc.scrollTop=Math.max(0,am.offsetTop-mc.clientHeight/2+am.clientHeight/2);
-  }else{
-    pop.style.display='none';
-  }
-}
-document.addEventListener('click', e=>{
-  const pop=document.getElementById('cat-sched-pop');
-  if(!pop||pop.style.display==='none') return;
-  if(e.target.closest('.time-picker')) return;
-  pop.style.display='none';
-});
+// ── 监控 UID 列表（低播放量刷量任务的目标） ──
+let bstUserUids=[];             // 当前监控的 UID 列表
+let bstUserFollowingCache=null; // 关注列表缓存
+let bstUserGroupsCache=[];      // 关注分组列表缓存
+let bstUserGroupMembersCache={};// tagid -> 分组成员列表
+let bstUserCurrentGroup=null;   // 当前选中的分组 tagid（null = 全部）
 
-/* --- 定时任务页：粉丝节养猫每日定时 --- */
-let catSchedPollTimer=null;
-let catSchedLastLogLen=-1;
-let catSchedIdleTicks=0;
-
-function catScheduleLoad(){
-  const p = fetch('/api/cat/schedule/config').then(r=>r.json()).then(c=>{
-    catTimeVal=c.time||'08:00'; catTimeRender();
-  }).catch(()=>{});
-  catSchedulePollTick();
-  return p;
-}
-
-function catScheduleSave(silent){
-  const time=catTimeVal||'08:00';
-  return fetch('/api/cat/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({time})
-  }).then(r=>r.json()).then(d=>{
-    if(d.success&&!silent)alert('配置已保存');
-    return d.success;
-  }).catch(e=>{if(!silent)alert('保存失败: '+e);return false;});
-}
-
-function catScheduleUpdateBtn(s){
-  const btn=document.getElementById('cat-sched-btn');
-  if(s&&s.running){
-    btn.textContent='⏹ 停止';
-    btn.className='btn btn-stop';
-  }else{
-    btn.textContent='🕐 启动定时任务';
-    btn.className='btn btn-pink';
-  }
-}
-
-function catScheduleUpdateStatus(s){
-  if(s.running){
-    setDot('cat-sched-dot','run');
-    let txt=`定时中 · 每天 ${s.time||'08:00'} 执行`;
-    if(s.next_run){
-      txt+=` · 下次 ${new Date(s.next_run*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}`;
-    }
-    if(s.cat_running) txt+=' · 养猫任务运行中';
-    setText('cat-sched-text',txt);
-  }else{
-    setDot('cat-sched-dot','off');
-    setText('cat-sched-text','定时任务未运行');
-  }
-  const log=document.getElementById('cat-sched-log');
-  if(s.log){log.textContent=s.log;log.scrollTop=log.scrollHeight;}
-}
-
-function catScheduleToggle(){
-  fetch('/api/cat/schedule/status').then(r=>r.json()).then(s=>{
-    if(s.running){
-      fetch('/api/cat/schedule/stop',{method:'POST'}).then(()=>{
-        catScheduleUpdateBtn({running:false});
-        setDot('cat-sched-dot','off');
-        setText('cat-sched-text','正在停止...');
-        catScheduleStartPoll();
-        catSchedulePollTick();
-      });
+function bstUserRenderUids(){
+  const box=document.getElementById('bst-user-uid-list');
+  if(box){
+    if(!bstUserUids.length){
+      box.innerHTML='<span style="font-size:12px;color:var(--text-tertiary)">暂无监控 UID，请添加或从关注列表选择</span>';
     }else{
-      catScheduleSave(true).then(ok=>{
-        if(!ok)return null;
-        return fetch('/api/cat/schedule/start',{method:'POST'});
-      }).then(()=>{
-        catScheduleUpdateBtn({running:true});
-        catScheduleStartPoll();
-        catSchedulePollTick();
-      });
+      box.innerHTML=bstUserUids.map((u,i)=>{
+        return '<span class="video-pick-item selected" style="flex:0 0 auto;padding:6px 10px" title="UID: '+_escHtml(u)+'">'
+          +'<span style="font-size:13px">'+_escHtml(u)+'</span>'
+          +'<span style="cursor:pointer;margin-left:6px;color:var(--warn)" onclick="bstUserRemoveUid('+i+')">✕</span></span>';
+      }).join('');
     }
-  }).catch(e=>alert('操作失败: '+e));
+  }
+  // 同步关注列表中的勾选态
+  document.querySelectorAll('#bst-user-following-box input[type=checkbox]').forEach(cb=>{
+    cb.checked=bstUserUids.includes(String(cb.dataset.uid));
+  });
 }
 
-function catScheduleStartPoll(){
-  if(catSchedPollTimer)return;
-  catSchedLastLogLen=-1;catSchedIdleTicks=0;
-  catSchedPollTimer=setInterval(catSchedulePollTick,5000);
+function bstUserAddUid(uid){
+  const input=document.getElementById('bst-user-uid-input');
+  const val=(uid!=null?String(uid):(input?input.value:'')).trim();
+  if(!val)return;
+  if(!/^\d+$/.test(val)){alert('UID 必须为纯数字');return;}
+  if(!bstUserUids.includes(val))bstUserUids.push(val);
+  if(input)input.value='';
+  bstUserRenderUids();
 }
 
-function catScheduleStopPoll(){
-  if(catSchedPollTimer){clearInterval(catSchedPollTimer);catSchedPollTimer=null;}
+function bstUserRemoveUid(i){
+  bstUserUids.splice(i,1);
+  bstUserRenderUids();
 }
 
-function catSchedulePollTick(){
-  fetch('/api/cat/schedule/status').then(r=>r.json()).then(s=>{
-    catScheduleUpdateBtn(s);
-    catScheduleUpdateStatus(s);
-    const logLen=(s.log||'').length;
-    if(s.running){catSchedIdleTicks=0;catSchedLastLogLen=logLen;return;}
-    if(logLen!==catSchedLastLogLen){catSchedLastLogLen=logLen;catSchedIdleTicks=0;}
-    else{catSchedIdleTicks++;}
-    if(catSchedIdleTicks>=6)catScheduleStopPoll();
-  }).catch(()=>{});
+/* 拉取关注列表（与「自动互动」白名单勾选样式一致） */
+function bstUserFetchFollowing(){
+  const btn=document.getElementById('bst-user-fetch-following');
+  const status=document.getElementById('bst-user-following-status');
+  btn.disabled=true;btn.textContent='拉取中...';
+  status.textContent='正在拉取关注列表，请稍候...';
+  fetch('/api/auto/following-list').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
+    if(!d.success){status.textContent='❌ '+(d.message||'拉取失败');return;}
+    bstUserFollowingCache=d.followings||[];
+    bstUserCurrentGroup=null;bstUserGroupMembersCache={};
+    status.textContent='✅ 共拉取 '+bstUserFollowingCache.length+' 个关注用户';
+    document.getElementById('bst-user-following-container').style.display='block';
+    bstUserRenderFollowing(bstUserFollowingCache);
+    bstUserFetchGroups();
+  }).catch(e=>{
+    btn.disabled=false;btn.textContent='📡 拉取我的关注列表';
+    status.textContent='❌ 网络错误: '+e;
+  });
+}
+
+/* 拉取关注分组列表 */
+function bstUserFetchGroups(){
+  const row=document.getElementById('bst-user-following-groups');
+  if(row)row.innerHTML='<span style="font-size:12px;color:var(--text-tertiary)">正在加载分组...</span>';
+  fetch('/api/auto/following-groups').then(r=>r.json()).then(d=>{
+    if(!d.success){if(row)row.innerHTML='';return;}
+    bstUserGroupsCache=d.groups||[];
+    bstUserRenderGroups();
+  }).catch(()=>{if(row)row.innerHTML='';});
+}
+
+function bstUserRenderGroups(){
+  const row=document.getElementById('bst-user-following-groups');
+  if(!row)return;
+  if(!bstUserGroupsCache.length){row.innerHTML='';return;}
+  let html=`<button type="button" class="group-chip${bstUserCurrentGroup===null?' active':''}" onclick="bstUserSelectGroup(null)">全部 ${(bstUserFollowingCache||[]).length}</button>`;
+  html+=bstUserGroupsCache.map(g=>`<button type="button" class="group-chip${String(bstUserCurrentGroup)===String(g.tagid)?' active':''}" onclick="bstUserSelectGroup(${g.tagid})">${_escHtml(g.name)} ${g.count}</button>`).join('');
+  row.innerHTML=html;
+}
+
+/* 点击分组：筛选该组成员 */
+function bstUserSelectGroup(tagid){
+  bstUserCurrentGroup=tagid;
+  bstUserRenderGroups();
+  const selAllBtn=document.getElementById('bst-user-following-selectall');
+  if(tagid===null){
+    if(selAllBtn)selAllBtn.style.display='none';
+    bstUserRenderFollowing(bstUserFollowingCache||[]);
+    return;
+  }
+  if(selAllBtn)selAllBtn.style.display='inline-block';
+  const key=String(tagid);
+  if(bstUserGroupMembersCache[key]){bstUserRenderFollowing(bstUserGroupMembersCache[key]);return;}
+  const box=document.getElementById('bst-user-following-box');
+  box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">正在加载分组成员...</p>';
+  fetch('/api/auto/following-groups/members?tagid='+encodeURIComponent(tagid)).then(r=>r.json()).then(d=>{
+    if(!d.success){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">❌ '+_escHtml(d.message||'加载失败')+'</p>';return;}
+    bstUserGroupMembersCache[key]=d.members||[];
+    bstUserRenderFollowing(bstUserGroupMembersCache[key]);
+  }).catch(()=>{
+    box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">❌ 网络错误</p>';
+  });
+}
+
+/* 全选本组：把当前分组成员全部加入监控 UID */
+function bstUserSelectAllGroup(){
+  if(bstUserCurrentGroup===null)return;
+  const members=bstUserGroupMembersCache[String(bstUserCurrentGroup)]||[];
+  if(!members.length)return;
+  members.forEach(u=>{const uid=String(u.uid);if(!bstUserUids.includes(uid))bstUserUids.push(uid);});
+  bstUserRenderUids();
+  bstUserRenderFollowing(members);
+}
+
+function bstUserRenderFollowing(list){
+  const box=document.getElementById('bst-user-following-box');
+  if(!box)return;
+  if(!list.length){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">无关注用户</p>';return;}
+  box.innerHTML=list.map(u=>{
+    const checked=bstUserUids.includes(String(u.uid))?'checked':'';
+    const face=u.face?`<img src="${u.face}" referrerpolicy="no-referrer" style="width:28px;height:28px;border-radius:50%;margin-right:8px;object-fit:cover">`:'';
+    return `<label class="following-item">
+      <input type="checkbox" data-uid="${u.uid}" ${checked} onchange="bstUserToggleFollowing(this)">
+      ${face}
+      <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_escHtml(u.name)}</span>
+      <span style="font-size:11px;color:var(--text-tertiary)">UID ${u.uid}</span>
+    </label>`;
+  }).join('');
+}
+
+function bstUserFilterFollowing(){
+  const q=document.getElementById('bst-user-following-search').value.trim().toLowerCase();
+  const base=(bstUserCurrentGroup===null)?(bstUserFollowingCache||[]):(bstUserGroupMembersCache[String(bstUserCurrentGroup)]||[]);
+  if(!q){bstUserRenderFollowing(base);return;}
+  const filtered=base.filter(u=>String(u.uid).includes(q)||(u.name||'').toLowerCase().includes(q));
+  bstUserRenderFollowing(filtered);
+}
+
+function bstUserToggleFollowing(cb){
+  const uid=String(cb.dataset.uid);
+  if(cb.checked){ if(!bstUserUids.includes(uid))bstUserUids.push(uid); }
+  else{ bstUserUids=bstUserUids.filter(u=>u!==uid); }
+  bstUserRenderUids();
 }
 
 // ── Webhook（活动助手推送） ──
@@ -5361,6 +5240,8 @@ function playerRun(){
   const rounds=document.getElementById('player-rounds').value.trim()||'1';
   if(!bvList.length){alert('请填写 BV号');return;}
   const bv=bvList.join(',');
+  const useProxyEl=document.getElementById('player-use-proxy');
+  const use_proxy=!!(useProxyEl&&useProxyEl.checked);
   const btn=document.getElementById('player-run-btn');
   const stopBtn=document.getElementById('player-stop-btn');
   btn.disabled=true;btn.textContent='运行中...';
@@ -5372,7 +5253,7 @@ function playerRun(){
   document.getElementById('pl-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
   document.getElementById('pl-rp-videos').innerHTML='';
 
-  fetch('/api/player/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,rounds})})
+  fetch('/api/player/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,rounds,use_proxy})})
     .then(r=>r.json()).then(d=>{
       if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 启动播放';stopBtn.style.display='none';return;}
       playerTaskId=d.task_id;
@@ -6866,7 +6747,6 @@ async function dashRefresh(){
     _dget('/api/auto/schedule/status', j => { d.autoRun = !!(j && j.running); }),
     _dget('/api/booster/tasks', j => { d.boosterRun = _anyTaskStatus(j, 'running'); d.boosterErr = _anyTaskStatus(j, 'error'); }),
     _dget('/api/booster/schedule/status', j => { d.boosterSched = !!(j && j.running); if(d.boosterSched || (j && j.active_tasks && j.active_tasks.length)) d.boosterRun = true; }),
-    _dget('/api/cat/schedule/status', j => { d.catSched = !!(j && j.running); }),
     _dget('/api/player/config', j => { d.playerLogin = !!(j && (j.accounts || []).some(a => a.login_uid && a.has_sessdata)); }),
     _dget('/api/player/tasks', j => { d.playerRun = _anyTaskStatus(j, 'running'); }),
     _dget('/api/redpocket/config', j => { d.rpLogin = !!(j && (j.sessdata || j.login_uid)); }),
@@ -6877,15 +6757,6 @@ async function dashRefresh(){
     _dget('/api/tag-search/status', j => {
       d.tsLogin = !!(j && j.logged_in);
       d.tsExtra = j ? `${j.video_count || 0} 稿件 · ${j.tag_count || 0} 标签` : '–';
-    }),
-    _dget('/api/cat/overview', j => {
-      d.catLogin = !!(j && j.logged_in);
-      d.catRun = !!(j && j.running);
-      d.catExtra = j ? `${j.done || 0}/${j.total || 0} 已养` : '–';
-    }),
-    _dget('/api/monitor/overview', j => {
-      d.monRun = !!(j && j.running);
-      d.monExtra = j ? `${j.bvids || 0} 稿件 · ${j.shots || 0} 截图` : '–';
     })
   ]);
   dashRender();
@@ -6910,17 +6781,11 @@ function dashRender(){
   _dashBadge('dash-collection-login', d.collLogin ? 'ok' : 'off', d.collLogin ? '已登录' : '未登录');
   _dashBadge('dash-tagsearch-login', d.tsLogin ? 'ok' : 'off', d.tsLogin ? '已登录' : '未登录');
   _dashBadge('dash-tagsearch-extra', 'off', d.tsExtra || '–');
-  _dashBadge('dash-cat-login', d.catLogin ? 'ok' : 'off', d.catLogin ? '已登录' : '未登录');
-  _dashBadge('dash-cat-run', d.catRun ? 'run' : 'off', d.catRun ? '运行中' : '空闲');
-  _dashBadge('dash-cat-extra', 'off', d.catExtra || '–');
-  _dashBadge('dash-monitor-run', d.monRun ? 'run' : 'off', d.monRun ? '运行中' : '空闲');
-  _dashBadge('dash-monitor-extra', 'off', d.monExtra || '–');
 
   // 定时任务聚合徽章（任一子指标在跑即认为运行中，避免接口偶发失败导致误显空闲）
   _dashBadge('dash-schedmgr-auto', d.autoRun ? 'run' : 'off', '自动互动 · ' + (d.autoRun ? '运行中' : '空闲'));
   const _bstSchedOn = !!(d.boosterSched || d.boosterRun);
   _dashBadge('dash-schedmgr-booster', _bstSchedOn ? 'run' : 'off', '低播放刷量 · ' + (_bstSchedOn ? '运行中' : '空闲'));
-  _dashBadge('dash-schedmgr-cat', d.catSched ? 'run' : 'off', '养猫定时 · ' + (d.catSched ? '运行中' : '空闲'));
 
   _heroBadge('hero-auto-badge', d.autoLogin, d.autoLogin ? '已登录' : '未登录');
   _heroBadge('hero-booster-badge', d.boosterRun, d.boosterRun ? '运行中' : '空闲');
@@ -6929,440 +6794,13 @@ function dashRender(){
   _heroBadge('hero-livehelper-badge', d.lhRun, d.lhRun ? '运行中' : '未运行');
   _heroBadge('hero-collection-badge', d.collLogin, d.collLogin ? '已登录' : '未登录');
   _heroBadge('hero-tagsearch-badge', d.tsLogin, d.tsLogin ? '已登录' : '未登录');
-  _heroBadge('hero-cat-badge', d.catRun ? true : d.catLogin, d.catRun ? '运行中' : (d.catLogin ? '已登录' : '未登录'));
-  _heroBadge('hero-monitor-badge', d.monRun, d.monRun ? '运行中' : '空闲');
 
-  const loginCount = [d.autoLogin, d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin, d.catLogin].filter(Boolean).length;
-  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun, d.catRun, d.monRun].filter(Boolean).length;
+  const loginCount = [d.autoLogin, d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin].filter(Boolean).length;
+  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun].filter(Boolean).length;
   const sl = document.getElementById('dash-sum-login');
-  if(sl) sl.textContent = loginCount + ' / 9';
+  if(sl) sl.textContent = loginCount + ' / 8';
   const sr = document.getElementById('dash-sum-run');
   if(sr) sr.textContent = runCount;
-}
-
-/* ===== 粉丝节养猫 ===== */
-const catState = {
-  medals: [], selected: new Set(), filtered: [], page: 1, pageSize: 50,
-  query: '', taskId: null, progress: {date:'', completed_ruids: []},
-  medalsUpdatedAt: '', running: false
-};
-function catEsc(s){
-  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
-function catOptions(){
-  return {
-    sign: document.getElementById('cat-opt-sign').checked,
-    feedBanner: document.getElementById('cat-opt-feedBanner').checked,
-    feed: document.getElementById('cat-opt-feed').checked,
-    pet: document.getElementById('cat-opt-pet').checked,
-    petTop20: document.getElementById('cat-opt-petTop20').checked,
-    petAll: document.getElementById('cat-opt-petAll').checked,
-    lightMedal: document.getElementById('cat-opt-lightMedal').checked,
-    claimGift: document.getElementById('cat-opt-claimGift').checked,
-  };
-}
-function catLoad(){
-  return fetch('/api/cat/config').then(r=>r.json()).then(cfg=>{
-    catState.medals = cfg.medals||[];
-    catState.selected = new Set((cfg.selected||[]).map(String));
-    catState.progress = cfg.progress||{date:'',completed_ruids:[]};
-    catState.medalsUpdatedAt = (cfg.medals_updated_at||'').replace('T',' ');
-    const o = cfg.options||{};
-    document.getElementById('cat-opt-sign').checked = o.sign!==false;
-    document.getElementById('cat-opt-feedBanner').checked = !!o.feedBanner;
-    document.getElementById('cat-opt-feed').checked = o.feed!==false;
-    document.getElementById('cat-opt-pet').checked = o.pet!==false;
-    document.getElementById('cat-opt-petTop20').checked = !!o.petTop20;
-    document.getElementById('cat-opt-petAll').checked = !!o.petAll;
-    document.getElementById('cat-opt-lightMedal').checked = !!o.lightMedal;
-    document.getElementById('cat-opt-claimGift').checked = !!o.claimGift;
-    document.getElementById('cat-exclude-dead').checked = !!cfg.exclude_dead;
-    if(catApplyExclude()>0) catPersist();
-    const loginEl = document.getElementById('cat-login-info');
-    if (cfg.logged_in) {
-      loginEl.innerHTML = '已登录 <b>UID: ' + (cfg.uid || '?') + '</b>' + (cfg.uname ? ' <span style="color:var(--text-secondary)">· ' + _escHtml(cfg.uname) + '</span>' : '') + ' （复用「自动互动」登录凭证）';
-      loginEl.style.color = 'var(--success)';
-    } else {
-      loginEl.innerHTML = '❌ 未登录，请先在「自动互动」页扫码登录';
-      loginEl.style.color = 'var(--warn)';
-    }
-    catRenderMeta();
-    catFilter();
-    catRenderProgress();
-  }).catch(()=>{});
-}
-function catRenderMeta(){
-  const el = document.getElementById('cat-medal-meta');
-  const n = catState.medals.length;
-  if(!n){ el.textContent = '缓存：未加载'; return; }
-  el.textContent = `缓存：${n} 个粉丝牌 ｜ 已选：${catState.selected.size} 个 ｜ 更新：${catState.medalsUpdatedAt||'未知'}`;
-}
-function catFilter(){
-  const input = document.getElementById('cat-search');
-  const q = (input?input.value:'').trim().toLowerCase();
-  const excludeDead = document.getElementById('cat-exclude-dead').checked;
-  catState.query = q; catState.page = 1;
-  let base = catState.medals;
-  if(excludeDead){
-    base = base.filter(m=>String(m.target_name||'').trim() !== '账号已注销');
-  }
-  if(!q){
-    catState.filtered = base.slice();
-  }else{
-    const terms = q.split(/\s+/).filter(Boolean);
-    const score = item=>{
-      const name = String(item.target_name||'').toLowerCase();
-      const medal = String(item.medal_name||'').toLowerCase();
-      const ruid = String(item.ruid||'').toLowerCase();
-      let s = 0;
-      for(const t of terms){
-        let ts = 0;
-        if(ruid===t||name===t||medal===t) ts = 4;
-        else if(name.startsWith(t)||medal.startsWith(t)||ruid.startsWith(t)) ts = 3;
-        else if(name.includes(t)||medal.includes(t)||ruid.includes(t)) ts = 2;
-        else return -1;
-        s += ts;
-      }
-      return s;
-    };
-    catState.filtered = base
-      .map(item=>({item, score: score(item)}))
-      .filter(x=>x.score>=0)
-      .sort((a,b)=>b.score-a.score||String(a.item.target_name).localeCompare(String(b.item.target_name),'zh-Hans-CN'))
-      .map(x=>x.item);
-  }
-  catRenderResults();
-}
-function catRenderResults(){
-  const list = document.getElementById('cat-result-list');
-  const pg = document.getElementById('cat-pagination');
-  const total = catState.filtered.length;
-  const cnt = document.getElementById('cat-selected-count');
-  if(cnt) cnt.textContent = `已选 ${catState.selected.size} 个`;
-  catRenderMeta();
-  catRenderProgress();
-  if(!total){
-    list.innerHTML = `<div style="color:var(--text-tertiary);font-size:13px;padding:8px">${catState.medals.length?'没有匹配结果':'暂无缓存，请先获取粉丝牌'}</div>`;
-    pg.innerHTML = '';
-    return;
-  }
-  const totalPages = Math.ceil(total/catState.pageSize)||1;
-  if(catState.page>totalPages) catState.page = totalPages;
-  if(catState.page<1) catState.page = 1;
-  const start = (catState.page-1)*catState.pageSize;
-  const items = catState.filtered.slice(start, start+catState.pageSize);
-  list.innerHTML = items.map(item=>{
-    const checked = catState.selected.has(String(item.ruid))?'checked':'';
-    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--card-border);border-radius:var(--radius-sm);cursor:pointer">
-      <input type="checkbox" ${checked} onchange="catToggle('${catEsc(item.ruid)}',this.checked)">
-      <span style="overflow:hidden;flex:1">
-        <span style="display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.target_name)}</span>
-        <span style="display:block;font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${catEsc(item.medal_name||'无牌子')} · ${catEsc(item.ruid)}${item.is_lighted===0?' <span style="color:var(--warn)">· 已熄灭</span>':''}${item.living_status===0?' <span style="color:var(--text-tertiary)">· 未开播</span>':''}</span>
-      </span>
-    </label>`;
-  }).join('');
-  let html = `<button class="btn btn-outline btn-sm" ${catState.page<=1?'disabled':''} onclick="catGoPage(${catState.page-1})">上一页</button>`;
-  for(let i=1;i<=totalPages;i++){
-    if(totalPages<=7||Math.abs(i-catState.page)<=1||i===1||i===totalPages){
-      html += `<button class="btn btn-sm ${i===catState.page?'btn-pink':'btn-outline'}" style="width:auto;min-width:36px" onclick="catGoPage(${i})">${i}</button>`;
-    }else if(i===2&&catState.page>3){
-      html += '<span style="color:var(--text-tertiary)">…</span>';
-    }else if(i===totalPages-1&&catState.page<totalPages-2){
-      html += '<span style="color:var(--text-tertiary)">…</span>';
-    }
-  }
-  html += `<button class="btn btn-outline btn-sm" ${catState.page>=totalPages?'disabled':''} onclick="catGoPage(${catState.page+1})">下一页</button>`;
-  pg.innerHTML = html;
-}
-function catGoPage(p){ catState.page = p; catRenderResults(); }
-function catToggle(ruid, force){
-  ruid = String(ruid);
-  if(force===true) catState.selected.add(ruid);
-  else if(force===false) catState.selected.delete(ruid);
-  else if(catState.selected.has(ruid)) catState.selected.delete(ruid);
-  else catState.selected.add(ruid);
-  catPersist();
-  catRenderResults();
-}
-function catPersist(){
-  return fetch('/api/cat/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    selected:[...catState.selected],
-    options:catOptions(),
-    exclude_dead:document.getElementById('cat-exclude-dead').checked,
-  })}).then(r=>{
-    if(!r.ok) throw new Error('HTTP '+r.status);
-  }).catch(e=>{
-    console.warn('catPersist failed:', e);
-    alert('⚠️ 养猫配置保存失败（' + e + '）：请确认服务已启动，重新勾选开关后再操作');
-  });
-}
-function catSaveConfig(){
-  catPersist().then(()=>alert('配置已保存'));
-}
-function catApplyExclude(){
-  // 勾选「排除账号已注销」时，把已注销主播从已选集合中移除
-  if(!document.getElementById('cat-exclude-dead').checked) return 0;
-  let removed = 0;
-  catState.medals.forEach(m=>{
-    if(String(m.target_name||'').trim()==='账号已注销'){
-      if(catState.selected.delete(String(m.ruid))) removed++;
-    }
-  });
-  return removed;
-}
-function catOnExcludeChange(){
-  const removed = catApplyExclude();
-  if(removed>0) alert(`已从已选中移除 ${removed} 个账号已注销的主播`);
-  catPersist();
-  catFilter();
-}
-function catSelectAllMatch(){
-  if(!catState.filtered.length) return;
-  const ruids = catState.filtered.map(m=>String(m.ruid));
-  const all = ruids.every(r=>catState.selected.has(r));
-  ruids.forEach(r=>{ if(all) catState.selected.delete(r); else catState.selected.add(r); });
-  catPersist(); catRenderResults();
-}
-function catSelectPage(){
-  const start = (catState.page-1)*catState.pageSize;
-  const items = catState.filtered.slice(start, start+catState.pageSize);
-  if(!items.length) return;
-  const ruids = items.map(m=>String(m.ruid));
-  const all = ruids.every(r=>catState.selected.has(r));
-  ruids.forEach(r=>{ if(all) catState.selected.delete(r); else catState.selected.add(r); });
-  catPersist(); catRenderResults();
-}
-function catClearSelected(){
-  catState.selected.clear();
-  catPersist(); catRenderResults();
-}
-function catRenderProgress(){
-  const el = document.getElementById('cat-progress-text');
-  if(!el) return;
-  const completed = new Set((catState.progress.completed_ruids||[]).map(String));
-  const done = [...catState.selected].filter(r=>completed.has(r)).length;
-  el.textContent = `今日进度：已完成 ${done} / 已选 ${catState.selected.size}`;
-}
-function catFetchMedals(){
-  const btn = document.getElementById('cat-fetch-btn');
-  btn.disabled = true; btn.textContent = '拉取中…';
-  fetch('/api/cat/fetch-medals',{method:'POST'}).then(r=>r.json()).then(d=>{
-    if(d.success){ alert(`拉取完成，共 ${d.count} 个粉丝牌`); catLoad(); }
-    else alert(d.message||'拉取失败');
-  }).catch(e=>alert('拉取失败: '+e)).finally(()=>{
-    btn.disabled = false; btn.textContent = '获取全部粉丝牌';
-  });
-}
-function catClearProgress(){
-  fetch('/api/cat/progress/clear',{method:'POST'}).then(r=>r.json()).then(d=>{
-    if(d.success){
-      catState.progress = {date:'', completed_ruids:[]};
-      catRenderProgress();
-    }else alert(d.message||'清空失败');
-  }).catch(()=>{});
-}
-function catRun(){
-  if(!catState.selected.size){ alert('请先选择至少一个粉丝牌'); return; }
-  const body = {selected:[...catState.selected], options:catOptions()};
-  fetch('/api/cat/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json()).then(d=>{
-    if(!d.task_id){ alert(d.error||d.message||'启动失败'); return; }
-    catState.taskId = d.task_id; catState.running = true;
-    document.getElementById('cat-run-btn').disabled = true;
-    document.getElementById('cat-run-btn').textContent = '运行中…';
-    document.getElementById('cat-stop-btn').disabled = false;
-    document.getElementById('cat-log').textContent = '任务已启动，等待日志…';
-    startPoll(`/api/cat/status/${catState.taskId}`,2000,catUpdate);
-  }).catch(e=>alert('启动失败: '+e));
-}
-function catUpdate(d){
-  if(!d||!d.status) return;
-  const box = document.getElementById('cat-log');
-  if(d.output) box.textContent = d.output;
-  box.scrollTop = box.scrollHeight;
-  if(d.status!=='running'&&d.status!=='queued'){
-    stopPoll(`/api/cat/status/${catState.taskId}`);
-    catState.running = false;
-    document.getElementById('cat-run-btn').disabled = false;
-    document.getElementById('cat-run-btn').textContent = '开始养猫';
-    document.getElementById('cat-stop-btn').disabled = true;
-    fetch('/api/cat/config').then(r=>r.json()).then(cfg=>{
-      catState.progress = cfg.progress||catState.progress;
-      catRenderProgress();
-      dashRefresh();
-    }).catch(()=>{});
-  }
-}
-function catStop(){
-  fetch('/api/cat/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:catState.taskId||null})})
-    .then(r=>r.json()).then(d=>{ if(!d.success) alert(d.message||'停止失败'); }).catch(()=>{});
-}
-
-/* ===== 稿件监控 ===== */
-const monState = { bvids: [], running: false, lastCount: -1 };
-function monLoad(){
-  return fetch('/api/monitor/config').then(r=>r.json()).then(cfg=>{
-    monState.bvids = cfg.bvids||[];
-    const sel = document.getElementById('mon-interval');
-    if(sel && cfg.interval) sel.value = String(cfg.interval);
-    monRenderBV();
-    return monLoadStatus().then(()=>monLoadArchive());
-  }).catch(()=>{});
-}
-function monLoadStatus(){
-  return fetch('/api/monitor/status').then(r=>r.json()).then(s=>{
-    monState.running = !!s.running;
-    if(s.output) document.getElementById('mon-log').textContent = s.output;
-    monRenderStatus(s);
-    if(s.running){
-      document.getElementById('mon-run-btn').disabled = true;
-      document.getElementById('mon-stop-btn').disabled = false;
-      if(s.run_count !== monState.lastCount){ monState.lastCount = s.run_count; monLoadArchive(); }
-      startPoll('/api/monitor/status',3000,monUpdate);
-    }else{
-      document.getElementById('mon-run-btn').disabled = false;
-      document.getElementById('mon-stop-btn').disabled = true;
-      stopPoll('/api/monitor/status');
-    }
-  }).catch(()=>{});
-}
-function monUpdate(s){
-  if(!s) return;
-  const box = document.getElementById('mon-log');
-  if(s.output){ box.textContent = s.output; box.scrollTop = box.scrollHeight; }
-  const wasRunning = monState.running;
-  monState.running = !!s.running;
-  if(s.running){
-    if(s.run_count !== monState.lastCount){ monState.lastCount = s.run_count; monLoadArchive(); }
-    document.getElementById('mon-run-btn').disabled = true;
-    document.getElementById('mon-stop-btn').disabled = false;
-  }else if(wasRunning){
-    stopPoll('/api/monitor/status');
-    document.getElementById('mon-run-btn').disabled = false;
-    document.getElementById('mon-stop-btn').disabled = true;
-    monLoadArchive();
-    dashRefresh();
-  }
-  monRenderStatus(s);
-}
-function monRenderStatus(s){
-  s = s || {};
-  const el = document.getElementById('mon-status-text');
-  const badge = document.getElementById('hero-monitor-badge');
-  const running = monState.running || !!s.running;
-  if(running){
-    let txt = '🟢 监控运行中';
-    if(s.next_run) txt += ' · 下次 ' + new Date(s.next_run*1000).toLocaleString('zh-CN',{hour12:false});
-    if(el) el.textContent = txt;
-    if(badge){ badge.textContent = '运行中'; badge.classList.remove('off'); }
-  }else{
-    if(el) el.textContent = '未运行';
-    if(badge){ badge.textContent = '空闲'; badge.classList.add('off'); }
-  }
-}
-function monRenderBV(){
-  const list = document.getElementById('mon-bv-list');
-  if(!monState.bvids.length){
-    list.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;padding:6px 0">暂无监控稿件，请在上方输入 BV 号。</div>';
-    return;
-  }
-  list.innerHTML = monState.bvids.map((b,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--card-border);border-radius:var(--radius-sm);font-size:13px">
-      <span style="flex:1;font-family:monospace">${_escHtml(b)}</span>
-      <button class="btn btn-outline btn-sm" onclick="monRemoveBV(${i})">移除</button>
-    </div>`).join('');
-}
-function monRemoveBV(i){
-  monState.bvids.splice(i,1);
-  monPersist();
-  monRenderBV();
-}
-function monAddBV(){
-  const input = document.getElementById('mon-bv-input');
-  const raw = (input.value||'').trim();
-  if(!raw){ alert('请输入 BV 号'); return; }
-  const parts = raw.split(/[,，\s]+/).map(x=>x.trim()).filter(Boolean);
-  let added = 0, skipped = 0;
-  parts.forEach(p=>{
-    const m = p.match(/BV[0-9A-Za-z]{10}/i);
-    // BV 号区分大小写，只统一 BV 前缀，不能整体 toUpperCase
-    const bv = m ? ('BV' + m[0].slice(2)) : null;
-    if(bv && monState.bvids.indexOf(bv)===-1){ monState.bvids.push(bv); added++; }
-    else if(!bv){ skipped++; }
-  });
-  input.value = '';
-  if(!added && skipped){ alert('未识别到有效的 BV 号（请输入 12 位 BV 或包含 BV 的链接）'); }
-  monPersist();
-  monRenderBV();
-}
-function monPersist(){
-  const sel = document.getElementById('mon-interval');
-  return fetch('/api/monitor/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
-    bvids: monState.bvids,
-    interval: parseInt(sel?sel.value:'3600',10)||3600,
-  })}).catch(()=>{});
-}
-function monSaveConfig(){
-  monPersist().then(()=>alert('配置已保存'));
-}
-function monStart(){
-  if(!monState.bvids.length){ alert('请先添加至少一个 BV 号'); return; }
-  const sel = document.getElementById('mon-interval');
-  const interval = parseInt(sel?sel.value:'3600',10)||3600;
-  fetch('/api/monitor/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bvids: monState.bvids, interval})})
-    .then(r=>r.json()).then(d=>{
-      if(d.error){ alert(d.error); return; }
-      monState.lastCount = 0;
-      monState.running = true;
-      document.getElementById('mon-run-btn').disabled = true;
-      document.getElementById('mon-stop-btn').disabled = false;
-      document.getElementById('mon-log').textContent = '任务已启动，等待截图...';
-      startPoll('/api/monitor/status',3000,monUpdate);
-    }).catch(e=>alert('启动失败: '+e));
-}
-function monStop(){
-  fetch('/api/monitor/stop',{method:'POST',headers:{'Content-Type':'application/json'}})
-    .then(r=>r.json()).then(d=>{ if(!d.success) alert(d.message||'停止失败'); }).catch(()=>{});
-}
-function monShotNow(btn){
-  if(!monState.bvids.length){ alert('请先添加至少一个 BV 号'); return; }
-  const old = btn ? btn.textContent : '';
-  if(btn){ btn.disabled = true; btn.textContent = '截图中…'; }
-  fetch('/api/monitor/shot',{method:'POST',headers:{'Content-Type':'application/json'}})
-    .then(r=>r.json()).then(d=>{
-      if(d.success===false) alert(d.message||'截图失败');
-      else alert(`截图完成：成功 ${d.ok}/${d.total}`);
-      monLoadStatus();
-      monLoadArchive();
-    }).catch(e=>alert('截图失败: '+e)).finally(()=>{
-      if(btn){ btn.disabled = false; btn.textContent = old; }
-    });
-}
-function monOpenDir(){
-  fetch('/api/monitor/open-dir',{method:'POST',headers:{'Content-Type':'application/json'}})
-    .then(r=>r.json()).then(d=>{ if(d.success===false) alert(d.message||'打开失败'); }).catch(()=>{});
-}
-function monLoadArchive(){
-  return fetch('/api/monitor/archive').then(r=>r.json()).then(d=>{
-    const box = document.getElementById('mon-archive');
-    const meta = document.getElementById('mon-archive-meta');
-    const entries = d.entries||[];
-    if(meta) meta.textContent = `共 ${entries.length} 条 · ${d.dir||''}`;
-    if(!entries.length){
-      box.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px">暂无截图存档，开始监控或点击「立即截一屏」后这里会显示截图。</div>';
-      return;
-    }
-    box.innerHTML = entries.map(e=>`
-      <div style="border:1px solid var(--card-border);border-radius:10px;overflow:hidden;background:var(--card-bg)">
-        <a href="/api/monitor/file?path=${encodeURIComponent(e.file)}" target="_blank" title="点击查看原图">
-          <img src="/api/monitor/file?path=${encodeURIComponent(e.file)}" loading="lazy" style="width:100%;display:block;max-height:190px;object-fit:cover;object-position:top" onerror="this.style.display='none'">
-        </a>
-        <div style="padding:8px 10px;font-size:12px;color:var(--text-secondary)">
-          <div style="font-weight:500;color:var(--text)">${_escHtml(e.bvid)}</div>
-          <div>${_escHtml(e.ts||'')}</div>
-          <div style="color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${_escHtml(e.title||'')}">${_escHtml(e.title||'无标题')}</div>
-        </div>
-      </div>`).join('');
-  }).catch(()=>{});
 }
 
 /* ===== 按钮点击反馈动画 ===== */
@@ -7382,7 +6820,7 @@ function toggleTheme(){
   try{ localStorage.setItem('bili-theme', isDark ? 'light' : 'dark'); }catch(e){}
 }
 
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();catScheduleLoad();bstWebhookSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
+rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();bstWebhookSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
 </script>
 <!-- 联想下拉（挂在 body 末尾，fixed 定位，不受 .card overflow/transform 影响） -->
 <div id="ts-autocomplete" style="display:none;position:fixed;z-index:9999;max-height:200px;overflow-y:auto;border-radius:var(--radius-sm)"></div>

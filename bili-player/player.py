@@ -90,8 +90,21 @@ def load_accounts(cfg: dict = None) -> list[list[dict]]:
     return accounts if accounts else [[]]
 
 
+# 浏览器统一 UA（代理探测、正式播放共用，避免同一路径出现两套指纹）
+_BROWSER_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+               '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+
 # 每完成多少轮清理一次残留浏览器进程
 _CLEANUP_EVERY_ROUNDS = 10
+
+# ── 浏览器模式的代理出口（可选）──
+# 免费代理里能真正跑起浏览器的很少（GET 能通 ≠ 能渲染出播放器），所以每条候选都要用
+# 真实浏览器打开一次视频页来验证；只探测有限条候选、凑够目标条数就停，避免开局耗时失控。
+# 拿不到可用代理时一律退回直连 —— 直连本身就是已验证有效的路径。
+PROXY_PROBE_TIMEOUT_MS = 15000    # 单条代理打开视频页的超时
+PROXY_PROBE_WORKERS = 6           # 探测并发（共用一个浏览器，每条候选只开一个 context）
+PROXY_PROBE_MAX_CANDIDATES = 60   # 最多探测多少条候选
+PROXY_PROBE_TARGET = 8            # 凑够多少条可用代理即停止探测
 
 
 def cleanup_leftover_browsers(log=None) -> int:
@@ -238,7 +251,101 @@ async def simulate_user_behavior(page, stop_event=None):
         pass
 
 
-async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cookies=None):
+def load_proxy_pool(log, stop_event=None) -> list[str]:
+    """抓取公共代理池（阻塞，调用方需放进线程里执行）。失败返回空列表。"""
+    common_dir = str(Path(__file__).resolve().parent.parent / "bili-common")
+    if common_dir not in sys.path:
+        sys.path.insert(0, common_dir)
+    try:
+        from proxy_pool import get_total_proxies
+    except Exception as e:
+        log(f"[PLAYER] 代理池模块不可用（{e}），退回直连")
+        return []
+    try:
+        return get_total_proxies(log, stop_event=stop_event)
+    except Exception as e:
+        log(f"[PLAYER] 代理池抓取失败（{e}），退回直连")
+        return []
+
+
+async def _probe_one(browser, bvid: str, proxy: str) -> bool:
+    """单条代理能否真正加载出视频页（页面上出现 video 元素）。"""
+    context = None
+    try:
+        context = await browser.new_context(
+            viewport={'width': 1280, 'height': 720},
+            user_agent=_BROWSER_UA,
+            locale='zh-CN',
+            proxy={'server': f'http://{proxy}'},
+        )
+        page = await context.new_page()
+        await page.goto(f"https://www.bilibili.com/video/{bvid}",
+                        wait_until='domcontentloaded', timeout=PROXY_PROBE_TIMEOUT_MS)
+        return bool(await page.evaluate("() => !!document.querySelector('video')"))
+    except Exception:
+        return False
+    finally:
+        if context is not None:
+            try:
+                await context.close()
+            except Exception:
+                pass
+
+
+async def probe_proxies(bvid: str, candidates: list[str],
+                        stop_event=None, log_fn=None) -> list[str]:
+    """用真实浏览器打开视频页来筛选候选代理，返回可用的代理列表。
+
+    免费代理大多扛不住整页加载（GET 能通也没用），所以只认「能渲染出 video 元素」的。
+    最多探测 PROXY_PROBE_MAX_CANDIDATES 条，凑够 PROXY_PROBE_TARGET 条即提前结束。
+    """
+    def log(msg):
+        if log_fn:
+            log_fn(msg)
+        else:
+            print(msg)
+
+    if not candidates:
+        return []
+
+    queue = asyncio.Queue()
+    for c in candidates[:PROXY_PROBE_MAX_CANDIDATES]:
+        queue.put_nowait(c)
+    usable: list[str] = []
+    log(f"[PLAYER] 代理探测中：{queue.qsize()} 条候选（真实打开视频页验证），凑够 {PROXY_PROBE_TARGET} 条即停...")
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                '--disable-blink-features=AutomationControlled',
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+            ],
+        )
+
+        async def worker():
+            while len(usable) < PROXY_PROBE_TARGET:
+                if stop_event and stop_event.is_set():
+                    return
+                try:
+                    proxy = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                if await _probe_one(browser, bvid, proxy):
+                    usable.append(proxy)
+
+        try:
+            await asyncio.gather(*[worker() for _ in range(PROXY_PROBE_WORKERS)])
+        finally:
+            await browser.close()
+
+    log(f"[PLAYER] 代理探测完成：{len(usable)}/{len(candidates)} 条可用")
+    return usable
+
+
+async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None, cookies=None,
+                     proxy: str = None):
     """
     用 Playwright 打开一个视频并模拟播放（异步版本）
 
@@ -248,6 +355,11 @@ async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None
         log_fn: 日志回调函数
         initial_views: 所有轮次开始前的初始播放量（用于计算总变化）
         cookies: 可选，外部传入的 Playwright cookie 列表（优先级高于 config.yaml）
+        proxy: 可选，出口代理（ip:port）；为空则直连
+
+    Returns:
+        (views, ok)：views 为播放后 API 读到的播放量（读不到为 None）；
+        ok 表示这一轮是否真的把视频页打开并播放完 —— 代理出口据此判断代理是否可用。
     """
     def log(msg):
         if log_fn:
@@ -269,6 +381,7 @@ async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None
             break
 
     _result_views = None
+    _load_ok = False
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
@@ -279,10 +392,14 @@ async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None
                 '--disable-dev-shm-usage',
             ],
         )
+        ctx_kwargs = {}
+        if proxy:
+            ctx_kwargs['proxy'] = {'server': f'http://{proxy}'}
         context = await browser.new_context(
             viewport={'width': 1920, 'height': 1080},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            user_agent=_BROWSER_UA,
             locale='zh-CN',
+            **ctx_kwargs
         )
         # 注入反检测脚本
         await context.add_init_script("""
@@ -295,16 +412,19 @@ async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None
             log("[PLAYER] 已注入登录 Cookie")
         else:
             log("[PLAYER] 未登录，将以游客身份播放")
+        if proxy:
+            log(f"[PLAYER] 出口代理: {proxy}")
 
         page = await context.new_page()
 
         try:
             # 访问视频页面
             await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+            _load_ok = True
             await page.wait_for_timeout(random.randint(3000, 5000))
 
             if stop_event and stop_event.is_set():
-                return
+                return _result_views, _load_ok
 
             # 模拟播放时长（10-20秒，低于10秒不计入播放）
             play_duration = random.randint(10, 20)
@@ -339,10 +459,11 @@ async def play_video(bvid: str, stop_event=None, log_fn=None, initial_views=None
             await browser.close()
             log("[PLAYER] 浏览器已关闭")
 
-    return _result_views
+    return _result_views, _load_ok
 
 
-async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, log_fn=None):
+async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = None, log_fn=None,
+               use_proxy: bool = False):
     """
     主入口（异步版本，多账号并行、账号内串行）
 
@@ -351,6 +472,7 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
         rounds: 每个视频播放轮数
         stop_event: 停止信号
         log_fn: 可选日志回调函数，提供时替代 print() 输出
+        use_proxy: 是否经公共代理池出口播放（每轮轮换一条 IP）；拿不到可用代理时自动退回直连
     """
     def log(msg):
         if log_fn:
@@ -395,6 +517,20 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
     log(f"[PLAYER] ━━━━━━━━━━━━━━━━━━━━━━━━")
     log("")
 
+    # ── 浏览器代理出口（可选）：多 IP 分散，突破「同一 IP 高频」上限 ──
+    proxy_list: list[str] = []
+    if use_proxy:
+        log("[PLAYER] 🌐 准备代理出口（抓取公共代理池 + 真实浏览器验证）...")
+        loop = asyncio.get_running_loop()
+        pool = await loop.run_in_executor(None, load_proxy_pool, log, stop_event)
+        if pool:
+            proxy_list = await probe_proxies(bvids[0], pool, stop_event=stop_event, log_fn=log)
+        if proxy_list:
+            log(f"[PLAYER]    ✅ 代理出口就绪：{len(proxy_list)} 条可用代理，每个账号固定一条、失效才换")
+        else:
+            log("[PLAYER]    ⚠️ 没有可用代理，本次退回直连（直连本身就是有效路径）")
+        log("")
+
     start_time = time.time()
     total_rounds = 0
     success_rounds = 0
@@ -406,6 +542,7 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
         """单个账号的串行播放任务。"""
         account_label = f"账号{account_idx + 1}"
         nonlocal total_rounds, success_rounds, failed_rounds
+        account_proxy = None  # 账号专属出口：从池里领一条，用到失效为止
 
         # 账号间错开启动，避免多个账号同时播放同一个视频
         stagger = account_idx * (stagger_seconds + random.randint(0, 5))
@@ -432,14 +569,36 @@ async def main(bvid_input: str, rounds: int = 1, stop_event: threading.Event = N
                 log(f"[PLAYER] [{account_label}] ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄")
                 log(f"[PLAYER] [{account_label}] 📌 第 {round_num}/{rounds} 轮 | {bvid}")
 
+                # 代理出口：每个账号固定一条 IP，失效才换（池空则直连）
+                if account_proxy is None and proxy_list:
+                    async with results_lock:
+                        if proxy_list:
+                            account_proxy = proxy_list.pop(0)
+                            log(f"[PLAYER] [{account_label}] 分配代理出口 {account_proxy}"
+                                f"（池内剩余 {len(proxy_list)} 条）")
+
                 try:
-                    cur_views = await play_video(
-                        bvid,
-                        stop_event=stop_event,
-                        log_fn=lambda m: log(f"[PLAYER] [{account_label}] {m}"),
-                        initial_views=initial_views.get(bvid),
-                        cookies=cookies,
-                    )
+                    # 代理打不开页面时退回直连补一次，保证这一轮仍然真的播出去
+                    attempts = [account_proxy, None] if account_proxy else [None]
+                    cur_views, load_ok = None, False
+                    for attempt_proxy in attempts:
+                        cur_views, load_ok = await play_video(
+                            bvid,
+                            stop_event=stop_event,
+                            log_fn=lambda m: log(f"[PLAYER] [{account_label}] {m}"),
+                            initial_views=initial_views.get(bvid),
+                            cookies=cookies,
+                            proxy=attempt_proxy,
+                        )
+                        if load_ok:
+                            break
+                        if attempt_proxy:
+                            # 弃用这条 IP（不再放回池里），下轮为这个账号领新的一条
+                            account_proxy = None
+                            log(f"[PLAYER] [{account_label}] 代理 {attempt_proxy} 打不开页面，已弃用"
+                                f"（池内剩 {len(proxy_list)} 条），本轮退回直连，下轮换新 IP")
+                    if not load_ok:
+                        raise RuntimeError("页面打不开（直连也失败）")
                     async with results_lock:
                         success_rounds += 1
                         video_results[bvid]["success"] += 1

@@ -14,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+import requests
+
 from bilibili_api import comment, dynamic, user, video
 from bilibili_api.utils.network import Credential
 from bilibili_api.utils.picture import Picture
@@ -724,9 +726,9 @@ async def check_mutual_follow(uid: int, cred: Credential) -> bool:
 
 
 # ---- following list ----
-async def get_following_list(cred: Credential, my_uid: int, max_pages: int = 10) -> list[dict]:
+async def get_following_list(cred: Credential, my_uid: int, max_pages: int = 40) -> list[dict]:
     """拉取当前用户的关注列表，返回 [{uid, name, face}, ...]。
-    最多拉取 max_pages 页（每页 50 条），即最多 500 个关注。
+    最多拉取 max_pages 页（每页 50 条），即最多 2000 个关注；取完 total 会提前结束。
     """
     result = []
     try:
@@ -752,6 +754,77 @@ async def get_following_list(cred: Credential, my_uid: int, max_pages: int = 10)
                 break
     except Exception as e:
         logger.warning("拉取关注列表失败: %s", e)
+    return result
+
+
+# ---- following groups ----
+_BILI_WEB_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://www.bilibili.com/",
+}
+
+
+def get_following_groups(sessdata: str) -> list[dict]:
+    """拉取关注分组列表，返回 [{tagid, name, count}, ...]。
+    接口不含 wbi 签名，直接用 Cookie 请求即可。
+    """
+    try:
+        resp = requests.get(
+            "https://api.bilibili.com/x/relation/tags",
+            headers={**_BILI_WEB_HEADERS, "Cookie": f"SESSDATA={sessdata}"},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("code") != 0:
+            logger.warning("拉取关注分组失败: %s", data.get("message"))
+            return []
+        return [
+            {
+                "tagid": it.get("tagid", 0),
+                "name": it.get("name", ""),
+                "count": it.get("count", 0),
+            }
+            for it in (data.get("data") or [])
+        ]
+    except Exception as e:
+        logger.warning("拉取关注分组异常: %s", e)
+        return []
+
+
+def get_group_members(sessdata: str, tagid: int, max_pages: int = 40) -> list[dict]:
+    """拉取指定关注分组的成员，返回 [{uid, name, face}, ...]。
+    每页 50 条，最多 max_pages 页；取到不足一页时提前结束。
+    """
+    result = []
+    for pn in range(1, max_pages + 1):
+        try:
+            resp = requests.get(
+                "https://api.bilibili.com/x/relation/tag",
+                params={"tagid": tagid, "pn": pn, "ps": 50},
+                headers={**_BILI_WEB_HEADERS, "Cookie": f"SESSDATA={sessdata}"},
+                timeout=10,
+            )
+            data = resp.json()
+            if data.get("code") != 0:
+                logger.warning("拉取分组 %s 成员失败: %s", tagid, data.get("message"))
+                break
+            items = data.get("data") or []
+            if not items:
+                break
+            for it in items:
+                result.append({
+                    "uid": it.get("mid", 0),
+                    "name": it.get("uname", ""),
+                    "face": it.get("face", ""),
+                })
+            if len(items) < 50:
+                break
+        except Exception as e:
+            logger.warning("拉取分组 %s 成员异常: %s", tagid, e)
+            break
     return result
 
 
