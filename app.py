@@ -4550,6 +4550,11 @@ def _shutdown(label: str = "shutdown"):
             _booster_schedule["stop_event"].set()
     except Exception as e:
         print(f"[{label}] set booster schedule stop_event failed: {e}", flush=True)
+    try:
+        if _wallet_state.get("stop_event"):
+            _wallet_state["stop_event"].set()
+    except Exception as e:
+        print(f"[{label}] set wallet stop_event failed: {e}", flush=True)
 
     # 2) 触发所有 active task 的 stop_event
     try:
@@ -4883,6 +4888,425 @@ def medal_lock():
     uid = str(cred.get("dedeuserid", ""))
     locks = set_lock(uid, str(data.get("target_id", "")), bool(data.get("locked")))
     return jsonify({"success": True, "locks": locks})
+
+
+# =========================================================================
+#  三-H、贝壳钱包监控 — 轮询账单明细，有新增即 Server酱3 推送
+# =========================================================================
+WALLET_CONFIG_FILE = CONFIG_DIR / "wallet_monitor.yaml"
+
+# 贝壳账单列表接口（web 端账单页 pay-v2/shell/index 使用，纯 Cookie 认证）
+WALLET_API = "https://pay.bilibili.com/payplatform/cashier/bk/trans/list"
+WALLET_SDK_VERSION = "1.5.6"
+WALLET_PAGE_SIZE = 30
+WALLET_MAX_PAGES = 6          # 单次最多翻 6 页，避免异常情况下无限拉取
+WALLET_BASELINE_LIMIT = 800   # 基线条目上限，超出丢弃最早记录（远超回看窗口内的条数）
+WALLET_DEFAULT_INTERVAL = 10  # 分钟
+WALLET_DEFAULT_LOOKBACK = 60  # 天
+
+WALLET_HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+    "content-type": "application/json",
+    "origin": "https://pay.bilibili.com",
+    "referer": "https://pay.bilibili.com/pay-v2/shell/index",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+}
+
+_wallet_state = {
+    "running": False,
+    "thread": None,
+    "stop_event": threading.Event(),
+    "last_run": None,
+    "next_run": None,
+    "run_count": 0,
+    "last_error": "",
+}
+
+# 防止定时循环与手动 run-once 并发执行同一明细导致重复推送
+_wallet_check_lock = threading.Lock()
+
+# 状态码 → 文案（接口本身也返回 statusDesc，缺省时兜底）
+_WALLET_STATUS_TEXT = {0: "审核中", 1: "到账成功", 2: "已失效", 6: "提现成功"}
+
+
+def _load_wallet_config():
+    """读取贝壳监控配置（含基线 seen）。"""
+    import yaml
+    if WALLET_CONFIG_FILE.exists():
+        try:
+            with open(WALLET_CONFIG_FILE, "r", encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            pass
+    return {}
+
+
+def _save_wallet_config(cfg):
+    """写入贝壳监控配置（含基线 seen，落盘以保证重启后不重复推送）。"""
+    import yaml
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    with open(WALLET_CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
+
+
+def _wallet_build_cookies(cred: dict) -> dict:
+    """由主账号凭证构造账单接口所需的 Cookie。"""
+    cookies = {"SESSDATA": cred.get("sessdata", "")}
+    if cred.get("bili_jct"):
+        cookies["bili_jct"] = cred["bili_jct"]
+    uid = str(cred.get("dedeuserid") or cred.get("login_uid") or "")
+    if uid:
+        cookies["DedeUserID"] = uid
+    if cred.get("buvid3"):
+        cookies["buvid3"] = cred["buvid3"]
+    return cookies
+
+
+def _wallet_fetch_page(cookies: dict, page: int, begin_time: str, end_time: str) -> dict:
+    """拉取单页账单。返回接口 data 字段。"""
+    import httpx
+    payload = {
+        "currentPage": page,
+        "pageSize": WALLET_PAGE_SIZE,
+        "beginTime": begin_time,
+        "endTime": end_time,
+        "traceId": int(time.time() * 1000),
+        "sdkVersion": WALLET_SDK_VERSION,
+    }
+    resp = httpx.post(WALLET_API, json=payload, cookies=cookies, headers=WALLET_HEADERS, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success"):
+        raise RuntimeError(str(data.get("msg") or data.get("message") or "接口返回失败"))
+    return data.get("data") or {}
+
+
+def _wallet_fetch_items(cookies: dict, lookback_days: int) -> list:
+    """拉取回看窗口内的全部账单明细。"""
+    now = datetime.now()
+    end_time = now.strftime("%Y-%m-%d %H:%M:%S")
+    begin_time = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%d %H:%M:%S")
+    items = []
+    page = 1
+    while page <= WALLET_MAX_PAGES:
+        data = _wallet_fetch_page(cookies, page, begin_time, end_time)
+        items.extend(data.get("result") or [])
+        try:
+            total_page = int((data.get("page") or {}).get("totalPage") or 1)
+        except (TypeError, ValueError):
+            total_page = 1
+        if page >= total_page:
+            break
+        page += 1
+        time.sleep(0.5)  # 翻页间隔，避免触发风控
+    return items
+
+
+def _wallet_push(send_key: str, title: str, desp: str):
+    """Server酱推送。返回 (是否成功, 错误信息)。"""
+    import httpx
+    key = (send_key or "").strip()
+    if not key:
+        return False, "未配置 SendKey"
+    if key.startswith("sctp"):
+        # Server酱3：SendKey 形如 sctp1234tXXXX，uid 为 sctp 与 t 之间的数字
+        m = re.match(r"^sctp(\d+)t", key)
+        if not m:
+            return False, "SendKey 格式不正确（应形如 sctp1234t...）"
+        url = "https://%s.push.ft07.com/send/%s.send" % (m.group(1), key)
+    else:
+        # Server酱 Turbo（微信推送）
+        url = "https://sctapi.ftqq.com/%s.send" % key
+    try:
+        resp = httpx.post(url, data={"title": title, "desp": desp}, timeout=15)
+        data = resp.json()
+    except Exception as e:
+        return False, "推送请求失败: %s" % e
+    try:
+        code = int(data.get("code", -1))
+    except (TypeError, ValueError):
+        code = -1
+    if code == 0:
+        return True, ""
+    return False, str(data.get("message") or data.get("msg") or data)
+
+
+def _wallet_item_status(it: dict) -> str:
+    """取明细的状态文案。"""
+    desc = str(it.get("statusDesc") or "").strip()
+    if desc:
+        return desc
+    try:
+        return _WALLET_STATUS_TEXT.get(int(it.get("status")), str(it.get("status")))
+    except (TypeError, ValueError):
+        return "未知状态"
+
+
+def _wallet_item_amount(it: dict) -> str:
+    """取明细的金额展示（带正负号）。"""
+    try:
+        amt = float(it.get("brokerage") or 0)
+    except (TypeError, ValueError):
+        amt = 0.0
+    sign = "-" if it.get("tallyDirect") == "DECREASE" else "+"
+    return "%s%.2f" % (sign, amt)
+
+
+def _wallet_notify(send_key: str, it: dict, log_target: str) -> bool:
+    """推送单条明细。"""
+    label = str(it.get("label") or "")
+    title = str(it.get("title") or "")
+    status_text = _wallet_item_status(it)
+    amount = _wallet_item_amount(it)
+    ctime = str(it.get("ctime") or "")
+    order_no = str(it.get("orderNo") or "")
+    lines = [
+        "**分类**：%s" % (label or "-"),
+        "**明细**：%s" % (title or "-"),
+        "**金额**：%s 元" % amount,
+        "**状态**：%s" % status_text,
+        "**时间**：%s" % (ctime or "-"),
+        "**订单号**：%s" % (order_no or "-"),
+    ]
+    recv = it.get("receivedAmount")
+    if recv is not None:
+        try:
+            if abs(float(recv) - abs(float(it.get("brokerage") or 0))) > 0.001:
+                lines.insert(3, "**实际到账**：%.2f 元" % float(recv))
+        except (TypeError, ValueError):
+            pass
+    ok, err = _wallet_push(send_key, "【贝壳】%s 元 · %s" % (amount, status_text), "\n\n".join(lines))
+    if ok:
+        _append_log(log_target, "已推送: %s 元 %s（%s）" % (amount, status_text, title))
+    else:
+        _append_log(log_target, "[推送失败] %s：%s" % (title, err))
+    return ok
+
+
+def _wallet_check_once(stop_event, log_target: str = "wallet-monitor") -> bool:
+    """执行一次检查（互斥：定时与手动并发时后者直接跳过，避免同一明细重复推送）。"""
+    if not _wallet_check_lock.acquire(blocking=False):
+        _append_log(log_target, "[SYSTEM] 上一次检查尚未结束，跳过本次")
+        return False
+    try:
+        return _wallet_check_inner(stop_event, log_target)
+    finally:
+        _wallet_check_lock.release()
+
+
+def _wallet_check_inner(stop_event, log_target: str) -> bool:
+    """执行一次检查：拉取明细 → 与基线比对 → 推送新增。返回是否成功拉取。"""
+    cred = _read_auto_cred()
+    if not cred.get("sessdata"):
+        _append_log(log_target, "[SYSTEM] 未找到主账号凭证，请先扫码登录")
+        return False
+
+    cfg = _load_wallet_config()
+    send_key = str(cfg.get("send_key") or "").strip()
+    if not send_key:
+        _append_log(log_target, "[SYSTEM] 未配置 Server酱 SendKey，无法推送")
+        return False
+
+    try:
+        lookback = int(cfg.get("lookback_days") or WALLET_DEFAULT_LOOKBACK)
+    except (TypeError, ValueError):
+        lookback = WALLET_DEFAULT_LOOKBACK
+
+    seen = dict(cfg.get("seen") or {})
+    first_run = not seen
+
+    try:
+        items = _wallet_fetch_items(_wallet_build_cookies(cred), lookback)
+    except Exception as e:
+        _wallet_state["last_error"] = str(e)
+        _append_log(log_target, "[SYSTEM] 获取账单失败: %s" % e)
+        return False
+
+    _wallet_state["last_error"] = ""
+    _append_log(log_target, "共获取 %d 条明细（回看 %d 天）%s"
+                % (len(items), lookback, "；首次运行仅建立基线，不推送" if first_run else ""))
+
+    # 判重键：同一 orderNo 的状态会变化（审核中 → 到账成功），故用 orderNo + status 组合
+    fresh = []
+    for it in items:
+        key = "%s|%s" % (it.get("orderNo", ""), it.get("status", ""))
+        if key in seen:
+            continue
+        fresh.append((key, it))
+
+    if first_run:
+        now_ts = int(time.time())
+        for key, _it in fresh:
+            seen[key] = now_ts
+        _append_log(log_target, "已建立基线 %d 条" % len(seen))
+    else:
+        # 按时间正序推送，消息读起来更自然
+        for key, it in reversed(fresh):
+            if stop_event.is_set():
+                _append_log(log_target, "[SYSTEM] 收到停止信号，中断推送")
+                break
+            if _wallet_notify(send_key, it, log_target):
+                seen[key] = int(time.time())
+            # 推送失败则不记入基线，下一轮自动重试
+        if not fresh:
+            _append_log(log_target, "无新增明细")
+
+    # 裁剪基线，避免配置文件无限增长
+    if len(seen) > WALLET_BASELINE_LIMIT:
+        for k in list(seen.keys())[:len(seen) - WALLET_BASELINE_LIMIT]:
+            seen.pop(k, None)
+
+    cfg["seen"] = seen
+    _save_wallet_config(cfg)
+    return True
+
+
+def _wallet_monitor_loop():
+    """贝壳钱包监控主循环。"""
+    while not _wallet_state["stop_event"].is_set():
+        cfg = _load_wallet_config()
+        try:
+            interval = int(cfg.get("interval_minutes") or WALLET_DEFAULT_INTERVAL) * 60
+        except (TypeError, ValueError):
+            interval = WALLET_DEFAULT_INTERVAL * 60
+        if interval < 60:
+            interval = 60
+        _append_log("wallet-monitor", "=== 第%d次检查 ===" % (_wallet_state["run_count"] + 1))
+        _wallet_check_once(_wallet_state["stop_event"])
+        _wallet_state["run_count"] += 1
+        _wallet_state["last_run"] = time.time()
+        _wallet_state["next_run"] = time.time() + interval
+        if _wallet_state["stop_event"].is_set():
+            break
+        _append_log("wallet-monitor", "=== 等待 %d 分钟后执行下一次 ===" % (interval // 60))
+        # 分段等待，以便能快速响应停止
+        for _ in range(interval):
+            if _wallet_state["stop_event"].is_set():
+                break
+            time.sleep(1)
+    _wallet_state["running"] = False
+    _append_log("wallet-monitor", "贝壳钱包监控已停止")
+
+
+@app.route("/api/wallet/config", methods=["GET"])
+def wallet_config_get():
+    cfg = _load_wallet_config()
+    cred = _read_auto_cred()
+    return jsonify({
+        "send_key": cfg.get("send_key", ""),
+        "interval_minutes": cfg.get("interval_minutes", WALLET_DEFAULT_INTERVAL),
+        "lookback_days": cfg.get("lookback_days", WALLET_DEFAULT_LOOKBACK),
+        "baseline_count": len(cfg.get("seen") or {}),
+        "has_login": bool(cred.get("sessdata")),
+        "login_uid": str(cred.get("dedeuserid") or cred.get("login_uid") or ""),
+    })
+
+
+@app.route("/api/wallet/config", methods=["POST"])
+def wallet_config_save():
+    data = request.json or {}
+    send_key = str(data.get("send_key", "")).strip()
+    try:
+        interval = int(data.get("interval_minutes", WALLET_DEFAULT_INTERVAL))
+        lookback = int(data.get("lookback_days", WALLET_DEFAULT_LOOKBACK))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "配置项必须为整数"}), 400
+    if interval < 1 or lookback < 1:
+        return jsonify({"success": False, "message": "配置项必须为正整数"}), 400
+    if send_key and not (send_key.startswith("sctp") or send_key.startswith("SCT")):
+        return jsonify({"success": False, "message": "SendKey 应以 sctp（Server酱3）或 SCT（Server酱Turbo）开头"}), 400
+    cfg = _load_wallet_config()
+    cfg["send_key"] = send_key
+    cfg["interval_minutes"] = interval
+    cfg["lookback_days"] = lookback
+    _save_wallet_config(cfg)
+    return jsonify({"success": True})
+
+
+@app.route("/api/wallet/test-push", methods=["POST"])
+def wallet_test_push():
+    """发送一条测试推送，验证 SendKey 是否可用。"""
+    data = request.json or {}
+    send_key = str(data.get("send_key", "")).strip()
+    if not send_key:
+        return jsonify({"success": False, "message": "请先填写 SendKey"})
+    ok, err = _wallet_push(send_key, "【贝壳】推送测试", "收到这条消息说明 Server酱 配置正确。")
+    if ok:
+        return jsonify({"success": True})
+    return jsonify({"success": False, "message": err})
+
+
+@app.route("/api/wallet/start", methods=["POST"])
+def wallet_start():
+    if _wallet_state["running"]:
+        return jsonify({"success": False, "message": "贝壳钱包监控已在运行"})
+
+    _wallet_state["stop_event"] = threading.Event()
+    _wallet_state["running"] = True
+    _wallet_state["run_count"] = 0
+    _wallet_state["last_run"] = None
+    _wallet_state["next_run"] = None
+    _wallet_state["last_error"] = ""
+    with log_lock:
+        log_buffers["wallet-monitor"] = []
+    _append_log("wallet-monitor", "贝壳钱包监控已启动")
+
+    t = threading.Thread(target=_wallet_monitor_loop, daemon=True)
+    _wallet_state["thread"] = t
+    t.start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/wallet/stop", methods=["POST"])
+def wallet_stop():
+    if not _wallet_state["running"]:
+        return jsonify({"success": True, "message": "未在运行"})
+    _wallet_state["stop_event"].set()
+    return jsonify({"success": True})
+
+
+@app.route("/api/wallet/run-once", methods=["POST"])
+def wallet_run_once():
+    """手动触发一次检查（不影响定时循环）。"""
+    if _wallet_state["running"]:
+        stop_event = _wallet_state["stop_event"]
+    else:
+        _wallet_state["stop_event"] = threading.Event()
+        _wallet_state["running"] = "once"
+        _wallet_state["last_run"] = None
+        with log_lock:
+            log_buffers["wallet-monitor"] = []
+        _append_log("wallet-monitor", "=== 手动检查一次 ===")
+        stop_event = _wallet_state["stop_event"]
+
+    def _once():
+        _wallet_check_once(stop_event)
+        _wallet_state["last_run"] = time.time()
+        if _wallet_state["running"] == "once":
+            _wallet_state["running"] = False
+            _append_log("wallet-monitor", "=== 手动检查已结束 ===")
+
+    threading.Thread(target=_once, daemon=True).start()
+    return jsonify({"success": True})
+
+
+@app.route("/api/wallet/status")
+def wallet_status():
+    cfg = _load_wallet_config()
+    return jsonify({
+        "running": _wallet_state["running"],
+        "interval_minutes": cfg.get("interval_minutes", WALLET_DEFAULT_INTERVAL),
+        "lookback_days": cfg.get("lookback_days", WALLET_DEFAULT_LOOKBACK),
+        "send_key_set": bool(str(cfg.get("send_key") or "").strip()),
+        "baseline_count": len(cfg.get("seen") or {}),
+        "last_run": _wallet_state["last_run"],
+        "next_run": _wallet_state["next_run"],
+        "run_count": _wallet_state["run_count"],
+        "last_error": _wallet_state["last_error"],
+        "log": _get_log("wallet-monitor"),
+    })
 
 
 @app.route("/")

@@ -1713,6 +1713,11 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
         定时任务
       </button>
+
+      <button class="tab-btn" onclick="switchTab('wallet')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M16.5 14.5h1.5"/></svg>
+        贝壳监控
+      </button>
     </nav>
 
     <div class="sidebar-foot">
@@ -3271,6 +3276,72 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
   </div>
 </div>
 
+<!-- ============================================================ -->
+<!--  TAB: 贝壳钱包监控                                             -->
+<!-- ============================================================ -->
+<div id="panel-wallet" class="panel">
+  <div class="panel-hero">
+    <div class="panel-hero-left">
+      <div class="panel-hero-icon" style="color:#f7c871"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M16.5 14.5h1.5"/></svg></div>
+      <div>
+        <div class="panel-hero-title">贝壳钱包监控</div>
+        <div class="panel-hero-desc">定时轮询贝壳账单明细，出现新增或状态变化即通过 Server酱 推送到手机。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-head blue"><span class="card-step">1</span>推送与检查配置</div>
+    <div class="card-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span id="wl-login-info" style="color:var(--text-secondary)">检测登录状态...</span>
+        <span style="font-size:12px;color:var(--text-tertiary)">使用「自动互动」主账号凭证查询账单</span>
+      </div>
+
+      <div class="soft-note blue">💡 SendKey 在 <a href="https://sc3.ft07.com/" target="_blank" rel="noopener" style="color:var(--info);font-weight:600;text-decoration:underline">Server酱³</a> 后台获取，形如 sctp1234tXXXX（旧版 Turbo 为 SCT 开头）。首次运行只建立基线不推送；之后「审核中」「到账成功」「提现成功」等新增与状态变化都会推送。</div>
+
+      <div class="form-group">
+        <label class="form-label">Server酱 SendKey</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input class="form-input" id="wl-send-key" placeholder="sctp1234t..." style="flex:1;min-width:220px">
+          <button class="btn btn-outline btn-sm" onclick="wlTestPush()" style="margin:0;padding:4px 14px;font-size:12px">📤 发送测试</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">检查配置</label>
+        <div class="schedule-row">
+          <div class="inline-field">
+            <span>轮询间隔</span>
+            <input class="form-input inline-input" id="wl-interval" type="number" value="10" min="1">
+            <span>分钟</span>
+          </div>
+          <div class="inline-field">
+            <span>回看</span>
+            <input class="form-input inline-input" id="wl-lookback" type="number" value="60" min="1">
+            <span>天</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span class="status-dot dot-off" id="wl-dot"></span>
+          <span id="wl-text" style="color:var(--text-secondary)">监控未运行</span>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="wlSave()" style="margin:0;padding:4px 14px;font-size:12px">💾 保存配置</button>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-pink" id="wl-btn" onclick="wlToggle()">🕐 启动监控</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn btn-pink" onclick="wlRunOnce()">▶ 立即检查一次</button>
+      </div>
+      <div class="log-box" id="wl-log" style="margin-top:12px">等待运行...</div>
+    </div>
+  </div>
+</div>
+
 
   </main>
 </div><!-- /app-shell -->
@@ -3347,6 +3418,7 @@ function switchTab(name){
   if(name==='tagsearch'){ withPanelLoader('panel-tagsearch', () => tsLoadStatus(), '正在加载标签助手状态…'); }
   if(name==='medal'){ withPanelLoader('panel-medal', () => mdLoad(), '正在加载灯牌管理…'); }
   if(name==='schedmgr'){ withPanelLoader('panel-schedmgr', () => Promise.all([mgrAutoLoad(), bstScheduleLoad()]), '正在加载定时任务状态…'); }
+  if(name==='wallet'){ withPanelLoader('panel-wallet', () => wlLoad(), '正在加载贝壳监控状态…'); }
 }
 
 /* ===== TAB: 灯牌管理 (medal) ===== */
@@ -6801,6 +6873,139 @@ function dashRender(){
   if(sl) sl.textContent = loginCount + ' / 8';
   const sr = document.getElementById('dash-sum-run');
   if(sr) sr.textContent = runCount;
+}
+
+/* ============================================================
+   TAB: 贝壳钱包监控 (wallet)
+   ============================================================ */
+let wlPollTimer=null,wlLastLogLen=-1,wlIdleTicks=0;
+
+function wlFmtTime(ts){
+  if(!ts)return '--';
+  return new Date(ts*1000).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function wlLoad(){
+  return fetch('/api/wallet/config').then(r=>r.json()).then(d=>{
+    const info=document.getElementById('wl-login-info');
+    if(d.has_login){
+      info.textContent='已登录 UID: '+d.login_uid;
+      info.style.color='var(--success)';
+    }else{
+      info.textContent='未登录，请先在「自动互动」页扫码登录';
+      info.style.color='var(--warn)';
+    }
+    document.getElementById('wl-send-key').value=d.send_key||'';
+    document.getElementById('wl-interval').value=d.interval_minutes;
+    document.getElementById('wl-lookback').value=d.lookback_days;
+  }).catch(()=>{}).then(()=>wlPollTick());
+}
+
+function wlSave(silent){
+  const key=document.getElementById('wl-send-key').value.trim();
+  const interval=parseInt(document.getElementById('wl-interval').value)||10;
+  const lookback=parseInt(document.getElementById('wl-lookback').value)||60;
+  if(interval<1||lookback<1){alert('配置项必须为正整数');return Promise.resolve(false);}
+  return fetch('/api/wallet/config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({send_key:key,interval_minutes:interval,lookback_days:lookback})
+  }).then(r=>r.json()).then(d=>{
+    if(!d.success&&!silent)alert(d.message||'保存失败');
+    if(d.success&&!silent)alert('配置已保存');
+    return d.success;
+  }).catch(e=>{if(!silent)alert('保存失败: '+e);return false;});
+}
+
+function wlTestPush(){
+  const key=document.getElementById('wl-send-key').value.trim();
+  if(!key){alert('请先填写 SendKey');return;}
+  fetch('/api/wallet/test-push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({send_key:key})})
+    .then(r=>r.json()).then(d=>alert(d.success?'测试推送已发出，请查看手机':'推送失败: '+(d.message||'未知错误')))
+    .catch(e=>alert('推送失败: '+e));
+}
+
+function wlUpdateBtn(s){
+  const btn=document.getElementById('wl-btn');
+  if(s.running){btn.textContent='⏹ 停止';btn.className='btn btn-stop';}
+  else{btn.textContent='🕐 启动监控';btn.className='btn btn-pink';}
+}
+
+function wlUpdateStatus(s){
+  if(s.running){
+    setDot('wl-dot','run');
+    const mode=s.running===true?'定时监控中':'手动检查中';
+    let txt=mode+' · 间隔 '+s.interval_minutes+' 分钟 · 基线 '+s.baseline_count+' 条';
+    if(s.last_run){txt+=' · 已检查 '+s.run_count+' 次（上次 '+wlFmtTime(s.last_run)+'）';}
+    if(s.next_run){txt+=' · 下次 '+wlFmtTime(s.next_run);}
+    setText('wl-text',txt);
+  }else{
+    let txt='监控未运行';
+    if(s.last_error){setDot('wl-dot','err');txt='上次检查失败: '+s.last_error;}
+    else if(s.last_run){setDot('wl-dot','off');txt='监控未运行 · 上次检查 '+wlFmtTime(s.last_run)+' · 基线 '+s.baseline_count+' 条';}
+    else{setDot('wl-dot','off');}
+    setText('wl-text',txt);
+  }
+  const log=document.getElementById('wl-log');
+  if(s.log){log.textContent=s.log;log.scrollTop=log.scrollHeight;}
+}
+
+function wlToggle(){
+  fetch('/api/wallet/status').then(r=>r.json()).then(s=>{
+    if(s.running){
+      fetch('/api/wallet/stop',{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(!d.success){alert('停止失败: '+(d.message||'未知错误'));}
+        else{setDot('wl-dot','off');setText('wl-text','正在停止...');}
+        wlStartPoll();
+        wlPollTick();
+      }).catch(e=>alert('停止失败: '+e));
+    }else{
+      wlSave(true).then(ok=>{
+        if(!ok)return null;
+        return fetch('/api/wallet/start',{method:'POST'}).then(r=>r.json()).then(d=>{
+          if(!d||!d.success){alert('启动失败: '+((d&&d.message)||'未知错误'));return null;}
+          wlUpdateBtn({running:true});
+          wlStartPoll();
+          wlPollTick();
+        });
+      }).catch(e=>alert('操作失败: '+e));
+    }
+  }).catch(e=>alert('操作失败: '+e));
+}
+
+function wlRunOnce(){
+  wlSave(true).then(ok=>{
+    if(!ok)return null;
+    return fetch('/api/wallet/run-once',{method:'POST'}).then(r=>r.json());
+  }).then(d=>{
+    if(d&&d.success){
+      wlUpdateBtn({running:'once'});
+      wlStartPoll();
+      wlPollTick();
+    }else if(d){
+      alert('触发失败: '+(d.message||'未知错误'));
+    }
+  }).catch(e=>alert('触发失败: '+e));
+}
+
+function wlStartPoll(){
+  if(wlPollTimer)return;
+  wlLastLogLen=-1;wlIdleTicks=0;
+  wlPollTimer=setInterval(wlPollTick,5000);
+}
+
+function wlStopPoll(){
+  if(wlPollTimer){clearInterval(wlPollTimer);wlPollTimer=null;}
+}
+
+function wlPollTick(){
+  fetch('/api/wallet/status').then(r=>r.json()).then(s=>{
+    wlUpdateBtn(s);
+    wlUpdateStatus(s);
+    const logLen=(s.log||'').length;
+    if(s.running){wlIdleTicks=0;wlLastLogLen=logLen;return;}
+    if(logLen!==wlLastLogLen){wlLastLogLen=logLen;wlIdleTicks=0;}
+    else{wlIdleTicks++;}
+    if(wlIdleTicks>=6)wlStopPoll();
+  }).catch(()=>{});
 }
 
 /* ===== 按钮点击反馈动画 ===== */
