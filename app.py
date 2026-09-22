@@ -1324,20 +1324,42 @@ def _booster_end_once(log_target: str):
         _append_log(log_target, "=== 手动执行已结束 ===")
 
 
+def _booster_active_bvids() -> set:
+    """当前仍在途（排队/运行/停止中）的 bvid 集合，用于避免重复派发。"""
+    active = set()
+    with booster_lock:
+        for t in booster_tasks.values():
+            if t.get("status") in ("queued", "running", "stopping") and t.get("bv"):
+                active.add(t["bv"])
+    return active
+
+
 def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Event, log_target: str) -> int:
-    """为给定稿件列表各创建一个 booster 子任务，返回创建数量。"""
+    """为给定稿件列表各创建一个 booster 子任务，返回创建数量。
+
+    已在队列/运行中的 bvid，以及当前播放量已达目标的稿件直接跳过，避免每轮重复派发造成堆积。
+    """
     created = 0
+    active_bvids = _booster_active_bvids()
     for v in low_videos:
         if stop_event.is_set():
             _append_log(log_target, "[SYSTEM] 正在停止...")
             break
+        bvid = v["bvid"]
+        play = int(v.get("play", 0) or 0)
+        if play >= target:
+            _append_log(log_target, f"跳过 {bvid}：当前播放 {play} 已达目标 {target}")
+            continue
+        if bvid in active_bvids:
+            _append_log(log_target, f"跳过 {bvid}：已有任务在排队/运行中")
+            continue
         tid = str(uuid.uuid4())[:8]
         with booster_lock:
             booster_tasks[tid] = {
                 "status": "queued",
                 "start": time.time(),
                 "end": None,
-                "bv": v["bvid"],
+                "bv": bvid,
                 "title": v.get("title", ""),
                 "target": target,
                 "max_rounds": 5,
@@ -1345,10 +1367,11 @@ def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Ev
                 "stop_event": stop_event,
                 "log_target": log_target,  # 便于子任务日志回流
             }
+        active_bvids.add(bvid)
         with log_lock:
             log_buffers[tid] = []
-        _append_log(log_target, f"已创建任务 {tid} → {v['bvid']}《{v.get('title','')}》（当前播放 {v.get('play', 0)}）")
-        t = threading.Thread(target=_run_booster_task, args=(tid, [v["bvid"]], target, stop_event, 5, True), daemon=True)
+        _append_log(log_target, f"已创建任务 {tid} → {bvid}《{v.get('title','')}》（当前播放 {play}）")
+        t = threading.Thread(target=_run_booster_task, args=(tid, [bvid], target, stop_event, 5, True), daemon=True)
         t.start()
         created += 1
     return created

@@ -22,6 +22,7 @@ from proxy_pool import get_total_proxies  # noqa: E402
 
 # ── 全局配置（与 webui 完全一致） ──
 timeout = 5
+probe_timeout = 3   # 代理存活探测超时（比业务请求短）：死代理更快失败，缩短筛选耗时
 thread_num = 100
 batch_size = 200
 request_delay = 0.01
@@ -130,7 +131,7 @@ def probe_once(proxy, bv):
             params={'bvid': bv},
             proxies={'http': f'http://{proxy}'},
             headers={'User-Agent': _ua_instance.random},
-            timeout=timeout,
+            timeout=probe_timeout,
             allow_redirects=False)
         return resp.status_code in (200, 301, 302, 307, 308)
     except:
