@@ -3255,6 +3255,10 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
               <span>目标播放数</span>
               <input class="form-input inline-input" id="bst-sched-target" type="number" value="200" min="1">
             </div>
+            <div class="inline-field">
+              <span>同时运行稿件数</span>
+              <input class="form-input inline-input" id="bst-sched-concurrent" type="number" value="3" min="1" max="20">
+            </div>
           </div>
         </div>
         <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
@@ -4726,6 +4730,7 @@ function bstScheduleLoad(){
     document.getElementById('bst-sched-interval').value=c.interval_minutes;
     document.getElementById('bst-sched-threshold').value=c.play_threshold;
     document.getElementById('bst-sched-target').value=c.target_play;
+    document.getElementById('bst-sched-concurrent').value=c.max_concurrent_tasks||3;
     bstSchedAccounts=(d.accounts||[]).filter(a=>a.has_sessdata);
     const savedAccounts=(Array.isArray(c.account_uids)?c.account_uids:[]).map(String);
     const savedUids=(Array.isArray(c.uids)?c.uids:[]).map(String);
@@ -4745,12 +4750,14 @@ function bstScheduleSave(silent){
   const interval=parseInt(document.getElementById('bst-sched-interval').value)||60;
   const threshold=parseInt(document.getElementById('bst-sched-threshold').value)||200;
   const target=parseInt(document.getElementById('bst-sched-target').value)||200;
+  const concurrent=parseInt(document.getElementById('bst-sched-concurrent').value)||3;
   const uids=bstGetSelectedUids();
   const watchUids=Array.isArray(bstUserUids)?bstUserUids.slice():[];
   if(interval<1||threshold<1||target<1){alert('配置项必须为正整数');return Promise.resolve(false);}
+  if(concurrent<1||concurrent>20){alert('同时运行稿件数需为 1~20 之间的整数');return Promise.resolve(false);}
   if(!uids.length&&!watchUids.length){alert('请至少配置一个刷量账号或一个监控 UID');return Promise.resolve(false);}
   return fetch('/api/booster/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,account_uids:uids,uids:watchUids})
+    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,max_concurrent_tasks:concurrent,account_uids:uids,uids:watchUids})
   }).then(r=>r.json()).then(d=>{
     if(!d.success&&!silent)alert(d.message||'保存失败');
     if(d.success&&!silent)alert('配置已保存');
@@ -4779,7 +4786,7 @@ function bstScheduleUpdateStatus(s){
     const uids=s.account_uids||[];
     const names=uids.map(u=>{const a=bstSchedAccounts.find(x=>x.uid===u);return a?(a.name||('UID '+u)):('UID '+u);}).join('、');
     const watchCount=((s.uids)||[]).length;
-    let txt=`${mode} · 刷量账号 ${names||'无'} · 监控 UID ${watchCount} 个 · 阈值 ${s.play_threshold} · 目标 ${s.target_play}`;
+    let txt=`${mode} · 刷量账号 ${names||'无'} · 监控 UID ${watchCount} 个 · 阈值 ${s.play_threshold} · 目标 ${s.target_play} · 并发 ${s.max_concurrent_tasks||3}`;
     if(s.last_run){txt+=` · 已执行 ${s.run_count} 次`;}
     if(s.active_tasks&&s.active_tasks.length){
       const summary=s.active_tasks.map(t=>`${t.bv}(${t.status})`).join(' ');

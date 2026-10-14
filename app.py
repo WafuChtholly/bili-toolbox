@@ -920,9 +920,42 @@ _booster_spec.loader.exec_module(booster)
 booster_tasks = {}
 booster_lock = threading.Lock()
 
-# ── 并发任务限流（与 webui 一致：最多同时跑 max_concurrent_boost_tasks 个任务，其余排队） ──
-max_concurrent_boost_tasks = 3
-_booster_semaphore = threading.Semaphore(max_concurrent_boost_tasks)
+# ── 并发任务限流：最多同时跑 max_concurrent_boost_tasks 个任务，其余排队；上限可在配置页运行中调整 ──
+DEFAULT_MAX_CONCURRENT_BOOST_TASKS = 3
+MAX_CONCURRENT_BOOST_TASKS_CAP = 20
+
+
+class _BoosterGate:
+    """可动态调整上限的并发闸门（替代固定 Semaphore，支持运行中改并发数）。"""
+
+    def __init__(self, limit: int):
+        self._cond = threading.Condition()
+        self._limit = max(1, int(limit))
+        self._active = 0
+
+    def set_limit(self, limit: int):
+        with self._cond:
+            self._limit = max(1, int(limit))
+            self._cond.notify_all()
+
+    def get_limit(self) -> int:
+        with self._cond:
+            return self._limit
+
+    def acquire(self):
+        with self._cond:
+            while self._active >= self._limit:
+                self._cond.wait()
+            self._active += 1
+
+    def release(self):
+        with self._cond:
+            if self._active > 0:
+                self._active -= 1
+            self._cond.notify()
+
+
+_booster_gate = _BoosterGate(DEFAULT_MAX_CONCURRENT_BOOST_TASKS)
 
 # ── Webhook（活动助手推送） ──
 booster_webhook_enabled = False
@@ -1003,8 +1036,8 @@ def booster_webhook_state():
 
 
 def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True):
-    # 等待信号量：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
-    _booster_semaphore.acquire()
+    # 等待并发闸门：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
+    _booster_gate.acquire()
     try:
         # 排队期间可能已被取消（stop 端点会设为 stopping），或所属任务组已被停止（event 已置位）
         with booster_lock:
@@ -1126,7 +1159,7 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
     finally:
         with booster_lock:
             booster_tasks[task_id]["end"] = time.time()
-        _booster_semaphore.release()
+        _booster_gate.release()
 
 
 @app.route("/api/booster/run", methods=["POST"])
@@ -1535,6 +1568,7 @@ def booster_schedule_config_get():
         "interval_minutes": cfg.get("interval_minutes", 60),
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
+        "max_concurrent_tasks": cfg.get("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS),
         "account_uids": cfg.get("account_uids") or [],
         "uids": cfg.get("uids") or [],
     })
@@ -1547,12 +1581,17 @@ def booster_schedule_config_save():
         interval = int(data.get("interval_minutes", 60))
         threshold = int(data.get("play_threshold", 200))
         target = int(data.get("target_play", 200))
+        concurrent = int(data.get("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS))
     except (TypeError, ValueError):
         return jsonify({"success": False, "message": "配置项必须为整数"}), 400
     account_uids = [str(u).strip() for u in (data.get("account_uids") or []) if str(u or "").strip()]
     uids = [str(u).strip() for u in (data.get("uids") or []) if str(u or "").strip()]
     if interval < 1 or threshold < 1 or target < 1:
         return jsonify({"success": False, "message": "配置项必须为正整数"}), 400
+    if concurrent < 1:
+        return jsonify({"success": False, "message": "同时运行稿件数必须为正整数"}), 400
+    if concurrent > MAX_CONCURRENT_BOOST_TASKS_CAP:
+        return jsonify({"success": False, "message": f"同时运行稿件数上限为 {MAX_CONCURRENT_BOOST_TASKS_CAP}"}), 400
     if not account_uids and not uids:
         return jsonify({"success": False, "message": "请至少配置一个刷量账号或监控 UID"}), 400
     cfg = _load_booster_config()
@@ -1560,10 +1599,12 @@ def booster_schedule_config_save():
         "interval_minutes": interval,
         "play_threshold": threshold,
         "target_play": target,
+        "max_concurrent_tasks": concurrent,
         "account_uids": account_uids,
         "uids": uids,
     }
     _save_booster_config(cfg)
+    _booster_gate.set_limit(concurrent)  # 立即生效，无需重启；正在运行的任务不受影响，仅影响后续调度
     return jsonify({"success": True})
 
 
@@ -1647,6 +1688,7 @@ def booster_schedule_status():
         "interval_minutes": cfg.get("interval_minutes", 60),
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
+        "max_concurrent_tasks": _booster_gate.get_limit(),
         "account_uids": cfg.get("account_uids") or [],
         "uids": cfg.get("uids") or [],
         "last_run": _booster_schedule["last_run"],
@@ -5341,6 +5383,12 @@ APP_PORT = 5678
 
 if __name__ == "__main__":
     import webbrowser
+    # 恢复上次保存的并发上限（配置项持久化在 booster_config.yaml）
+    try:
+        _booster_gate.set_limit(int(_load_booster_config().get("schedule", {}).get(
+            "max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS)))
+    except Exception:
+        pass
     # 绑定端口前先清掉旧版本残留的实例进程（孤儿/端口占用），否则新实例起不来或连到旧进程
     _kill_stale_app_instances(APP_PORT)
     if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
