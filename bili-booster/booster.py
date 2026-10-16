@@ -31,6 +31,13 @@ per_video_boost = 80
 # ── 全局 UserAgent 实例 ──
 _ua_instance = UserAgent()
 
+# ── 移动端通道（click/h5）：与网页端 click/web/h5 是两份独立额度 ──
+# 每个存活代理会「先打 web 再打 mobile」，两份额度共用同一次存活探测，避免重复验证。
+_mobile_ua = ('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) '
+              'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 '
+              'Mobile/15E148 Safari/604.1')
+_mobile_click_url = 'http://api.bilibili.com/x/click-interface/click/h5'
+
 
 # 代理池实现已抽到 bili-common/proxy_pool.py，本模块只保留探测与使用逻辑
 
@@ -162,9 +169,69 @@ def click_once(proxy, info, bv):
         return False
 
 
+def build_mobile_click_headers(bv, cookies):
+    return {
+        'User-Agent': _mobile_ua,
+        'Referer': f'https://m.bilibili.com/video/{bv}',
+        'Origin': 'https://m.bilibili.com',
+        'Accept': '*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': cookies,
+    }
+
+
+def generate_did():
+    """移动端设备号 did：8 位小写字母+数字（实测形如 elrglb04）。"""
+    return ''.join(random.choices('abcdefghijklmnopqrstuvwxyz0123456789', k=8))
+
+
+def click_mobile_once(proxy, info, bv):
+    """发送一次移动端播放点击请求（click/h5）。
+
+    与 click_once（网页端）共用同一条存活代理，构成「一个 IP 打两份独立额度」。
+    payload 复刻实测可计数的移动端匿名会话：did/lv=0/ftime/stime/spmid=333.401。
+    """
+    try:
+        cookies = build_random_cookies()
+        headers = build_mobile_click_headers(bv, cookies)
+        proxies = {'http': f'http://{proxy}'}
+
+        # ftime/stime 用本地时间即可（省去 report/click/now 的一次额外请求）
+        now = int(time_module.time())
+
+        resp = requests.post(_mobile_click_url,
+                             proxies=proxies,
+                             headers=headers,
+                             timeout=timeout,
+                             data={
+                                 'aid': info['aid'],
+                                 'cid': info['cid'],
+                                 'bvid': bv,
+                                 'part': '1',
+                                 'did': generate_did(),
+                                 'mid': '',
+                                 'lv': '0',
+                                 'ftime': now,
+                                 'stime': now,
+                                 'sub_type': '0',
+                                 'spmid': '333.401',
+                                 'from_spmid': 'undefined',
+                                 'session': ''.join(random.choices('0123456789abcdef', k=8)),
+                                 'csrf': '',
+                             })
+        return resp.status_code == 200
+    except:
+        return False
+
+
 def click_batch(proxies, info, bv, stop_event=None):
-    """批量并发点击（webui 原始逻辑）。"""
-    success = [0]
+    """批量并发点击：每个存活代理先打网页端、再打移动端（共用这一批存活代理）。
+
+    返回 (web_success, mobile_success)。
+    """
+    web_ok = [0]
+    mobile_ok = [0]
     lock = threading.Lock()
 
     def worker(proxy):
@@ -172,7 +239,12 @@ def click_batch(proxies, info, bv, stop_event=None):
             return
         if click_once(proxy, info, bv):
             with lock:
-                success[0] += 1
+                web_ok[0] += 1
+        if stop_event and stop_event.is_set():
+            return
+        if click_mobile_once(proxy, info, bv):
+            with lock:
+                mobile_ok[0] += 1
 
     threads = []
     for proxy in proxies:
@@ -184,7 +256,7 @@ def click_batch(proxies, info, bv, stop_event=None):
     for t in threads:
         t.join()
 
-    return success[0]
+    return web_ok[0], mobile_ok[0]
 
 
 def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
@@ -229,22 +301,25 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
         log('  no valid proxies, skipping')
         return 0
 
-    log(f'  sending clicks for {bv}...')
+    log(f'  sending clicks (web + mobile per proxy) for {bv}...')
     start_click = datetime.now()
-    clicks = 0
+    web_clicks = 0
+    mobile_clicks = 0
     for i in range(0, len(active_proxies), batch_size):
         if stop_event and stop_event.is_set():
             break
         chunk = active_proxies[i:i + batch_size]
-        c = click_batch(chunk, info, bv, stop_event=stop_event)
-        clicks += c
-        log(f'    chunk {i//batch_size + 1}/{(len(active_proxies)-1)//batch_size + 1}: {c}/{len(chunk)} success')
+        w, m = click_batch(chunk, info, bv, stop_event=stop_event)
+        web_clicks += w
+        mobile_clicks += m
+        log(f'    chunk {i//batch_size + 1}/{(len(active_proxies)-1)//batch_size + 1}: '
+            f'web {w}/{len(chunk)}, mobile {m}/{len(chunk)}')
         if request_delay > 0:
             sleep(request_delay)
     click_cost = int((datetime.now() - start_click).total_seconds())
-    log(f'  done: {clicks} clicks in {time_fmt(click_cost)}')
+    log(f'  done: web {web_clicks} + mobile {mobile_clicks} clicks in {time_fmt(click_cost)}')
 
-    return clicks
+    return web_clicks + mobile_clicks
 
 
 # =========================================================================
