@@ -1544,10 +1544,31 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
             _booster_end_once(log_target)
 
 
+def _booster_round_pending(stop_event: threading.Event, log_target: str) -> int:
+    """统计某一轮（同一 stop_event + log_target）仍在排队/运行中的 booster 子任务数。"""
+    with booster_lock:
+        n = 0
+        for t in booster_tasks.values():
+            if t.get("log_target") != log_target:
+                continue
+            if t.get("stop_event") is not stop_event:
+                continue
+            if t.get("status") not in ("completed", "error", "cancelled", "stopping"):
+                n += 1
+        return n
+
+
 def _booster_schedule_loop():
-    """定时任务主循环：固定节奏——每轮以本轮开始时刻起算 interval，执行耗时计入周期，
-    不再「执行耗时 + interval」叠加，实际间隔与配置一致。"""
+    """定时任务主循环：不重叠 + 固定节奏。
+
+    下一轮必须满足两个条件才启动：
+    1) 本轮派生的 booster 子任务已全部结束（避免上一轮还没跑完就叠下一轮、把队列越堆越深）；
+    2) 已到「本轮开始时刻 + interval」（执行耗时计入周期，实际间隔与配置一致）。
+    即下一轮启动时刻 = max(本轮子任务跑完时刻, 本轮开始时刻 + interval)。
+    """
+    log_target = "booster-schedule"
     while not _booster_schedule["stop_event"].is_set():
+        stop_event = _booster_schedule["stop_event"]
         cfg = _load_booster_config().get("schedule", {})
         try:
             interval = int(cfg.get("interval_minutes", 60)) * 60
@@ -1555,32 +1576,53 @@ def _booster_schedule_loop():
             interval = 60 * 60
 
         round_start = time.time()
-        _append_log("booster-schedule", f"=== 定时刷量执行 (第{_booster_schedule['run_count']+1}次) ===")
-        _booster_schedule_once(_booster_schedule["stop_event"])
+        _append_log(log_target, f"=== 定时刷量执行 (第{_booster_schedule['run_count']+1}次) ===")
+        _booster_schedule_once(stop_event)
         _booster_schedule["run_count"] += 1
         _booster_schedule["last_run"] = time.time()
-        # 固定节奏：下一次执行 = 本轮开始时刻 + interval（本轮执行耗时已包含在周期内）
-        next_run = round_start + interval
-        _booster_schedule["next_run"] = next_run
+        _booster_schedule["next_run"] = round_start + interval
 
-        if _booster_schedule["stop_event"].is_set():
+        if stop_event.is_set():
             break
 
+        # 1) 等本轮子任务全部结束（含排队中的），不重叠
+        last_pending = -1
+        announced = False
+        while True:
+            pending = _booster_round_pending(stop_event, log_target)
+            if pending == 0:
+                break
+            if pending != last_pending:
+                if not announced:
+                    _append_log(log_target, f"=== 本轮还有 {pending} 个子任务在执行，等其全部结束后再进入下一轮 ===")
+                    announced = True
+                else:
+                    _append_log(log_target, f"=== 本轮剩余 {pending} 个子任务执行中... ===")
+                last_pending = pending
+            if stop_event.is_set():
+                break
+            time.sleep(5)
+
+        if stop_event.is_set():
+            break
+
+        # 2) 再按固定节奏等到「本轮开始时刻 + interval」
         cost = time.time() - round_start
-        wait = max(0, int(round(next_run - time.time())))
+        wait = max(0, int(round(round_start + interval - time.time())))
         if wait > 0:
-            _append_log("booster-schedule", f"=== 本轮耗时 {cost:.0f}s，等待 {wait} 秒后执行下一次 ===")
+            _append_log(log_target, f"=== 本轮耗时 {cost:.0f}s（含子任务执行），等待 {wait} 秒后执行下一次 ===")
         else:
-            _append_log("booster-schedule", f"=== 本轮耗时 {cost:.0f}s，已达/超过间隔 {interval} 秒，立即执行下一次 ===")
+            _append_log(log_target, f"=== 本轮耗时 {cost:.0f}s（含子任务执行），已达/超过间隔 {interval} 秒，立即执行下一次 ===")
+        _booster_schedule["next_run"] = time.time() + wait
 
         # 分段等待，以便能快速响应停止
         for _ in range(wait):
-            if _booster_schedule["stop_event"].is_set():
+            if stop_event.is_set():
                 break
             time.sleep(1)
 
     _booster_schedule["running"] = False
-    _append_log("booster-schedule", "定时刷量任务已停止")
+    _append_log(log_target, "定时刷量任务已停止")
 
 
 def _wait_once_done(log_target: str):
