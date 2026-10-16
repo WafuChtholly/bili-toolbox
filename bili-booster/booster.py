@@ -10,6 +10,7 @@ import hashlib
 import time as time_module
 from time import sleep
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from fake_useragent import UserAgent
@@ -22,11 +23,17 @@ from proxy_pool import get_total_proxies  # noqa: E402
 
 # ── 全局配置（与 webui 完全一致） ──
 timeout = 5
-probe_timeout = 3   # 代理存活探测超时（比业务请求短）：死代理更快失败，缩短筛选耗时
-thread_num = 100
+probe_connect_timeout = 2  # 探测 TCP 连接超时：死代理多在连接阶段失败，设短以快速淘汰
+probe_timeout = 3   # 代理存活探测读取超时（只等响应头、不读 body，慢代理也能快速判定）
+thread_num = 300    # 单任务筛选线程数上限（HTTP 探针无 TLS 握手开销，可安全提高；实际取 min(thread_num, 候选数)）
+click_thread_num = 60   # 单任务点击并发上限：替代「每个代理一个线程」，压低多任务并发时的线程峰值
 batch_size = 200
 request_delay = 0.01
 per_video_boost = 80
+# 探测结果缓存 TTL：存活结果短 TTL（同轮多稿件共享 / 后续轮次免探）；死亡结果长 TTL（死代理短期内不会复活）
+probe_cache_alive_ttl = 300
+probe_cache_dead_ttl = 1800
+probe_cache_max = 20000  # 缓存条目上限，超出先清过期项、仍超则整体丢弃，防止长跑无限增长
 
 # ── 全局 UserAgent 实例 ──
 _ua_instance = UserAgent()
@@ -131,18 +138,60 @@ def pbar(n, total):
 # =========================================================================
 
 def probe_once(proxy, bv):
-    """轻量探测：GET 请求验证代理可用，不触发播放量。使用 HTTP 避免 HTTPS 隧道的高 CPU 开销。"""
+    """轻量探测：GET 请求验证代理可用，不触发播放量。使用 HTTP 避免 HTTPS 隧道的高 CPU 开销。
+
+    stream=True 只等响应头到达即判定，不下载 body（慢代理的读体时间也省掉）；
+    (connect, read) 分别设超时，死代理在 TCP 连接阶段就被快速淘汰。
+    """
     try:
         resp = requests.get(
             'http://api.bilibili.com/x/web-interface/view',
             params={'bvid': bv},
             proxies={'http': f'http://{proxy}'},
             headers={'User-Agent': _ua_instance.random},
-            timeout=probe_timeout,
-            allow_redirects=False)
-        return resp.status_code in (200, 301, 302, 307, 308)
+            timeout=(probe_connect_timeout, probe_timeout),
+            allow_redirects=False,
+            stream=True)
+        try:
+            return resp.status_code in (200, 301, 302, 307, 308)
+        finally:
+            resp.close()
     except:
         return False
+
+
+def prune_probe_cache(cache, now_ts=None):
+    """探测缓存瘦身：先删过期项，仍超上限则整体清空（调用方共享缓存长跑时防止无限增长）。"""
+    if now_ts is None:
+        now_ts = time_module.time()
+    if len(cache) < probe_cache_max:
+        return
+    for proxy, (alive, ts) in list(cache.items()):
+        ttl = probe_cache_alive_ttl if alive else probe_cache_dead_ttl
+        if now_ts - ts > ttl:
+            cache.pop(proxy, None)
+    if len(cache) >= probe_cache_max:
+        cache.clear()
+
+
+def probe_cached(proxy, bv, cache, now_ts=None):
+    """带缓存的存活探测，返回 (alive, from_cache)。
+
+    cache 结构 {proxy: (alive, timestamp)}，与稿件无关（只验证代理能否连通 bilibili），
+    因此可跨稿件、跨轮次共享：存活 TTL 内直接采信（点击时若代理恰好已死，click 自身会失败，
+    无副作用）；死亡 TTL 内直接跳过，避免对同一批死代理反复打满超时。
+    """
+    if now_ts is None:
+        now_ts = time_module.time()
+    entry = cache.get(proxy)
+    if entry is not None:
+        alive, ts = entry
+        ttl = probe_cache_alive_ttl if alive else probe_cache_dead_ttl
+        if now_ts - ts <= ttl:
+            return alive, True
+    alive = probe_once(proxy, bv)
+    cache[proxy] = (alive, now_ts)
+    return alive, False
 
 
 def click_once(proxy, info, bv):
@@ -228,6 +277,7 @@ def click_mobile_once(proxy, info, bv):
 def click_batch(proxies, info, bv, stop_event=None):
     """批量并发点击：每个存活代理先打网页端、再打移动端（共用这一批存活代理）。
 
+    并发上限 click_thread_num：不再「每个代理一个线程」，避免批量大时线程数被顶到 batch_size。
     返回 (web_success, mobile_success)。
     """
     web_ok = [0]
@@ -246,56 +296,61 @@ def click_batch(proxies, info, bv, stop_event=None):
             with lock:
                 mobile_ok[0] += 1
 
-    threads = []
-    for proxy in proxies:
-        if stop_event and stop_event.is_set():
-            break
-        t = threading.Thread(target=worker, args=(proxy,))
-        t.start()
-        threads.append(t)
-    for t in threads:
-        t.join()
+    if not proxies:
+        return 0, 0
+    workers = max(1, min(int(click_thread_num), len(proxies)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(worker, proxies))
 
     return web_ok[0], mobile_ok[0]
 
 
-def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
-    """对单个视频执行一轮筛选+点击（webui 原始逻辑）。"""
+def boost_video_once(video, total_proxies, batch_num, log, stop_event=None, probe_cache=None):
+    """对单个视频执行一轮筛选+点击（webui 原始逻辑 + 探测缓存）。存活代理全部保留使用，不做早停。"""
     bv = video['bvid']
     info = video['info']
 
     proxies = list(total_proxies)
     random.shuffle(proxies)
+    total = len(proxies)
+
+    if probe_cache is None:
+        probe_cache = {}
+    prune_probe_cache(probe_cache)
 
     active_proxies = []
-    count = [0]
+    state_lock = threading.Lock()
+    processed = [0]
+    cache_reused = [0]
 
-    def filter_worker(proxies_slice):
-        total = len(proxies)
-        for proxy in proxies_slice:
-            if stop_event and stop_event.is_set():
-                return
-            if probe_once(proxy, bv):
+    def filter_worker(proxy):
+        if stop_event and stop_event.is_set():
+            return
+        alive, from_cache = probe_cached(proxy, bv, probe_cache)
+        with state_lock:
+            processed[0] += 1
+            n = processed[0]
+            if from_cache:
+                cache_reused[0] += 1
+            if alive:
                 active_proxies.append(proxy)
-            count[0] += 1
-            n = count[0]
+            valid = len(active_proxies)
             if n % 50 == 0 or n == total:
-                print(f'\r[PROGRESS] {pbar(n, total)} {100*n/total:.1f}% [valid: {len(active_proxies)}]   ', end='')
+                print(f'\r[PROGRESS] {pbar(n, total)} {100*n/total:.1f}% '
+                      f'[valid: {valid}, cached: {cache_reused[0]}]   ', end='')
 
-    log(f'  filtering {len(proxies)} proxies for {bv}...')
+    log(f'  filtering {total} proxies for {bv}...')
     start_filter = datetime.now()
-    thread_proxy_num = len(proxies) // thread_num
-    threads = []
-    for i in range(thread_num):
-        start = i * thread_proxy_num
-        end = start + thread_proxy_num if i < (thread_num - 1) else None
-        t = threading.Thread(target=filter_worker, args=(proxies[start:end],))
-        t.start()
-        threads.append(t)
-    for t in threads:
-        t.join()
+    if not proxies:
+        log('  no proxies available, skipping')
+        return 0
+    # ThreadPoolExecutor 复用线程；候选不足 thread_num 时按候选数收敛
+    filter_threads = max(1, min(thread_num, total))
+    with ThreadPoolExecutor(max_workers=filter_threads) as pool:
+        list(pool.map(filter_worker, proxies))
     filter_cost = int((datetime.now() - start_filter).total_seconds())
-    log(f'\n  filtered {len(active_proxies)} valid proxies using {time_fmt(filter_cost)}')
+    log(f'\n  filtered {len(active_proxies)} valid proxies using {time_fmt(filter_cost)} '
+        f'(cache reused: {cache_reused[0]})')
 
     if not active_proxies:
         log('  no valid proxies, skipping')
@@ -326,7 +381,7 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None):
 #  三、主入口（webui 原始循环 + log_fn / stop_event / logger_name）
 # =========================================================================
 
-def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, video_lock):
+def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache=None):
     """单个视频的 boost 任务，供多视频并发调用。"""
     if stop_event and stop_event.is_set():
         return
@@ -335,7 +390,7 @@ def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, vi
         return
 
     log(f'--- boosting {v["bvid"]} (current: {v["current"]}, target: {target}) ---')
-    hits = boost_video_once(v, total_proxies, round_num, log, stop_event=stop_event)
+    hits = boost_video_once(v, total_proxies, round_num, log, stop_event=stop_event, probe_cache=probe_cache)
     with video_lock:
         v['total_hits'] += hits
 
@@ -350,11 +405,18 @@ def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, vi
         log(f'  failed to check views: {e}')
 
 
-def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True):
+def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True, proxies=None, probe_cache=None):
     """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。
     max_rounds 为最大轮数，传 0 或 None 表示无上限。
-    refetch_proxies 为 True 时每轮重新获取代理，为 False 时只在启动时获取一次并复用。"""
+    refetch_proxies 为 True 时每轮重新获取代理，为 False 时只在启动时获取一次并复用。
+    proxies 为外部注入的代理快照（定时任务一轮内多个稿件共用同一份）：提供时直接复用，
+    不再自行拉取代理池（等价于 refetch_proxies=False）。
+    probe_cache 为外部注入的探测结果缓存（跨稿件/跨轮共享）：不传则本任务内部新建，
+    至少保证同一任务的多轮之间不重复探测。"""
     log = print
+
+    if probe_cache is None:
+        probe_cache = {}
 
     bv_list = [bv.strip() for bv in bv_input.split(',') if bv.strip()]
     if not bv_list:
@@ -392,7 +454,15 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
     no_growth_streak = 0
     total_proxies = []
 
-    if not refetch_proxies:
+    if proxies is not None:
+        # 共享快照：由调用方（如定时任务）一次性拉取后注入，多个稿件共用，避免各自重复拉取 6 源代理池
+        total_proxies = list(proxies)
+        if not total_proxies:
+            log('代理列表为空，无法启动')
+            return
+        refetch_proxies = False
+        log(f'使用共享代理快照（共 {len(total_proxies)} 个），所有轮次复用')
+    elif not refetch_proxies:
         try:
             total_proxies = get_total_proxies(log, stop_event=stop_event)
         except Exception as e:
@@ -445,7 +515,7 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
         for v in pending:
             if stop_event and stop_event.is_set():
                 break
-            t = threading.Thread(target=_boost_single_video, args=(v, total_proxies, round_num, target, log, stop_event, video_lock))
+            t = threading.Thread(target=_boost_single_video, args=(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache))
             t.start()
             threads.append(t)
         for t in threads:

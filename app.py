@@ -1035,7 +1035,7 @@ def booster_webhook_state():
     return jsonify({"enabled": booster_webhook_enabled})
 
 
-def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True):
+def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True, proxies: list = None, probe_cache: dict = None):
     # 等待并发闸门：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
     _booster_gate.acquire()
     try:
@@ -1131,7 +1131,7 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
         sys.stdout = capture
         try:
             bv_input = ",".join(bv_list)
-            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies)
+            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies, proxies=proxies, probe_cache=probe_cache)
             with booster_lock:
                 if booster_tasks[task_id]["status"] != "cancelled":
                     booster_tasks[task_id]["status"] = "completed"
@@ -1263,6 +1263,9 @@ def booster_my_videos():
         return jsonify({"success": False, "message": error_msg})
 
 
+FETCH_VIDEOS_TIMEOUT = 30  # 获取投稿列表的单次超时（秒）
+
+
 def _fetch_my_videos(cred: dict, mid=None) -> list:
     """通过 bilibili_api 获取投稿列表（自动处理 wbi/buvid），供 my-videos 接口和定时任务共用。
     mid 为空时取凭证本人；传入 mid 时取该 UID 的公开投稿（用于监听他人稿件）。"""
@@ -1285,8 +1288,12 @@ def _fetch_my_videos(cred: dict, mid=None) -> list:
         result = None
         for _attempt in range(3):
             try:
-                result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
+                # 加超时：网络卡住时不再无限等待，让「停止」能及时收敛
+                result = loop.run_until_complete(
+                    asyncio.wait_for(u.get_videos(ps=30, order=VideoOrder.PUBDATE), timeout=FETCH_VIDEOS_TIMEOUT))
                 break
+            except asyncio.TimeoutError:
+                raise TimeoutError(f"获取投稿列表超时（>{FETCH_VIDEOS_TIMEOUT}s）")
             except Exception as retry_err:
                 if _attempt < 2 and "第三方请求库" in str(retry_err):
                     time.sleep(1)
@@ -1331,6 +1338,10 @@ _booster_schedule = {
     "run_count": 0,
 }
 
+# 定时任务链路共享的代理探测缓存：跨稿件、跨轮次复用探测结果（TTL/上限由 booster 模块控制）。
+# 只存内存，重启即清空。
+_booster_probe_cache = {}
+
 
 def _load_booster_config():
     import yaml
@@ -1367,10 +1378,13 @@ def _booster_active_bvids() -> set:
     return active
 
 
-def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Event, log_target: str) -> int:
+def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Event, log_target: str,
+                         proxies: list = None, probe_cache: dict = None) -> int:
     """为给定稿件列表各创建一个 booster 子任务，返回创建数量。
 
     已在队列/运行中的 bvid，以及当前播放量已达目标的稿件直接跳过，避免每轮重复派发造成堆积。
+    proxies 为本轮共享的代理快照：同一批子任务共用一份，避免各自重复拉取代理池。
+    probe_cache 为共享的探测结果缓存：同一批子任务对同一批代理只探测一次。
     """
     created = 0
     active_bvids = _booster_active_bvids()
@@ -1396,7 +1410,7 @@ def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Ev
                 "title": v.get("title", ""),
                 "target": target,
                 "max_rounds": 5,
-                "refetch_proxies": True,
+                "refetch_proxies": proxies is None,
                 "stop_event": stop_event,
                 "log_target": log_target,  # 便于子任务日志回流
             }
@@ -1404,7 +1418,8 @@ def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Ev
         with log_lock:
             log_buffers[tid] = []
         _append_log(log_target, f"已创建任务 {tid} → {bvid}《{v.get('title','')}》（当前播放 {play}）")
-        t = threading.Thread(target=_run_booster_task, args=(tid, [bvid], target, stop_event, 5, True), daemon=True)
+        t = threading.Thread(target=_run_booster_task,
+                             args=(tid, [bvid], target, stop_event, 5, proxies is None, proxies, probe_cache), daemon=True)
         t.start()
         created += 1
     return created
@@ -1443,6 +1458,28 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
         return
 
     total_created = 0
+
+    # 本轮共享代理快照：首次真正需要派发时才拉取一次，本轮所有子任务复用，避免各自重复拉取 6 源代理池
+    _shared_proxies = None
+    _proxies_fetched = False
+
+    def _get_shared_proxies():
+        nonlocal _shared_proxies, _proxies_fetched
+        if _proxies_fetched:
+            return _shared_proxies
+        _proxies_fetched = True
+        try:
+            _t0 = time.time()
+            _proxies = booster.get_total_proxies(lambda m: _append_log(log_target, f"[PROXY] {m}"), stop_event=stop_event)
+            if _proxies:
+                _shared_proxies = _proxies
+                _append_log(log_target, f"[PROXY] 本轮共享代理池已就绪：{len(_proxies)} 个（耗时 {time.time()-_t0:.1f}s），本轮所有子任务复用")
+            else:
+                _append_log(log_target, "[PROXY] 本轮未获取到代理，回退为各子任务自行拉取")
+        except Exception as e:
+            _append_log(log_target, f"[WARN] 获取共享代理池失败，回退为各子任务自行拉取: {e}")
+        return _shared_proxies
+
     for uid, acc_cred, meta in accounts:
         if stop_event.is_set():
             _append_log(log_target, "[SYSTEM] 正在停止...")
@@ -1466,7 +1503,8 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
 
         _append_log(log_target, f"账号【{name}】共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
                     ", ".join(v["bvid"] for v in low))
-        total_created += _booster_spawn_tasks(low, target, stop_event, log_target)
+        total_created += _booster_spawn_tasks(low, target, stop_event, log_target,
+                                              proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache)
 
     # 监控 UID：统一用主账号凭证抓取其公开投稿
     if watch_uids and not stop_event.is_set():
@@ -1495,7 +1533,8 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
 
                 _append_log(log_target, f"UID {uid} 共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
                             ", ".join(v["bvid"] for v in low))
-                total_created += _booster_spawn_tasks(low, target, stop_event, log_target)
+                total_created += _booster_spawn_tasks(low, target, stop_event, log_target,
+                                                      proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache)
 
     # 「once」模式下不进入循环：等所有派生的 booster 子任务都结束后才标记结束
     if _booster_schedule["running"] == "once":
@@ -1506,7 +1545,8 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
 
 
 def _booster_schedule_loop():
-    """定时任务主循环"""
+    """定时任务主循环：固定节奏——每轮以本轮开始时刻起算 interval，执行耗时计入周期，
+    不再「执行耗时 + interval」叠加，实际间隔与配置一致。"""
     while not _booster_schedule["stop_event"].is_set():
         cfg = _load_booster_config().get("schedule", {})
         try:
@@ -1514,18 +1554,27 @@ def _booster_schedule_loop():
         except (TypeError, ValueError):
             interval = 60 * 60
 
+        round_start = time.time()
         _append_log("booster-schedule", f"=== 定时刷量执行 (第{_booster_schedule['run_count']+1}次) ===")
         _booster_schedule_once(_booster_schedule["stop_event"])
         _booster_schedule["run_count"] += 1
         _booster_schedule["last_run"] = time.time()
-        _booster_schedule["next_run"] = time.time() + interval
+        # 固定节奏：下一次执行 = 本轮开始时刻 + interval（本轮执行耗时已包含在周期内）
+        next_run = round_start + interval
+        _booster_schedule["next_run"] = next_run
 
         if _booster_schedule["stop_event"].is_set():
             break
-        _append_log("booster-schedule", f"=== 等待 {interval//60} 分钟后执行下一次 ===")
+
+        cost = time.time() - round_start
+        wait = max(0, int(round(next_run - time.time())))
+        if wait > 0:
+            _append_log("booster-schedule", f"=== 本轮耗时 {cost:.0f}s，等待 {wait} 秒后执行下一次 ===")
+        else:
+            _append_log("booster-schedule", f"=== 本轮耗时 {cost:.0f}s，已达/超过间隔 {interval} 秒，立即执行下一次 ===")
 
         # 分段等待，以便能快速响应停止
-        for _ in range(interval):
+        for _ in range(wait):
             if _booster_schedule["stop_event"].is_set():
                 break
             time.sleep(1)

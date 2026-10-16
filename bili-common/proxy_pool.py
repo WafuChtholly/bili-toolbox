@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from time import sleep
 from datetime import date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from requests.exceptions import RequestException
@@ -165,8 +166,9 @@ def fetch_from_zdopen(log):
 # =========================================================================
 
 def get_total_proxies(log, stop_event=None):
-    """依次从各代理源抓取并去重，任一源失败不影响其它源。
+    """并发从各代理源抓取并去重，任一源失败不影响其它源。
 
+    6 个源同时抓（原来是串行），总耗时从「各源之和」压缩到「最慢一个源」。
     所有源都拿不到时抛 RuntimeError（保持与原 booster 行为一致）。
     """
     fetchers = [
@@ -177,20 +179,33 @@ def get_total_proxies(log, stop_event=None):
         ('monosans', fetch_from_monosans),
         ('geonode', fetch_from_geonode),
     ]
-    all_proxies = set()
-    for name, fetcher in fetchers:
-        if stop_event and stop_event.is_set():
-            return []
+    if stop_event and stop_event.is_set():
+        return []
+
+    def _run(item):
+        name, fetcher = item
         try:
-            proxies = fetcher(log)
+            return name, fetcher(log)
         except RequestException as err:
-            log(f'{name} source failed: {err}')
-            continue
+            return name, RuntimeError(f'{name} source failed: {err}')
         except Exception as err:
-            log(f'{name} source error: {err}')
-            continue
-        for proxy in proxies:
-            all_proxies.add(proxy)
+            return name, RuntimeError(f'{name} source error: {err}')
+
+    all_proxies = set()
+    with ThreadPoolExecutor(max_workers=len(fetchers)) as pool:
+        futures = {pool.submit(_run, item): item[0] for item in fetchers}
+        for fut in as_completed(futures):
+            name, result = fut.result()
+            # 等待期间收到停止：结果只丢弃不并入（已发出的源请求无法中断，跑完即释放）
+            if stop_event and stop_event.is_set():
+                continue
+            if isinstance(result, Exception):
+                log(str(result))
+                continue
+            for proxy in result:
+                all_proxies.add(proxy)
+    if stop_event and stop_event.is_set():
+        return []
     if all_proxies:
         log(f'collected {len(all_proxies)} proxies from available sources')
         return list(all_proxies)
