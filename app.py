@@ -1263,17 +1263,121 @@ def booster_my_videos():
         return jsonify({"success": False, "message": error_msg})
 
 
-FETCH_VIDEOS_TIMEOUT = 30  # 获取投稿列表的单次超时（秒）
+FETCH_VIDEOS_TIMEOUT = 30          # 获取投稿列表的单次超时（秒）
+BOOSTER_SCAN_LIMIT_DEFAULT = 30    # 定时扫描的默认深度（每个账号检查最近 N 个投稿）
+BOOSTER_SCAN_LIMIT_WARN = 30       # 超过该深度需多次分页请求，提示风控风险
+BOOSTER_MAX_SCAN_LIMIT = 3000      # 全量扫描的硬上限，避免无限翻页
+FETCH_MEMBER_PAGE_SIZE = 50        # 创作中心接口单页条数
+FETCH_PAGE_DELAY = (0.4, 0.9)      # 分页之间的随机间隔，降低触发风控的概率
 
 
-def _fetch_my_videos(cred: dict, mid=None) -> list:
-    """通过 bilibili_api 获取投稿列表（自动处理 wbi/buvid），供 my-videos 接口和定时任务共用。
-    mid 为空时取凭证本人；传入 mid 时取该 UID 的公开投稿（用于监听他人稿件）。"""
+def _fmt_duration(sec) -> str:
+    """秒 → 'MM:SS'（超过 1 小时用 'H:MM:SS'）。"""
+    try:
+        sec = int(sec or 0)
+    except (TypeError, ValueError):
+        return ""
+    if sec <= 0:
+        return ""
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def _scan_limit_label(limit) -> str:
+    """扫描深度的可读文案。"""
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = BOOSTER_SCAN_LIMIT_DEFAULT
+    return f"全量（最多 {BOOSTER_MAX_SCAN_LIMIT} 条）" if limit <= 0 else f"最近 {limit} 条"
+
+
+def _fetch_member_videos(cred: dict, limit: int = BOOSTER_SCAN_LIMIT_DEFAULT) -> list:
+    """通过创作中心「稿件管理」接口获取自己的投稿列表（最全）。
+
+    空间接口 x/space/wbi/arc/search 会漏掉部分稿件（实测同一账号 1472 vs 1542），
+    创作中心接口不会漏。limit<=0 表示全量（硬上限 BOOSTER_MAX_SCAN_LIMIT）。"""
+    import random
+    import httpx
+
+    sessdata = cred.get("sessdata", "")
+    uid = str(cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or "")
+    if not sessdata or not uid:
+        raise ValueError("缺少 SESSDATA 或 UID")
+
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"),
+        "Referer": "https://member.bilibili.com/",
+        "Origin": "https://member.bilibili.com",
+    }
+    cookies = {"SESSDATA": sessdata, "bili_jct": cred.get("bili_jct", ""), "DedeUserID": uid}
+
+    limit = int(limit)
+    cap = BOOSTER_MAX_SCAN_LIMIT if limit <= 0 else limit
+    max_pages = (cap + FETCH_MEMBER_PAGE_SIZE - 1) // FETCH_MEMBER_PAGE_SIZE
+
+    videos = []
+    pn = 1
+    with httpx.Client(timeout=FETCH_VIDEOS_TIMEOUT, headers=headers, cookies=cookies) as client:
+        while len(videos) < cap and pn <= max_pages:
+            if pn > 1:
+                time.sleep(random.uniform(*FETCH_PAGE_DELAY))
+            resp = client.get("https://member.bilibili.com/x/web/archives",
+                              params={"status": "pubed", "pn": pn, "ps": FETCH_MEMBER_PAGE_SIZE, "coop": 1})
+            data = resp.json()
+            code = data.get("code")
+            if code != 0:
+                # -352/-412 等为风控/限流，直接抛错交由调用方回退空间接口
+                raise RuntimeError(f"创作中心接口返回异常 code={code} msg={data.get('message') or ''}")
+            items = (data.get("data") or {}).get("arc_audits") or []
+            for item in items:
+                arc = item.get("Archive") or item
+                if int(arc.get("state", 0) or 0) != 0:  # 只保留已通过（公开）稿件
+                    continue
+                stat = item.get("stat") or {}
+                videos.append({
+                    "bvid": arc.get("bvid", ""),
+                    "title": arc.get("title", ""),
+                    "pic": arc.get("cover", ""),
+                    "play": int(stat.get("view", 0) or 0),
+                    "created": int(arc.get("ptime", 0) or 0),
+                    "length": _fmt_duration(arc.get("duration")),
+                })
+                if len(videos) >= cap:
+                    break
+            if len(items) < FETCH_MEMBER_PAGE_SIZE:  # 已到最后一页
+                break
+            pn += 1
+    return videos
+
+
+def _fetch_my_videos(cred: dict, mid=None, limit=None) -> list:
+    """获取投稿列表，供 my-videos 接口和定时任务共用。
+
+    - 自己（mid 为空或等于凭证本人）：走创作中心接口（最全，不漏稿）；失败时回退空间接口。
+    - 他人 UID：只能走空间接口（公开数据，可能漏稿）。
+    limit 为扫描深度（None 时读配置，0=全量）。"""
     from bilibili_api import Credential
     from bilibili_api.user import User, VideoOrder
 
     own_mid = str(cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or "")
     target_mid = str(mid or "").strip() or own_mid
+
+    if limit is None:
+        try:
+            limit = int(_load_booster_config().get("schedule", {}).get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT))
+        except (TypeError, ValueError):
+            limit = BOOSTER_SCAN_LIMIT_DEFAULT
+    limit = int(limit)
+
+    if own_mid and target_mid == own_mid:
+        try:
+            return _fetch_member_videos(cred, limit)
+        except Exception as e:
+            print(f"[WARN] 创作中心接口获取投稿失败，回退空间接口（可能漏稿）: {e}")
+
     # Credential 会自动处理 SESSDATA 编码和 buvid 获取
     credential = Credential(
         sessdata=cred.get("sessdata", ""),
@@ -1282,6 +1386,8 @@ def _fetch_my_videos(cred: dict, mid=None) -> list:
         ac_time_value=cred.get("ac_time_value", ""),
     )
     u = User(int(target_mid), credential=credential)
+    # 空间接口单页上限 50，且不支持翻页（会漏稿，仅用于他人 UID 或创作中心接口失败时兜底）
+    ps = 50 if limit <= 0 else max(1, min(limit, 50))
 
     loop = asyncio.new_event_loop()
     try:
@@ -1290,7 +1396,7 @@ def _fetch_my_videos(cred: dict, mid=None) -> list:
             try:
                 # 加超时：网络卡住时不再无限等待，让「停止」能及时收敛
                 result = loop.run_until_complete(
-                    asyncio.wait_for(u.get_videos(ps=30, order=VideoOrder.PUBDATE), timeout=FETCH_VIDEOS_TIMEOUT))
+                    asyncio.wait_for(u.get_videos(ps=ps, order=VideoOrder.PUBDATE), timeout=FETCH_VIDEOS_TIMEOUT))
                 break
             except asyncio.TimeoutError:
                 raise TimeoutError(f"获取投稿列表超时（>{FETCH_VIDEOS_TIMEOUT}s）")
@@ -1432,8 +1538,13 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
     try:
         threshold = int(cfg.get("play_threshold", 200))
         target = int(cfg.get("target_play", 200))
+        scan_limit = int(cfg.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT))
     except (TypeError, ValueError):
-        threshold, target = 200, 200
+        threshold, target, scan_limit = 200, 200, BOOSTER_SCAN_LIMIT_DEFAULT
+    scan_desc = _scan_limit_label(scan_limit)
+    if scan_limit <= 0 or scan_limit > BOOSTER_SCAN_LIMIT_WARN:
+        _append_log(log_target, f"[WARN] 扫描深度为{scan_desc}，超过 {BOOSTER_SCAN_LIMIT_WARN} 条会多次分页请求，"
+                                "存在触发 B 站风控的风险，建议按需调低")
 
     account_uids = [str(u).strip() for u in (cfg.get("account_uids") or []) if str(u or "").strip()]
     watch_uids = [str(u).strip() for u in (cfg.get("uids") or []) if str(u or "").strip()]
@@ -1485,9 +1596,9 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
             _append_log(log_target, "[SYSTEM] 正在停止...")
             break
         name = meta.get("name") or (f"UID {uid}" if uid else "主账号")
-        _append_log(log_target, f"获取账号【{name}】的投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
+        _append_log(log_target, f"获取账号【{name}】的投稿列表...（扫描{scan_desc}，筛选条件：播放量 < {threshold}，目标播放数：{target}）")
         try:
-            videos = _fetch_my_videos(acc_cred)
+            videos = _fetch_my_videos(acc_cred, limit=scan_limit)
         except Exception as e:
             _append_log(log_target, f"[ERROR] 账号【{name}】获取投稿列表失败: {e}")
             continue
@@ -1515,9 +1626,10 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
                 if stop_event.is_set():
                     _append_log(log_target, "[SYSTEM] 正在停止...")
                     break
-                _append_log(log_target, f"获取监控 UID {uid} 的投稿列表...（筛选条件：播放量 < {threshold}，目标播放数：{target}）")
+                _append_log(log_target, f"获取监控 UID {uid} 的投稿列表...（扫描{scan_desc}，他人稿件走空间接口最多 50 条，"
+                                        f"筛选条件：播放量 < {threshold}，目标播放数：{target}）")
                 try:
-                    videos = _fetch_my_videos(main_cred, mid=uid)
+                    videos = _fetch_my_videos(main_cred, mid=uid, limit=scan_limit)
                 except Exception as e:
                     _append_log(log_target, f"[ERROR] UID {uid} 获取投稿列表失败: {e}")
                     continue
@@ -1660,6 +1772,7 @@ def booster_schedule_config_get():
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
         "max_concurrent_tasks": cfg.get("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS),
+        "scan_limit": cfg.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT),
         "account_uids": cfg.get("account_uids") or [],
         "uids": cfg.get("uids") or [],
     })
@@ -1673,6 +1786,7 @@ def booster_schedule_config_save():
         threshold = int(data.get("play_threshold", 200))
         target = int(data.get("target_play", 200))
         concurrent = int(data.get("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS))
+        scan_limit = int(data.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT))
     except (TypeError, ValueError):
         return jsonify({"success": False, "message": "配置项必须为整数"}), 400
     account_uids = [str(u).strip() for u in (data.get("account_uids") or []) if str(u or "").strip()]
@@ -1683,6 +1797,10 @@ def booster_schedule_config_save():
         return jsonify({"success": False, "message": "同时运行稿件数必须为正整数"}), 400
     if concurrent > MAX_CONCURRENT_BOOST_TASKS_CAP:
         return jsonify({"success": False, "message": f"同时运行稿件数上限为 {MAX_CONCURRENT_BOOST_TASKS_CAP}"}), 400
+    if scan_limit < 0:
+        return jsonify({"success": False, "message": "扫描深度必须为 0（全量）或正整数"}), 400
+    if scan_limit > BOOSTER_MAX_SCAN_LIMIT:
+        return jsonify({"success": False, "message": f"扫描深度上限为 {BOOSTER_MAX_SCAN_LIMIT}，如需全量请填 0"}), 400
     if not account_uids and not uids:
         return jsonify({"success": False, "message": "请至少配置一个刷量账号或监控 UID"}), 400
     cfg = _load_booster_config()
@@ -1691,12 +1809,17 @@ def booster_schedule_config_save():
         "play_threshold": threshold,
         "target_play": target,
         "max_concurrent_tasks": concurrent,
+        "scan_limit": scan_limit,
         "account_uids": account_uids,
         "uids": uids,
     }
     _save_booster_config(cfg)
     _booster_gate.set_limit(concurrent)  # 立即生效，无需重启；正在运行的任务不受影响，仅影响后续调度
-    return jsonify({"success": True})
+    resp = {"success": True}
+    if scan_limit <= 0 or scan_limit > BOOSTER_SCAN_LIMIT_WARN:
+        resp["warning"] = (f"扫描深度为{_scan_limit_label(scan_limit)}，超过 {BOOSTER_SCAN_LIMIT_WARN} 条会多次分页请求，"
+                           "存在触发 B 站风控的风险")
+    return jsonify(resp)
 
 
 @app.route("/api/booster/schedule/start", methods=["POST"])
@@ -1780,6 +1903,7 @@ def booster_schedule_status():
         "play_threshold": cfg.get("play_threshold", 200),
         "target_play": cfg.get("target_play", 200),
         "max_concurrent_tasks": _booster_gate.get_limit(),
+        "scan_limit": cfg.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT),
         "account_uids": cfg.get("account_uids") or [],
         "uids": cfg.get("uids") or [],
         "last_run": _booster_schedule["last_run"],
@@ -1981,34 +2105,7 @@ def player_my_videos():
         return jsonify({"success": False, "message": "请先在「自动互动」页面登录主账号"})
 
     try:
-        from bilibili_api import Credential
-        from bilibili_api.user import User, VideoOrder
-
-        credential = Credential(
-            sessdata=sessdata,
-            bili_jct=cred.get("bili_jct", ""),
-            dedeuserid=str(mid),
-            ac_time_value=cred.get("ac_time_value", ""),
-        )
-        u = User(int(mid), credential=credential)
-
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(u.get_videos(ps=30, order=VideoOrder.PUBDATE))
-        finally:
-            loop.close()
-
-        vlist = result.get("list", {}).get("vlist", [])
-        videos = []
-        for v in vlist:
-            videos.append({
-                "bvid": v.get("bvid", ""),
-                "title": v.get("title", ""),
-                "pic": v.get("pic", ""),
-                "play": v.get("play", 0),
-                "created": v.get("created", 0),
-                "length": v.get("length", ""),
-            })
+        videos = _fetch_my_videos(cred)
         return jsonify({"success": True, "videos": videos, "mid": mid})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
