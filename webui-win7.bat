@@ -48,7 +48,6 @@ if errorlevel 1 (
 echo ========================================
 echo   Bilibili Toolbox (Win7 版)
 echo   http://localhost:5678
-echo   注: 浏览器模拟播放(Playwright)在 Win7 不可用
 echo ========================================
 echo.
 %PY% app.py

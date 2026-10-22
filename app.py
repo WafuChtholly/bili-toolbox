@@ -1,6 +1,6 @@
 """
 B站工具箱 — 统一 WebUI
-整合五大场景：自动互动 / 播放量提升(proxy) / 播放量提升(Playwright) / 直播间红包助手 / 话题助手
+整合五大场景：自动互动 / 播放量提升(proxy) / 车机长线 / 直播间红包助手 / 话题助手
 """
 # 兼容 Python 3.8 (Win7)：list[str] / X | None 等注解语法延迟求值
 from __future__ import annotations
@@ -146,21 +146,10 @@ _auto_run_lock = threading.Lock()  # 防止 run_once 并发执行
 AUTO_CONFIG_DIR = ROOT / "data"
 AUTO_CONFIG_FILE = AUTO_CONFIG_DIR / "auto_config.yaml"
 
-# player / redpocket 配置统一放到 data 目录，避免 cookie 泄露在源码目录
+# redpocket 配置统一放到 data 目录，避免 cookie 泄露在源码目录
 CONFIG_DIR = ROOT / "data"
-PLAYER_CONFIG = CONFIG_DIR / "player_config.yaml"
-PLAYER_OLD_CONFIG = ROOT / "bili-player" / "config.yaml"
 REDPOCKET_CONFIG = CONFIG_DIR / "redpocket_config.yaml"
 REDPOCKET_OLD_CONFIG = ROOT / "bili-redpocket" / "config.yaml"
-
-
-def _ensure_player_config():
-    """迁移 player 旧配置到 data 目录"""
-    if not PLAYER_CONFIG.exists() and PLAYER_OLD_CONFIG.exists():
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        import shutil
-        shutil.move(str(PLAYER_OLD_CONFIG), str(PLAYER_CONFIG))
-        print(f"[PLAYER] 已迁移旧配置到: {PLAYER_CONFIG}")
 
 
 def _ensure_redpocket_config():
@@ -245,53 +234,37 @@ def _run_auto_task(task_id: str, stop_event: threading.Event):
 
 
 def _try_play_bvids(task_id: str, stop_event: threading.Event, bvids: list[str]):
-    """用 Playwright 逐个播放给定的 BV 列表。"""
+    """用匿名车机通道逐个播放给定的 BV 列表（每次一轮）。"""
     if not bvids:
         _append_log(task_id, "[SYSTEM] 无 BV 可播放，跳过")
         return
-    player_dir = str(ROOT / "bili-player")
-    if player_dir not in sys.path:
-        sys.path.insert(0, player_dir)
-    from player import play_video
 
-    # 从 auto 凭证构建 Playwright cookie（优先使用 auto 模块的登录凭证）
-    auto_cookies = None
-    cred_data = _read_auto_cred()
-    if cred_data.get("sessdata"):
-        auto_cookies = [
-            {"name": "SESSDATA", "value": cred_data["sessdata"], "domain": ".bilibili.com", "path": "/"},
-            {"name": "bili_jct", "value": cred_data.get("bili_jct", ""), "domain": ".bilibili.com", "path": "/"},
-        ]
-        buvid3 = cred_data.get("buvid3", "")
-        login_uid = str(cred_data.get("dedeuserid", "") or cred_data.get("login_uid", ""))
-        if buvid3:
-            auto_cookies.append({"name": "buvid3", "value": buvid3, "domain": ".bilibili.com", "path": "/"})
-        if login_uid:
-            auto_cookies.append({"name": "DedeUserID", "value": login_uid, "domain": ".bilibili.com", "path": "/"})
-        _append_log(task_id, "[SYSTEM] 播放使用 auto 模块凭证")
-
-    # play_video 现在是异步函数，需要使用 asyncio.run()
-    import asyncio
-
-    async def _play_all():
-        for i, bvid in enumerate(bvids):
-            if stop_event.is_set():
-                _append_log(task_id, "[SYSTEM] 收到停止信号，停止播放")
-                break
-            _append_log(task_id, f"[SYSTEM] 播放 ({i+1}/{len(bvids)}): {bvid}")
+    for i, bvid in enumerate(bvids):
+        if stop_event.is_set():
+            _append_log(task_id, "[SYSTEM] 收到停止信号，停止播放")
+            break
+        _append_log(task_id, f"[SYSTEM] 车机播放 ({i+1}/{len(bvids)}): {bvid}")
+        try:
+            info = car_channel.fetch_video_info(bvid)
+            before = int(info["stat"]["view"])
+            r = car_channel.run_session(info, stop_event=stop_event)
+            after = None
             try:
-                await play_video(bvid, stop_event=stop_event, log_fn=lambda msg: _append_log(task_id, msg), cookies=auto_cookies)
-            except Exception as e:
-                _append_log(task_id, f"[SYSTEM] 播放 {bvid} 失败: {e}")
-            # 视频间短暂等待
-            if not stop_event.is_set() and i < len(bvids) - 1:
-                import random as _r
-                wait = _r.randint(3, 8)
-                _append_log(task_id, f"[SYSTEM] 等待 {wait} 秒后播放下一个...")
-                await asyncio.sleep(wait)
+                after = car_channel.fetch_views(bvid)
+            except Exception:
+                pass
+            delta = f'{after - before:+d}' if after is not None else '?'
+            _append_log(task_id, f"[CAR] {bvid} click={r['click'][0]}/{r['click'][1]} "
+                                  f"hb={'/'.join(str(x) for x in r['hb'])} views={delta}")
+        except Exception as e:
+            _append_log(task_id, f"[SYSTEM] 播放 {bvid} 失败: {type(e).__name__}: {e}")
+        if not stop_event.is_set() and i < len(bvids) - 1:
+            wait = 3
+            _append_log(task_id, f"[SYSTEM] 等待 {wait} 秒后播放下一个...")
+            if stop_event.wait(wait):
+                break
 
-    asyncio.run(_play_all())
-    _append_log(task_id, f"[SYSTEM] 播放完成")
+    _append_log(task_id, "[SYSTEM] 播放完成")
 
 
 def _run_auto_once(stop_event: threading.Event, log_target: str = None) -> tuple:
@@ -1035,7 +1008,7 @@ def booster_webhook_state():
     return jsonify({"enabled": booster_webhook_enabled})
 
 
-def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True, proxies: list = None, probe_cache: dict = None):
+def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True, proxies: list = None, probe_cache: dict = None, car_rounds: int = 0):
     # 等待并发闸门：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
     _booster_gate.acquire()
     try:
@@ -1150,7 +1123,9 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
             if log_target and log_target != task_id:
                 target_buf = log_buffers.get(log_target)
                 if target_buf is not None:
-                    if final_status == "completed":
+                    if final_status == "completed" and car_rounds > 0:
+                        target_buf.append(f"  └ [{bv}] ⚡ 代理池完成，转车机长线 {car_rounds} 轮\n")
+                    elif final_status == "completed":
                         target_buf.append(f"  └ [{bv}] ✅ 任务完成\n")
                     elif final_status == "cancelled":
                         target_buf.append(f"  └ [{bv}] ⏹ 已停止\n")
@@ -1160,6 +1135,57 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
         with booster_lock:
             booster_tasks[task_id]["end"] = time.time()
         _booster_gate.release()
+
+    # 代理池跑完后接力车机长线：放在闸门外，长线不会占住并发名额阻塞其他稿件
+    with booster_lock:
+        st = booster_tasks.get(task_id) or {}
+        relay = car_rounds > 0 and st.get("status") == "completed" and st.get("bv")
+        relay_bv, relay_log_target = st.get("bv", ""), st.get("log_target")
+    if relay:
+        _booster_car_relay(task_id, relay_bv, car_rounds, stop_event, relay_log_target)
+
+
+def _booster_car_relay(task_id: str, bv: str, rounds: int, stop_event, log_target):
+    """booster 结束后用车机匿名通道接力跑满 rounds 轮（或 stop_event 置位）。"""
+    stop_event = stop_event or threading.Event()
+
+    def _relay_log(line: str):
+        _append_log(task_id, line)
+        if log_target and log_target != task_id:
+            with log_lock:
+                buf = log_buffers.get(log_target)
+                if buf is not None:
+                    buf.append(f"  └ [{bv}] {line}\n")
+
+    with booster_lock:
+        st = booster_tasks.get(task_id)
+        if not st or st.get("status") == "cancelled":
+            return
+        st["status"] = "car"
+    _relay_log(f"[CAR] 代理池已完成，进入车机长线（{rounds} 轮）")
+    try:
+        car_channel.run([bv], stop_event=stop_event, on_cycle=_car_on_cycle,
+                        log=_relay_log, max_rounds=rounds)
+    except Exception as e:
+        _relay_log(f"[CAR] 车机长线出错：{type(e).__name__}: {e}")
+        with booster_lock:
+            if booster_tasks[task_id]["status"] not in ("cancelled", "stopping"):
+                booster_tasks[task_id]["status"] = "error"
+    finally:
+        with booster_lock:
+            st = booster_tasks[task_id]
+            if st["status"] in ("cancelled", "stopping"):
+                st["status"] = "cancelled"
+            elif st["status"] != "error":
+                st["status"] = "completed"
+            st["end"] = time.time()
+            final_status = st["status"]
+        if log_target and log_target != task_id:
+            with log_lock:
+                buf = log_buffers.get(log_target)
+                if buf is not None:
+                    buf.append(f"  └ [{bv}] " +
+                               ("✅ 车机长线跑完\n" if final_status == "completed" else "⏹ 车机长线已停止\n"))
 
 
 @app.route("/api/booster/run", methods=["POST"])
@@ -1230,6 +1256,7 @@ def booster_stop_all():
             stopped += 1
     if _booster_schedule["running"]:
         _booster_schedule["stop_event"].set()
+    _car_stop()
     print(f"[BOOSTER] 已请求停止全部任务（{stopped} 个）")
     return jsonify({"success": True, "stopped": stopped})
 
@@ -1241,6 +1268,185 @@ def booster_status(task_id):
         return jsonify({"error": "not found"}), 404
     safe = {k: v for k, v in st.items() if k != "stop_event"}
     return jsonify({**safe, "output": _get_log(task_id)})
+
+
+# ── 车机匿名长线通道（car_channel） ──
+# 实测：额度按 aid 立，窗口 65~85s，单稿件 42~43/h；长线吞吐 = 稿件数 × 42/h。
+_car_spec = _ilu.spec_from_file_location("car_channel", str(ROOT / "bili-booster" / "car_channel.py"))
+car_channel = _ilu.module_from_spec(_car_spec)
+_car_spec.loader.exec_module(car_channel)
+
+CAR_STATS_FILE = str(ROOT / "data" / "car_stats.json")
+_car_lock = threading.RLock()
+_car_task = {
+    "status": "idle",        # idle / running / stopping / stopped / completed / error
+    "start": None,
+    "end": None,
+    "bv": [],
+    "play_s": car_channel.DEFAULT_PLAY_S,
+    "interval": car_channel.DEFAULT_INTERVAL,
+    "stop_event": None,
+    "thread": None,
+}
+_car_stats = None            # 今日累计，首次访问时从 data/car_stats.json 恢复
+
+
+def _car_today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _car_fresh_stats() -> dict:
+    return {"date": _car_today(), "rounds": 0, "accepted": 0, "growth": 0, "per_bv": {}}
+
+
+def _car_load_stats() -> dict:
+    try:
+        with open(CAR_STATS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict) and data.get("date") == _car_today():
+            stats = _car_fresh_stats()
+            for k in ("rounds", "accepted", "growth"):
+                stats[k] = int(data.get(k) or 0)
+            stats["per_bv"] = data.get("per_bv") or {}
+            return stats
+    except (OSError, ValueError):
+        pass
+    return _car_fresh_stats()
+
+
+def _car_save_stats(stats: dict):
+    try:
+        os.makedirs(os.path.dirname(CAR_STATS_FILE), exist_ok=True)
+        with open(CAR_STATS_FILE, "w", encoding="utf-8") as f:
+            json.dump(stats, f, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _car_stats_current() -> dict:
+    """取今日累计（跨天自动清零）。调用方需持有 _car_lock 或接受快照语义。"""
+    global _car_stats
+    with _car_lock:
+        if _car_stats is None:
+            _car_stats = _car_load_stats()
+        if _car_stats.get("date") != _car_today():
+            _car_stats = _car_fresh_stats()
+        return _car_stats
+
+
+def _car_log(line: str):
+    _append_log("car", line if line.endswith("\n") else line + "\n")
+
+
+def _car_on_cycle(ev: dict):
+    """每完成一轮会话回调：累加今日统计并落盘；每 20 轮打一条累计日志。"""
+    global _car_stats
+    summary = None
+    with _car_lock:
+        stats = _car_stats_current()
+        per = stats["per_bv"].setdefault(
+            ev["bv"], {"views": 0, "growth": 0, "rounds": 0, "accepted": 0})
+        stats["rounds"] += 1
+        per["rounds"] += 1
+        if ev.get("ok"):
+            stats["accepted"] += 1
+            per["accepted"] += 1
+        if ev.get("views") is not None:
+            per["views"] = ev["views"]
+        if ev.get("delta") is not None:
+            stats["growth"] += ev["delta"]
+            per["growth"] += ev["delta"]
+        if stats["rounds"] % 20 == 0:
+            summary = (f'[CAR] 今日累计：{stats["rounds"]} 轮 / 有效 {stats["accepted"]} / '
+                       f'播放增长 {stats["growth"]:+d}')
+        _car_save_stats(stats)
+    if summary:
+        _car_log(summary)
+
+
+def _car_stop():
+    """置位车机长线的停止事件（供 stop-all 复用）。"""
+    with _car_lock:
+        se = _car_task.get("stop_event")
+        if se:
+            se.set()
+        if _car_task["status"] in ("running", "stopping"):
+            _car_task["status"] = "stopping"
+
+
+def _run_car_task(bv_list, play_s, interval, stop_event):
+    try:
+        car_channel.run(bv_list, play_s=play_s, interval=interval, stop_event=stop_event,
+                        on_cycle=_car_on_cycle, log=_car_log)
+        with _car_lock:
+            _car_task["status"] = "stopped" if stop_event.is_set() else "completed"
+    except Exception as e:
+        _car_log(f'[CAR] 任务出错：{type(e).__name__}: {e}')
+        with _car_lock:
+            _car_task["status"] = "error"
+    finally:
+        with _car_lock:
+            _car_task["end"] = time.time()
+
+
+@app.route("/api/booster/car/start", methods=["POST"])
+def booster_car_start():
+    data = request.json or {}
+    raw = str(data.get("bv", "")).replace("，", ",")
+    bv_list = [b.strip() for b in raw.split(",") if b.strip()]
+    if not bv_list:
+        return jsonify({"error": "缺少 BV号"}), 400
+    try:
+        play_s = int(data.get("play_s") or car_channel.DEFAULT_PLAY_S)
+        interval = int(data.get("interval") or car_channel.DEFAULT_INTERVAL)
+    except (TypeError, ValueError):
+        return jsonify({"error": "播放秒数 / 节拍必须是整数"}), 400
+    if not 1 <= play_s <= 300:
+        return jsonify({"error": "单会话播放秒数需在 1~300 之间"}), 400
+    interval = max(car_channel.MIN_INTERVAL, interval)
+
+    with _car_lock:
+        if _car_task["status"] in ("running", "stopping"):
+            return jsonify({"error": "车机长线已在运行，请先停止"}), 400
+        stop_event = threading.Event()
+        _car_task.update({
+            "status": "running", "start": time.time(), "end": None,
+            "bv": bv_list, "play_s": play_s, "interval": interval,
+            "stop_event": stop_event,
+        })
+        with log_lock:
+            log_buffers["car"] = []
+        t = threading.Thread(target=_run_car_task,
+                             args=(bv_list, play_s, interval, stop_event), daemon=True)
+        _car_task["thread"] = t
+        t.start()
+    return jsonify({"success": True, "bv": bv_list, "play_s": play_s, "interval": interval})
+
+
+@app.route("/api/booster/car/stop", methods=["POST"])
+def booster_car_stop():
+    _car_stop()
+    return jsonify({"success": True})
+
+
+@app.route("/api/booster/car/status")
+def booster_car_status():
+    with _car_lock:
+        task = {
+            "status": _car_task["status"],
+            "start": _car_task["start"],
+            "end": _car_task["end"],
+            "bv": list(_car_task["bv"]),
+            "play_s": _car_task["play_s"],
+            "interval": _car_task["interval"],
+        }
+        stats = json.loads(json.dumps(_car_stats_current(), ensure_ascii=False))
+    running = task["status"] in ("running", "stopping")
+    elapsed = None
+    if task["start"]:
+        elapsed = int((task["end"] or time.time()) - task["start"])
+    return jsonify({**task, "running": running, "elapsed": elapsed,
+                    "stats": stats, "output": _get_log("car")})
 
 
 @app.route("/api/booster/my-videos")
@@ -1258,7 +1464,7 @@ def booster_my_videos():
     except Exception as e:
         import traceback
         error_msg = f"{type(e).__name__}: {str(e)}"
-        print(f"[ERROR] player_my_videos: {error_msg}")
+        print(f"[ERROR] booster_my_videos: {error_msg}")
         traceback.print_exc()
         return jsonify({"success": False, "message": error_msg})
 
@@ -1267,6 +1473,8 @@ FETCH_VIDEOS_TIMEOUT = 30          # 获取投稿列表的单次超时（秒）
 BOOSTER_SCAN_LIMIT_DEFAULT = 30    # 定时扫描的默认深度（每个账号检查最近 N 个投稿）
 BOOSTER_SCAN_LIMIT_WARN = 30       # 超过该深度需多次分页请求，提示风控风险
 BOOSTER_MAX_SCAN_LIMIT = 3000      # 全量扫描的硬上限，避免无限翻页
+BOOSTER_CAR_ROUNDS_DEFAULT = 20    # 定时任务跑完代理池后接力车机长线的默认轮数
+BOOSTER_CAR_ROUNDS_MAX = 2000      # 车机长线轮数上限（约 2000 × 85s ≈ 47 小时）
 FETCH_MEMBER_PAGE_SIZE = 50        # 创作中心接口单页条数
 FETCH_PAGE_DELAY = (0.4, 0.9)      # 分页之间的随机间隔，降低触发风控的概率
 
@@ -1479,13 +1687,13 @@ def _booster_active_bvids() -> set:
     active = set()
     with booster_lock:
         for t in booster_tasks.values():
-            if t.get("status") in ("queued", "running", "stopping") and t.get("bv"):
+            if t.get("status") in ("queued", "running", "stopping", "car") and t.get("bv"):
                 active.add(t["bv"])
     return active
 
 
 def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Event, log_target: str,
-                         proxies: list = None, probe_cache: dict = None) -> int:
+                         proxies: list = None, probe_cache: dict = None, car_rounds: int = 0) -> int:
     """为给定稿件列表各创建一个 booster 子任务，返回创建数量。
 
     已在队列/运行中的 bvid，以及当前播放量已达目标的稿件直接跳过，避免每轮重复派发造成堆积。
@@ -1516,6 +1724,7 @@ def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Ev
                 "title": v.get("title", ""),
                 "target": target,
                 "max_rounds": 5,
+                "car_rounds": car_rounds,
                 "refetch_proxies": proxies is None,
                 "stop_event": stop_event,
                 "log_target": log_target,  # 便于子任务日志回流
@@ -1525,7 +1734,7 @@ def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Ev
             log_buffers[tid] = []
         _append_log(log_target, f"已创建任务 {tid} → {bvid}《{v.get('title','')}》（当前播放 {play}）")
         t = threading.Thread(target=_run_booster_task,
-                             args=(tid, [bvid], target, stop_event, 5, proxies is None, proxies, probe_cache), daemon=True)
+                             args=(tid, [bvid], target, stop_event, 5, proxies is None, proxies, probe_cache, car_rounds), daemon=True)
         t.start()
         created += 1
     return created
@@ -1541,7 +1750,18 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
         scan_limit = int(cfg.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT))
     except (TypeError, ValueError):
         threshold, target, scan_limit = 200, 200, BOOSTER_SCAN_LIMIT_DEFAULT
+    if cfg.get("car_enabled", True):
+        try:
+            car_rounds = max(1, int(cfg.get("car_rounds", BOOSTER_CAR_ROUNDS_DEFAULT)))
+        except (TypeError, ValueError):
+            car_rounds = BOOSTER_CAR_ROUNDS_DEFAULT
+        car_rounds = min(car_rounds, BOOSTER_CAR_ROUNDS_MAX)
+    else:
+        car_rounds = 0
     scan_desc = _scan_limit_label(scan_limit)
+    if car_rounds > 0:
+        _append_log(log_target, f"车机长线已开启：符合条件稿件跑完代理池后接力 {car_rounds} 轮"
+                                f"（约 {car_rounds * car_channel.DEFAULT_INTERVAL // 60} 分钟/稿件）")
     if scan_limit <= 0 or scan_limit > BOOSTER_SCAN_LIMIT_WARN:
         _append_log(log_target, f"[WARN] 扫描深度为{scan_desc}，超过 {BOOSTER_SCAN_LIMIT_WARN} 条会多次分页请求，"
                                 "存在触发 B 站风控的风险，建议按需调低")
@@ -1615,7 +1835,8 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
         _append_log(log_target, f"账号【{name}】共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
                     ", ".join(v["bvid"] for v in low))
         total_created += _booster_spawn_tasks(low, target, stop_event, log_target,
-                                              proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache)
+                                              proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache,
+                                              car_rounds=car_rounds)
 
     # 监控 UID：统一用主账号凭证抓取其公开投稿
     if watch_uids and not stop_event.is_set():
@@ -1646,7 +1867,8 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
                 _append_log(log_target, f"UID {uid} 共 {len(videos)} 个投稿，其中 {len(low)} 个播放量低于 {threshold}：" +
                             ", ".join(v["bvid"] for v in low))
                 total_created += _booster_spawn_tasks(low, target, stop_event, log_target,
-                                                      proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache)
+                                                      proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache,
+                                                      car_rounds=car_rounds)
 
     # 「once」模式下不进入循环：等所有派生的 booster 子任务都结束后才标记结束
     if _booster_schedule["running"] == "once":
@@ -1773,6 +1995,8 @@ def booster_schedule_config_get():
         "target_play": cfg.get("target_play", 200),
         "max_concurrent_tasks": cfg.get("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS),
         "scan_limit": cfg.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT),
+        "car_enabled": bool(cfg.get("car_enabled", True)),
+        "car_rounds": cfg.get("car_rounds", BOOSTER_CAR_ROUNDS_DEFAULT),
         "account_uids": cfg.get("account_uids") or [],
         "uids": cfg.get("uids") or [],
     })
@@ -1787,12 +2011,18 @@ def booster_schedule_config_save():
         target = int(data.get("target_play", 200))
         concurrent = int(data.get("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_BOOST_TASKS))
         scan_limit = int(data.get("scan_limit", BOOSTER_SCAN_LIMIT_DEFAULT))
+        car_rounds = int(data.get("car_rounds", BOOSTER_CAR_ROUNDS_DEFAULT))
     except (TypeError, ValueError):
         return jsonify({"success": False, "message": "配置项必须为整数"}), 400
+    car_enabled = bool(data.get("car_enabled", True))
     account_uids = [str(u).strip() for u in (data.get("account_uids") or []) if str(u or "").strip()]
     uids = [str(u).strip() for u in (data.get("uids") or []) if str(u or "").strip()]
     if interval < 1 or threshold < 1 or target < 1:
         return jsonify({"success": False, "message": "配置项必须为正整数"}), 400
+    if car_rounds < 1:
+        return jsonify({"success": False, "message": "车机长线轮数必须为正整数"}), 400
+    if car_rounds > BOOSTER_CAR_ROUNDS_MAX:
+        return jsonify({"success": False, "message": f"车机长线轮数上限为 {BOOSTER_CAR_ROUNDS_MAX}"}), 400
     if concurrent < 1:
         return jsonify({"success": False, "message": "同时运行稿件数必须为正整数"}), 400
     if concurrent > MAX_CONCURRENT_BOOST_TASKS_CAP:
@@ -1810,6 +2040,8 @@ def booster_schedule_config_save():
         "target_play": target,
         "max_concurrent_tasks": concurrent,
         "scan_limit": scan_limit,
+        "car_enabled": car_enabled,
+        "car_rounds": car_rounds,
         "account_uids": account_uids,
         "uids": uids,
     }
@@ -1911,373 +2143,6 @@ def booster_schedule_status():
         "active_tasks": active_bvids,
         "log": _get_log("booster-schedule"),
     })
-
-
-# =========================================================================
-#  三-B、B站播放量提升 — Playwright 模拟播放 (bili-player)
-# =========================================================================
-
-player_tasks = {}
-player_lock = threading.Lock()
-
-
-def _run_player_task(task_id: str, bv_list: list[str], rounds: int,
-                     stop_event: threading.Event = None, use_proxy: bool = False):
-    with player_lock:
-        player_tasks[task_id]["status"] = "running"
-
-    # 通过 log_fn 回调直接写入 task buffer，不再重定向 sys.stdout
-    def log_fn(msg: str):
-        _append_log(task_id, msg)
-
-    try:
-        # 检测 Playwright Chromium 是否已安装：用 playwright 自身的可执行路径解析，
-        # 自动兼容打包运行（浏览器在 playwright 包内）和源码运行（浏览器在系统默认目录）两种情况
-        _append_log(task_id, "[SYSTEM] 检查 Playwright Chromium ...")
-        import subprocess as _sp
-        check = _sp.run(
-            [sys.executable, "-c",
-             "import os; from playwright.sync_api import sync_playwright; "
-             "pw=sync_playwright().start(); ex=pw.chromium.executable_path; pw.stop(); "
-             "exit(0 if ex and os.path.exists(ex) else 1)"],
-            capture_output=True, timeout=30,
-        )
-        if check.returncode != 0:
-            _append_log(task_id, "[SYSTEM] Chromium 未安装，正在自动安装（约 150MB，使用国内镜像）...")
-            install_env = os.environ.copy()
-            # 走国内镜像下载，避免海外 CDN 卡死（用户已配置的环境变量优先）
-            install_env.setdefault("PLAYWRIGHT_DOWNLOAD_HOST", "https://cdn.npmmirror.com/binaries/playwright")
-            # 打包运行时 playwright 只从包内 .local-browsers 查找浏览器，需装到包内；
-            # 源码运行时查找系统默认位置（如 %LOCALAPPDATA%\ms-playwright），不加该变量装到默认位置即可
-            if getattr(sys, "frozen", False) or globals().get("__compiled__"):
-                install_env.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
-            proc = _sp.Popen(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                text=True, encoding="utf-8", errors="replace",
-                env=install_env,
-            )
-
-            def _forward_install_output():
-                last_fwd = 0.0
-                for line in proc.stdout:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    # 下载进度行节流：最多每秒转发一条，避免日志刷屏
-                    if "Downloading" in line and "%" in line:
-                        now = time.time()
-                        if now - last_fwd < 1.0:
-                            continue
-                        last_fwd = now
-                    _append_log(task_id, f"[INSTALL] {line}")
-
-            reader = threading.Thread(target=_forward_install_output, daemon=True)
-            reader.start()
-
-            # 等待安装结束：支持停止信号，整体超时 15 分钟
-            deadline = time.time() + 900
-            cancelled = False
-            timed_out = False
-            while proc.poll() is None:
-                if stop_event and stop_event.is_set():
-                    proc.kill()
-                    cancelled = True
-                    _append_log(task_id, "[SYSTEM] 已取消 Chromium 安装")
-                    break
-                if time.time() > deadline:
-                    proc.kill()
-                    timed_out = True
-                    _append_log(task_id, "[ERROR] Chromium 安装超时，请检查网络后重试，或双击运行 install_chromium.bat 手动安装")
-                    break
-                try:
-                    proc.wait(timeout=1)
-                except _sp.TimeoutExpired:
-                    continue
-            reader.join(timeout=3)
-
-            if cancelled:
-                with player_lock:
-                    player_tasks[task_id]["status"] = "completed"
-                return
-            if proc.returncode != 0:
-                if not timed_out:
-                    _append_log(task_id, "[ERROR] Chromium 安装失败，请双击运行 install_chromium.bat 手动安装，或执行: python -m playwright install chromium")
-                with player_lock:
-                    player_tasks[task_id]["status"] = "error"
-                return
-            _append_log(task_id, "[SYSTEM] Chromium 安装完成！")
-
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("player", str(ROOT / "bili-player" / "player.py"))
-        player = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(player)
-
-        bv_input = ",".join(bv_list)
-        # main() 现在是异步函数，需要用 asyncio.run() 执行
-        import asyncio
-        asyncio.run(player.main(bv_input, rounds=rounds, stop_event=stop_event, log_fn=log_fn,
-                                use_proxy=use_proxy))
-        with player_lock:
-            player_tasks[task_id]["status"] = "completed"
-    except Exception as e:
-        _append_log(task_id, f"[ERROR] {e}")
-        with player_lock:
-            player_tasks[task_id]["status"] = "error"
-    finally:
-        with player_lock:
-            player_tasks[task_id]["end"] = time.time()
-
-
-@app.route("/api/player/run", methods=["POST"])
-def player_run():
-    data = request.json
-    bv_str = data.get("bv", "")
-    rounds = int(data.get("rounds", 1))
-    bv_list = [b.strip() for b in bv_str.split(",") if b.strip()]
-    if not bv_list:
-        return jsonify({"error": "缺少 BV号"}), 400
-
-    use_proxy = bool(data.get("use_proxy", False))
-
-    tid = str(uuid.uuid4())[:8]
-    stop_event = threading.Event()
-    with player_lock:
-        player_tasks[tid] = {
-            "status": "queued",
-            "start": time.time(),
-            "end": None,
-            "bv": bv_str,
-            "rounds": rounds,
-            "use_proxy": use_proxy,
-            "stop_event": stop_event,
-        }
-    with log_lock:
-        log_buffers[tid] = []
-    t = threading.Thread(target=_run_player_task,
-                         args=(tid, bv_list, rounds, stop_event, use_proxy), daemon=True)
-    t.start()
-    return jsonify({"task_id": tid})
-
-
-@app.route("/api/player/stop", methods=["POST"])
-def player_stop():
-    data = request.json or {}
-    task_id = data.get("task_id")
-    if not task_id:
-        return jsonify({"error": "缺少 task_id"}), 400
-    with player_lock:
-        st = player_tasks.get(task_id)
-        if not st:
-            return jsonify({"error": "任务不存在"}), 404
-        se = st.get("stop_event")
-        if se:
-            se.set()
-        st["status"] = "stopping"
-    return jsonify({"success": True})
-
-
-@app.route("/api/player/status/<task_id>")
-def player_status(task_id):
-    st = player_tasks.get(task_id)
-    if not st:
-        return jsonify({"error": "not found"}), 404
-    safe = {k: v for k, v in st.items() if k != "stop_event"}
-    return jsonify({**safe, "output": _get_log(task_id)})
-
-
-@app.route("/api/player/tasks")
-def player_all():
-    with player_lock:
-        safe = {}
-        for k, v in player_tasks.items():
-            safe[k] = {kk: vv for kk, vv in v.items() if kk != "stop_event"}
-        return jsonify(safe)
-
-
-@app.route("/api/player/my-videos")
-def player_my_videos():
-    """获取主账号（auto 模块）最近的投稿视频列表，player 登录仅用于播放"""
-    cred = _read_auto_cred()
-    sessdata = cred.get("sessdata", "")
-    mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
-    if not sessdata or not mid:
-        return jsonify({"success": False, "message": "请先在「自动互动」页面登录主账号"})
-
-    try:
-        videos = _fetch_my_videos(cred)
-        return jsonify({"success": True, "videos": videos, "mid": mid})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
-
-
-PLAYER_DIR = str(ROOT / "bili-player")
-
-
-def _migrate_legacy_player_account(cfg: dict) -> dict:
-    """把旧版单账号 bilibili 配置迁移到 bilibili_accounts 列表。"""
-    legacy = cfg.get("bilibili")
-    if legacy and isinstance(legacy, dict):
-        accounts = cfg.setdefault("bilibili_accounts", [])
-        login_uid = str(legacy.get("login_uid", ""))
-        if not any(str(a.get("login_uid", "")) == login_uid for a in accounts):
-            accounts.append({
-                "sessdata": legacy.get("sessdata", ""),
-                "bili_jct": legacy.get("bili_jct", ""),
-                "buvid3": legacy.get("buvid3", ""),
-                "login_uid": login_uid,
-            })
-        cfg.pop("bilibili", None)
-    return cfg
-
-
-def _add_player_account(sessdata, bili_jct, buvid3, login_uid):
-    _ensure_player_config()
-    import yaml
-    cfg = {}
-    if os.path.exists(PLAYER_CONFIG):
-        with open(PLAYER_CONFIG, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-
-    cfg = _migrate_legacy_player_account(cfg)
-    login_uid = str(login_uid) if login_uid else ""
-    accounts = cfg.setdefault("bilibili_accounts", [])
-
-    account = {
-        "sessdata": sessdata,
-        "bili_jct": bili_jct,
-        "login_uid": login_uid,
-    }
-    if buvid3:
-        account["buvid3"] = buvid3
-
-    existing_idx = None
-    for i, acc in enumerate(accounts):
-        if str(acc.get("login_uid", "")) == login_uid:
-            existing_idx = i
-            break
-
-    if existing_idx is not None:
-        accounts[existing_idx] = account
-    else:
-        accounts.append(account)
-
-    with open(PLAYER_CONFIG, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-
-
-@app.route("/api/player/config")
-def player_config():
-    _ensure_player_config()
-    import yaml
-    if os.path.exists(PLAYER_CONFIG):
-        with open(PLAYER_CONFIG, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        cfg = _migrate_legacy_player_account(cfg)
-        accounts = cfg.get("bilibili_accounts", [])
-        return jsonify({
-            "accounts": [
-                {
-                    "login_uid": str(a.get("login_uid", "")),
-                    "has_sessdata": bool(a.get("sessdata")),
-                    "uname": _fetch_bili_uname(a.get("sessdata", ""), a.get("login_uid", "")),
-                }
-                for a in accounts
-            ],
-        })
-    return jsonify({"accounts": []})
-
-
-@app.route("/api/player/accounts/<login_uid>", methods=["DELETE"])
-def player_delete_account(login_uid):
-    _ensure_player_config()
-    import yaml
-    cfg = {}
-    if os.path.exists(PLAYER_CONFIG):
-        with open(PLAYER_CONFIG, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-
-    cfg = _migrate_legacy_player_account(cfg)
-    accounts = cfg.get("bilibili_accounts", [])
-    target = str(login_uid)
-    new_accounts = [a for a in accounts if str(a.get("login_uid", "")) != target]
-    if len(new_accounts) == len(accounts):
-        return jsonify({"success": False, "message": "账号不存在"})
-
-    cfg["bilibili_accounts"] = new_accounts
-    with open(PLAYER_CONFIG, "w", encoding="utf-8") as f:
-        yaml.dump(cfg, f, allow_unicode=True, default_flow_style=False)
-    return jsonify({"success": True, "message": "已删除"})
-
-
-@app.route("/api/player/login/qrcode")
-def player_qr():
-    """生成 B站扫码登录二维码"""
-    import base64
-    import httpx
-    import qrcode
-
-    try:
-        resp = httpx.get(
-            "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        qr_data = resp.json()["data"]
-
-        img = qrcode.make(qr_data["url"])
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode()
-
-        return jsonify({
-            "success": True,
-            "qrcode_key": qr_data["qrcode_key"],
-            "qr_image": f"data:image/png;base64,{b64}",
-        })
-    except Exception as e:
-        import traceback
-        error_msg = f"{type(e).__name__}: {str(e)}"
-        print(f"[ERROR] player_qr: {error_msg}")
-        traceback.print_exc()
-        return jsonify({"success": False, "message": error_msg})
-
-
-@app.route("/api/player/login/poll/<qrcode_key>")
-def player_poll(qrcode_key):
-    import httpx
-
-    try:
-        resp = httpx.get(
-            "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
-            params={"qrcode_key": qrcode_key},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        code = data.get("data", {}).get("code")
-
-        if code == 0:
-            cookies = dict(resp.cookies.items())
-            sessdata = cookies.get("SESSDATA", "")
-            bili_jct = cookies.get("bili_jct", "")
-            buvid3 = cookies.get("buvid3", "")
-            login_uid = cookies.get("DedeUserID", "")
-
-            _add_player_account(sessdata, bili_jct, buvid3, login_uid)
-            return jsonify({"success": True, "message": "登录成功", "login_uid": login_uid})
-        elif code == 86038:
-            return jsonify({"success": False, "message": "二维码已过期"})
-        elif code == 86039:
-            return jsonify({"success": False, "status": "waiting", "message": "等待扫码"})
-        elif code == 86040:
-            return jsonify({"success": False, "status": "confirming", "message": "等待确认"})
-        else:
-            return jsonify({"success": False, "message": f"错误码: {code}"})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
 
 
 # =========================================================================
@@ -4769,11 +4634,9 @@ def tag_search_stats():
 #  进程关闭清理
 # =========================================================================
 # 在 pyappify / 手动 kill / Ctrl+C 等场景下，确保：
-#   1. 触发所有 schedule 任务的 stop_event（auto schedule / booster schedule / redpocket / livehelper / player）
+#   1. 触发所有 schedule 任务的 stop_event（auto schedule / booster schedule / redpocket / livehelper）
 #   2. 触发所有 active task 的 stop_event（auto_stop_events / history_stop_events / booster_tasks）
 #   3. 等后台线程退出（带超时，避免 hang）
-#   4. 杀掉本进程派生的子进程（playwright 浏览器 chromium.exe、asyncio 子进程等），避免成为孤儿
-#   5. 清理异常退出残留的 playwright 浏览器进程（仅 ms-playwright / .local-browsers 下的孤儿）
 #
 # Windows 上 SIGTERM 不可靠（部分 Tauri 启动器会直接 TerminateProcess），
 # 所以同时注册 atexit + signal.SIGINT + signal.SIGBREAK（Windows Ctrl+Break）。
@@ -4829,9 +4692,9 @@ def _shutdown(label: str = "shutdown"):
     except Exception as e:
         print(f"[{label}] set booster stop_events failed: {e}", flush=True)
 
-    # redpocket / livehelper / player 通过自己的 stop 端点或共享 stop_event 处理
+    # redpocket / livehelper 通过自己的 stop 端点或共享 stop_event 处理
     # 这里直接尝试调用对应模块的 stop 函数（如果存在）
-    for mod_name in ("bili_redpocket", "bili_livehelper", "bili_player"):
+    for mod_name in ("bili_redpocket", "bili_livehelper"):
         try:
             mod = sys.modules.get(mod_name)
             if mod and hasattr(mod, "stop_all"):
@@ -4851,63 +4714,9 @@ def _shutdown(label: str = "shutdown"):
                 break
             t.join(timeout=remaining)
 
-    # 先杀子进程（chromium 等），后台线程会因为子进程断开而快速退出
-    try:
-        _kill_child_processes()
-    except Exception as e:
-        print(f"[{label}] kill child processes failed: {e}", flush=True)
-
     _join_all(time.time() + 5.0)
 
-    # 兜底：再清一次残留（防止杀子进程前线程仍持有子进程句柄）
-    try:
-        _kill_child_processes()
-    except Exception as e:
-        print(f"[{label}] re-kill child processes failed: {e}", flush=True)
-
-    # 5) 清理异常退出残留的 playwright 浏览器进程（玩家模块已有此工具）
-    try:
-        from bili_player.player import cleanup_leftover_browsers
-        cleanup_leftover_browsers(log=lambda m: print(f"[{label}] {m}", flush=True))
-    except Exception as e:
-        # 没有 psutil / player 未装时静默
-        pass
-
     print(f"[{label}] 清理完成", flush=True)
-
-
-def _kill_child_processes():
-    """杀掉当前进程派生的所有子进程。
-    - 仅处理 PPID == os.getpid() 的进程（包括已退出主进程的孤儿）
-    - 仅处理 chromium / playwright / python -m 等可能挂着的进程
-    - 不杀系统进程、用户自己的 Chrome
-    """
-    try:
-        import psutil
-    except ImportError:
-        print("[shutdown] psutil 未安装，跳过子进程清理", flush=True)
-        return
-
-    my_pid = os.getpid()
-    keywords = ("ms-playwright", ".local-browsers", "playwright", "chromium", "headless_shell")
-    killed = 0
-    for proc in psutil.process_iter(["pid", "ppid", "exe", "cmdline"]):
-        try:
-            info = proc.info
-            ppid = info.get("ppid")
-            exe = (info.get("exe") or "").lower()
-            cmdline = " ".join(info.get("cmdline") or []).lower()
-            if ppid != my_pid:
-                continue
-            hit = any(kw in exe for kw in keywords) or any(kw in cmdline for kw in keywords)
-            if not hit:
-                continue
-            proc.kill()
-            killed += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    if killed:
-        print(f"[shutdown] 已杀 {killed} 个子进程", flush=True)
 
 
 def _port_in_use(port: int) -> bool:
@@ -5000,12 +4809,6 @@ def _kill_stale_app_instances(port: int):
         if victims:
             psutil.wait_procs(victims, timeout=5)
             print(f"[startup] 已清理 {len(victims)} 个残留旧实例进程", flush=True)
-            # 残留实例若在跑 playwright 播放，杀掉后会留下 chromium 孤儿，顺手清理
-            try:
-                from bili_player.player import cleanup_leftover_browsers
-                cleanup_leftover_browsers(log=lambda m: print(f"[startup] {m}", flush=True))
-            except Exception:
-                pass
     except ImportError:
         print("[startup] psutil 未安装，跳过残留实例清理", flush=True)
 

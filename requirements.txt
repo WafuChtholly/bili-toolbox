@@ -17,8 +17,8 @@ aiohttp>=3.9
 requests>=2.31
 fake-useragent>=1.5
 
-# --- bili-player 浏览器模拟 ---
-playwright>=1.40
+# --- 车机长线（AES 加密上报） ---
+pycryptodomex>=3.19
 
 # --- bili-redpocket 红包助手 ---
 loguru>=0.7

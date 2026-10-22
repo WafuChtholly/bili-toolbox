@@ -1678,7 +1678,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         </button>
         <div class="tab-dropdown-menu" id="boost-menu">
           <div class="tab-dropdown-item" onclick="switchTab('booster')">⚡ 代理池接口<span class="di-sub">高速 · 上限 200</span></div>
-          <div class="tab-dropdown-item" onclick="switchTab('player')">🖥️ 浏览器模拟<span class="di-sub">慢速 · 时速 30</span></div>
+          <div class="tab-dropdown-item" onclick="switchTab('car')">🚗 车机长线<span class="di-sub">匿名 · 时速 42</span></div>
         </div>
       </div>
 
@@ -1783,14 +1783,14 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
     </div>
     <div class="dash-card">
       <div class="dash-card-top">
-        <div class="dash-icon" style="background:rgba(111,91,214,0.1);color:#6f5bd6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
-        <button class="dash-goto" onclick="switchTab('player')">进入 →</button>
+        <div class="dash-icon" style="background:rgba(111,91,214,0.1);color:#6f5bd6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17h14M6 17l-1.2-5.2A2 2 0 0 1 6.8 9h10.4a2 2 0 0 1 2 2.8L18 17"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/><path d="M8 9V7a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
+        <button class="dash-goto" onclick="switchTab('car')">进入 →</button>
       </div>
-      <div class="dash-name">播放量提升 · 浏览器模拟</div>
-      <div class="dash-desc">Playwright 模拟真实浏览器播放，匀速提升播放量</div>
+      <div class="dash-name">播放量提升 · 车机长线</div>
+      <div class="dash-desc">匿名车机通道，每稿件约 85 秒记 1 次播放，适合 24 小时长线</div>
       <div class="dash-badges">
-        <span class="dash-badge off" id="dash-player-login">检测中…</span>
-        <span class="dash-badge off" id="dash-player-run">空闲</span>
+        <span class="dash-badge ok" id="dash-car-ready">匿名可用</span>
+        <span class="dash-badge off" id="dash-car-run">空闲</span>
       </div>
     </div>
     <div class="dash-card">
@@ -1969,7 +1969,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             <div id="coin-target-following-box" style="max-height:200px;overflow-y:auto;border:1px solid var(--input-border);border-radius:var(--radius-sm);padding:6px;background:var(--input-bg)"></div>
           </div>
         </div>
-        <p style="color:var(--text-secondary);font-size:12px;margin-top:6px">三连与点赞/投币/收藏互斥。指定投币对象与三连/投币互斥。播放一次：互动完成后用 Playwright 浏览器随机播放一个已互动视频</p>
+        <p style="color:var(--text-secondary);font-size:12px;margin-top:6px">三连与点赞/投币/收藏互斥。指定投币对象与三连/投币互斥。播放一次：互动完成后用车机通道随机播放一个已互动视频</p>
       </div>
 
       <!-- 评论子选项 -->
@@ -2366,119 +2366,65 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
 </div>
 
 <!-- ============================================================ -->
-<!--  TAB 2-B: 浏览器播放 (Playwright)                              -->
+<!--  TAB 2-C: 车机匿名长线                                         -->
 <!-- ============================================================ -->
-<div id="panel-player" class="panel">
+<div id="panel-car" class="panel">
   <div class="panel-hero">
     <div class="panel-hero-left">
-      <div class="panel-hero-icon" style="color:#6f5bd6"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+      <div class="panel-hero-icon" style="color:#0e8fbd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17h14M6 17l-1.2-5.2A2 2 0 0 1 6.8 9h10.4a2 2 0 0 1 2 2.8L18 17"/><circle cx="8" cy="18" r="1.6"/><circle cx="16" cy="18" r="1.6"/><path d="M8 9V7a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></div>
       <div>
-        <div class="panel-hero-title">播放量提升 · 浏览器模拟</div>
-        <div class="panel-hero-desc">用 Playwright 启动真实浏览器逐个播放视频（需登录，可叠加代理池出口分散 IP）。</div>
-      </div>
-    </div>
-    <span class="hero-badge off" id="hero-player-badge">检测中…</span>
-  </div>
-
-  <!-- 登录卡片 -->
-  <div class="card">
-    <div class="card-head pink"><span class="card-step">1</span>账号登录（扫码）</div>
-    <div class="card-body">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span id="pl-login-info" style="color:var(--text-secondary)">未登录</span>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-outline btn-sm" onclick="plFetchMyVideos(this)">📦 获取主账号投稿</button>
-          <button class="btn btn-outline btn-sm" onclick="plShowQR()">添加播放账号</button>
-        </div>
-      </div>
-      <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">登录账号按账号并行播放，每个账号固定一条代理 IP 出口。可添加多个账号，账号越多越接近真实流量。投稿获取复用「自动互动」主账号凭证</p>
-      <div id="pl-accounts-list" style="margin-top:10px"></div>
-      <div class="qr-wrap" id="pl-qr-area" style="display:none">
-        <img id="pl-qr-img" src="" alt="QR">
-        <div class="qr-status" id="pl-qr-status">请用B站 App 扫描</div>
-      </div>
-      <div id="pl-my-videos" style="display:none;margin-top:14px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="color:var(--text-secondary);font-size:13px">最近投稿（点击勾选，再点击下方按钮添加）</span>
-          <button class="btn btn-outline btn-sm" onclick="plAddSelected()">✅ 添加选中到下方</button>
-        </div>
-        <div id="pl-video-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+        <div class="panel-hero-title">播放量提升 · 车机匿名长线</div>
+        <div class="panel-hero-desc">匿名车机通道，每稿件约 85 秒记 1 次播放；额度按稿件独立，多稿件并行线性叠加，适合 24 小时长线观测单日上限。</div>
       </div>
     </div>
   </div>
 
   <div class="card">
-    <div class="card-head green"><span class="card-step">2</span>播放方式与视频</div>
+    <div class="card-head blue"><span class="card-step">1</span>车机长线任务（实测 ~42/h · 每稿件）</div>
     <div class="card-body">
+      <p class="soft-note blue">
+        🚗 无需登录、无需代理：单稿件约 42 次/小时，24 小时约 1000 次/稿件；想提高日上限只能增加稿件数。
+      </p>
       <div class="form-group">
-        <label class="switch-row" title="每个账号固定一条代理 IP 出口，只有这条 IP 失效才换下一条；免费代理能真正跑起浏览器的很少，拿不到可用代理时会自动退回直连">
-          <span>🌐 使用代理池出口（每账号固定 IP）</span>
-          <input type="checkbox" id="player-use-proxy">
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="form-label">视频 BV 号</label>
-        <div id="player-bv-list" class="bv-list">
-          <div class="bv-row"><input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>
+        <label class="form-label">BV号（多个稿件并行，各自独立节拍）</label>
+        <div id="car-bv-list" class="bv-list">
+          <div class="bv-row"><input class="form-input" placeholder="BV1fz421o8J7" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>
         </div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-          <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('player-bv-list')">+ 添加视频</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="tpToggle('pl')">🏷 按标签添加</button>
-          <button type="button" class="btn btn-outline btn-sm" onclick="bvClear('player-bv-list')">🗑 一键清空</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('car-bv-list')">+ 添加视频</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="carFetchMyVideos(this)">📦 获取我的投稿</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvClear('car-bv-list')">🗑 一键清空</button>
         </div>
-        <!-- 按标签选稿（复用标签助手缓存） -->
-        <div id="pl-tag-pick" style="display:none;margin-top:10px;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm)">
+        <div id="car-my-videos" style="display:none;margin-top:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <span style="font-size:13px;color:var(--text-secondary)">🏷 按标签选择稿件（数据来自「标签助手」缓存，未扫描请先到标签助手页扫描）</span>
-            <button type="button" class="btn btn-outline btn-sm" style="font-size:12px;padding:2px 10px" onclick="tpToggle('pl')">收起</button>
+            <span style="color:var(--text-secondary);font-size:13px">最近投稿（点击勾选，再点击下方按钮添加）</span>
+            <button class="btn btn-outline btn-sm" onclick="carAddSelected()">✅ 添加选中到上方</button>
           </div>
-          <div id="pl-pick-tags" class="tp-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px 10px;background:var(--card-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm);cursor:text" onclick="document.getElementById('pl-pick-input').focus()">
-            <input id="pl-pick-input" type="text" placeholder="输入标签名后按回车添加" style="flex:1;min-width:120px;border:none;background:transparent;color:var(--text-primary);font-size:13px;outline:none;padding:2px 0" onkeydown="tpKeydown(event,'pl')" oninput="tpAutocomplete('pl')">
-          </div>
-          <div style="display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
-            <div class="seg">
-              <label><input type="radio" name="pl-pick-mode" value="and" checked><span>交集（同时包含所有标签）</span></label>
-              <label><input type="radio" name="pl-pick-mode" value="or"><span>并集（包含任一标签）</span></label>
-            </div>
-            <button type="button" class="btn btn-success btn-sm" onclick="tpSearch('pl')" style="margin-left:auto">搜索</button>
-          </div>
-          <div id="pl-tag-results" style="display:none;margin-top:10px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px">
-              <div style="display:flex;align-items:center;gap:10px">
-                <label class="switch-row"><span>全选</span><input type="checkbox" id="pl-tag-select-all" onchange="tpToggleAll('pl')"></label>
-                <span style="font-size:12px;color:var(--text-secondary)">匹配: <b id="pl-tag-count">0</b> 个稿件</span>
-              </div>
-              <button type="button" class="btn btn-outline btn-sm" onclick="tpAddSelected('pl')">✅ 添加选中到下方</button>
-            </div>
-            <div id="pl-tag-results-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
-          </div>
+          <div id="car-video-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">每个视频播放轮数</label>
-        <input class="form-input" id="player-rounds" type="number" value="1" min="1">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label class="form-label">单会话播放秒数</label>
+          <input class="form-input" id="car-play-s" type="number" min="1" max="300" value="20">
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label class="form-label">节拍（秒 / 轮）</label>
+          <input class="form-input" id="car-interval" type="number" min="70" value="85">
+          <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">实测计数窗口 65~85s，低于 70s 会被服务端合并</p>
+        </div>
       </div>
-      <div style="display:flex;gap:10px;margin-top:12px">
-        <button class="btn btn-success" id="player-run-btn" onclick="playerRun()">▶ 启动播放</button>
-        <button class="btn btn-danger" id="player-stop-btn" onclick="playerStop()" disabled>⏹ 停止</button>
+      <div class="status-bar">
+        <span class="status-dot dot-off" id="car-dot"></span>
+        <span id="car-status-text" style="color:var(--text-secondary)">未启动</span>
       </div>
-    </div>
-  </div>
-  <!-- 实时变化结果面板 -->
-  <div class="bst-result-panel" id="pl-result-panel">
-    <div class="bst-result-head">📊 实时播放结果</div>
-    <div class="bst-result-body">
-      <div id="pl-rp-round-tag"></div>
-      <div class="bst-rp-overview" id="pl-rp-overview">
-        <div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">等待任务启动...</div>
+      <div class="btn-row">
+        <button class="btn btn-pink" id="car-run-btn" onclick="carStart()">▶ 启动长线</button>
+        <button class="btn btn-stop" id="car-stop-btn" onclick="carStop()" style="display:none">⏹ 停止</button>
+        <button class="btn btn-outline" onclick="carLoad()">🔄 刷新统计</button>
       </div>
-      <div class="bst-rp-video-list" id="pl-rp-videos"></div>
-    </div>
-  </div>
-  <div class="card">
-    <div class="card-head blue"><span class="card-step">3</span>执行日志</div>
-    <div class="card-body">
-      <div class="log-box" id="player-log">等待运行...</div>
+      <div id="car-stats" style="margin-top:12px;color:var(--text-tertiary);font-size:13px">今日累计：暂无数据</div>
+      <div class="log-box" id="car-log" style="margin-top:12px;max-height:260px">等待启动...</div>
     </div>
   </div>
 </div>
@@ -3269,6 +3215,23 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             扫描深度＝每个账号检查最近多少个投稿（填 0 表示全量）。超过 30 条会多次分页请求，可能触发 B 站风控，建议按需调低。
           </p>
         </div>
+        <div class="form-group">
+          <label class="form-label">车机长线接力</label>
+          <div class="schedule-row">
+            <label class="inline-field" style="cursor:pointer">
+              <span>跑完代理池后进入车机长线</span>
+              <input type="checkbox" id="bst-sched-car" checked style="accent-color:var(--pink);width:16px;height:16px;cursor:pointer">
+            </label>
+            <div class="inline-field">
+              <span>车机轮数</span>
+              <input class="form-input inline-input" id="bst-sched-carrounds" type="number" value="20" min="1" max="2000">
+              <span>轮（约 85 秒/轮）</span>
+            </div>
+          </div>
+          <p style="font-size:12px;color:var(--text-tertiary);margin-top:6px">
+            开启后，播放量低于阈值的稿件跑完代理池刷量会继续用匿名车机通道接力，跑满指定轮数后收线（20 轮约 28 分钟/稿件）。
+          </p>
+        </div>
         <div class="status-bar" style="display:flex;justify-content:space-between;align-items:center">
           <div>
             <span class="status-dot dot-off" id="bst-sched-dot"></span>
@@ -3422,8 +3385,8 @@ function switchTab(name){
   if(name==='booster'){
     withPanelLoader('panel-booster', () => bstLoadLoginStatus(), '正在加载代理池状态…');
   } else { bstWebhookStopPoll(); }
+  if(name==='car'){ withPanelLoader('panel-car', () => carLoad(), '正在加载车机长线状态…'); }
   if(name==='redpocket'){ withPanelLoader('panel-redpocket', () => Promise.all([rpLoadRooms(), rpCheckStatus()]), '正在加载红包助手…'); }
-  if(name==='player'){ withPanelLoader('panel-player', () => plLoadConfig(), '正在加载账号配置…'); }
   if(name==='auto'){ withPanelLoader('panel-auto', () => Promise.all([autoLoadConfig(), loadAutoConfig()]), '正在加载自动互动配置…'); }
   if(name==='livehelper'){ withPanelLoader('panel-livehelper', () => lhLoadConfig(), '正在加载弹幕助手配置…'); }
   if(name==='collection'){ withPanelLoader('panel-collection', () => collLoadStatus(), '正在加载合集助手状态…'); }
@@ -4740,6 +4703,8 @@ function bstScheduleLoad(){
     document.getElementById('bst-sched-target').value=c.target_play;
     document.getElementById('bst-sched-concurrent').value=c.max_concurrent_tasks||3;
     document.getElementById('bst-sched-scanlimit').value=(c.scan_limit===undefined||c.scan_limit===null)?30:c.scan_limit;
+    document.getElementById('bst-sched-car').checked=c.car_enabled!==false;
+    document.getElementById('bst-sched-carrounds').value=c.car_rounds||20;
     bstSchedAccounts=(d.accounts||[]).filter(a=>a.has_sessdata);
     const savedAccounts=(Array.isArray(c.account_uids)?c.account_uids:[]).map(String);
     const savedUids=(Array.isArray(c.uids)?c.uids:[]).map(String);
@@ -4762,14 +4727,17 @@ function bstScheduleSave(silent){
   const concurrent=parseInt(document.getElementById('bst-sched-concurrent').value)||3;
   const scanRaw=document.getElementById('bst-sched-scanlimit').value;
   const scanLimit=scanRaw===''?30:parseInt(scanRaw);
+  const carEnabled=document.getElementById('bst-sched-car').checked;
+  const carRounds=parseInt(document.getElementById('bst-sched-carrounds').value)||20;
   const uids=bstGetSelectedUids();
   const watchUids=Array.isArray(bstUserUids)?bstUserUids.slice():[];
   if(interval<1||threshold<1||target<1){alert('配置项必须为正整数');return Promise.resolve(false);}
   if(concurrent<1||concurrent>20){alert('同时运行稿件数需为 1~20 之间的整数');return Promise.resolve(false);}
   if(isNaN(scanLimit)||scanLimit<0){alert('扫描深度需为 0（全量）或正整数');return Promise.resolve(false);}
+  if(carRounds<1||carRounds>2000){alert('车机长线轮数需为 1~2000 之间的整数');return Promise.resolve(false);}
   if(!uids.length&&!watchUids.length){alert('请至少配置一个刷量账号或一个监控 UID');return Promise.resolve(false);}
   return fetch('/api/booster/schedule/config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,max_concurrent_tasks:concurrent,scan_limit:scanLimit,account_uids:uids,uids:watchUids})
+    body:JSON.stringify({interval_minutes:interval,play_threshold:threshold,target_play:target,max_concurrent_tasks:concurrent,scan_limit:scanLimit,car_enabled:carEnabled,car_rounds:carRounds,account_uids:uids,uids:watchUids})
   }).then(r=>r.json()).then(d=>{
     if(d.success&&!silent)alert(d.warning?('配置已保存\n\n⚠ '+d.warning):'配置已保存');
     if(!d.success&&!silent)alert(d.message||'保存失败');
@@ -5209,82 +5177,94 @@ function bstUpdate(d){
 }
 
 /* ============================================================
-   TAB 2-B: 浏览器播放 (Playwright)
+   车机匿名长线（独立面板）
    ============================================================ */
-let playerTaskId=null;
-let plPollTimer=null;
-
-function plLoadConfig(){
-  return fetch('/api/player/config').then(r=>r.json()).then(d=>{
-    const listEl=document.getElementById('pl-accounts-list');
-    const infoEl=document.getElementById('pl-login-info');
-    const accounts=d.accounts||[];
-    if(accounts.length===0){
-      infoEl.textContent='未登录';
-      infoEl.style.color='var(--warn)';
-      listEl.innerHTML='';
-      return;
-    }
-    infoEl.innerHTML='已登录账号数: <b>'+accounts.length+'</b>';
-    infoEl.style.color='var(--success)';
-    listEl.innerHTML=accounts.map(a=>`
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;margin-bottom:6px;background:var(--bg-tertiary);border-radius:10px">
-        <span style="font-size:13px">UID: <b>${a.login_uid||'?'}</b>${a.uname?' <span style="color:var(--text-secondary)">· '+_escHtml(a.uname)+'</span>':''}</span>
-        <button class="btn btn-sm btn-danger" style="padding:2px 8px;font-size:12px" onclick="plDeleteAccount('${a.login_uid||''}')">删除</button>
-      </div>`).join('');
-  });
-}
-function plDeleteAccount(login_uid){
-  if(!login_uid||!confirm('确定删除该播放账号？'))return;
-  fetch('/api/player/accounts/'+encodeURIComponent(login_uid),{method:'DELETE'}).then(r=>r.json()).then(d=>{
-    if(d.success){plLoadConfig();}
-    else{alert(d.message||'删除失败');}
-  });
-}
-function plShowQR(){
-  const area=document.getElementById('pl-qr-area');
-  area.style.display='block';
-  document.getElementById('pl-qr-status').textContent='生成中...';
-  fetch('/api/player/login/qrcode').then(r=>r.json()).then(d=>{
-    if(d.success){
-      document.getElementById('pl-qr-img').src=d.qr_image;
-      document.getElementById('pl-qr-status').textContent='请用 B站 App 扫描二维码';
-      plStartPoll(d.qrcode_key);
-    }else{
-      document.getElementById('pl-qr-status').textContent='生成失败: '+d.message;
-    }
-  });
-}
-function plStartPoll(key){
-  if(plPollTimer)clearInterval(plPollTimer);
-  plPollTimer=setInterval(()=>{
-    fetch(`/api/player/login/poll/${key}`).then(r=>r.json()).then(d=>{
-      const st=document.getElementById('pl-qr-status');
-      if(d.success){
-        st.textContent='登录成功！';st.style.color='var(--success)';
-        clearInterval(plPollTimer);
-        document.getElementById('pl-qr-area').style.display='none';
-        plLoadConfig();
-      }else if(d.status==='waiting'){
-        st.textContent='已扫码，请在手机上确认...';st.style.color='var(--info)';
-      }else if(d.status==='confirming'){
-        st.textContent='已确认，处理中...';st.style.color='var(--warn)';
-      }else{
-        st.textContent=d.message||'未知错误';st.style.color='var(--danger)';
-        if(d.message&&d.message.includes('过期'))clearInterval(plPollTimer);
-      }
-    });
-  },2000);
+function carFmtDuration(sec){
+  sec=Math.max(0,sec|0);
+  const h=Math.floor(sec/3600), m=Math.floor(sec%3600/60), s=sec%60;
+  return (h?h+'h ':'')+(m?m+'m ':'')+s+'s';
 }
 
-function plFetchMyVideos(btnEl){
+function carRenderStats(d){
+  const st=d.stats||{};
+  const per=st.per_bv||{};
+  const rows=Object.keys(per).map(bv=>{
+    const v=per[bv];
+    return `<div class="bst-rp-video-row"><span class="bst-rp-video-status">${v.accepted>0?'📈':'⚠️'}</span>`+
+      `<span class="bst-rp-video-bvid">${bv}</span>`+
+      `<span class="bst-rp-video-views">${(v.views||0).toLocaleString()}</span>`+
+      `<span class="bst-rp-video-growth">+${v.growth||0}</span>`+
+      `<span class="bst-rp-video-clicks">${v.rounds||0} 轮 / 有效 ${v.accepted||0}</span></div>`;
+  }).join('');
+  document.getElementById('car-stats').innerHTML=
+    `<div class="bst-rp-overview">`+
+      `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${st.growth||0}</div><div class="bst-rp-stat-label">今日播放增长</div></div>`+
+      `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${st.rounds||0}</div><div class="bst-rp-stat-label">今日轮次</div></div>`+
+      `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${st.accepted||0}</div><div class="bst-rp-stat-label">有效会话</div></div>`+
+      `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${d.elapsed!=null?carFmtDuration(d.elapsed):'-'}</div><div class="bst-rp-stat-label">已运行</div></div>`+
+    `</div>`+(rows||'<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0">暂无稿件数据</div>');
+}
+
+function carUpdate(d){
+  const log=document.getElementById('car-log');
+  if(d.output){log.textContent=d.output;}
+  log.scrollTop=log.scrollHeight;
+  carRenderStats(d);
+  const runBtn=document.getElementById('car-run-btn');
+  const stopBtn=document.getElementById('car-stop-btn');
+  if(d.running){
+    runBtn.disabled=true;runBtn.textContent='长线运行中...';
+    stopBtn.style.display='inline-block';
+    setDot('car-dot','run');
+    setText('car-status-text','运行中 · '+(d.bv||[]).length+' 个稿件 · 每 '+d.interval+'s 一轮');
+  }else{
+    runBtn.disabled=false;runBtn.textContent='▶ 启动长线';
+    stopBtn.style.display='none';
+    const txt={completed:'已完成',stopped:'已停止',error:'出错'}[d.status]||'未启动';
+    setDot('car-dot',d.status==='error'?'err':'off');
+    setText('car-status-text',txt);
+    stopPoll('/api/booster/car/status');
+  }
+}
+
+function carLoad(){
+  return fetch('/api/booster/car/status').then(r=>r.json()).then(d=>{
+    carUpdate(d);
+    if(d.running)startPoll('/api/booster/car/status',5000,carUpdate);
+  }).catch(()=>{});
+}
+
+function carStart(){
+  const bvList=bvGetList('car-bv-list');
+  if(!bvList.length){alert('请填写 BV号');return;}
+  const playS=parseInt(document.getElementById('car-play-s').value||'20',10);
+  const interval=parseInt(document.getElementById('car-interval').value||'85',10);
+  if(isNaN(playS)||isNaN(interval)){alert('播放秒数 / 节拍需为整数');return;}
+  fetch('/api/booster/car/start',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({bv:bvList.join(','),play_s:playS,interval:interval})})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){alert(d.error);return;}
+      document.getElementById('car-log').textContent='启动中...';
+      document.getElementById('car-run-btn').disabled=true;
+      document.getElementById('car-stop-btn').style.display='inline-block';
+      setDot('car-dot','run');setText('car-status-text','启动中...');
+      startPoll('/api/booster/car/status',5000,carUpdate);
+      carLoad();
+    }).catch(e=>alert('启动失败: '+e));
+}
+
+function carStop(){
+  fetch('/api/booster/car/stop',{method:'POST'}).then(r=>r.json()).then(()=>carLoad());
+}
+
+function carFetchMyVideos(btnEl){
   const btn=btnEl||event.target;
   btn.disabled=true;btn.textContent='加载中...';
-  fetch('/api/player/my-videos').then(r=>r.json()).then(d=>{
-    btn.disabled=false;btn.textContent='📦 获取主账号投稿';
+  fetch('/api/booster/my-videos').then(r=>r.json()).then(d=>{
+    btn.disabled=false;btn.textContent='📦 获取我的投稿';
     if(!d.success){alert(d.message||'获取失败');return;}
     if(!d.videos||d.videos.length===0){alert('没有找到投稿视频');return;}
-    const box=document.getElementById('pl-video-list');
+    const box=document.getElementById('car-video-list');
     box.innerHTML='';
     d.videos.forEach(v=>{
       const date=new Date(v.created*1000);
@@ -5301,14 +5281,15 @@ function plFetchMyVideos(btnEl){
         </div>`;
       box.appendChild(item);
     });
-    document.getElementById('pl-my-videos').style.display='block';
-  }).catch(e=>{btn.disabled=false;btn.textContent='📦 获取主账号投稿';alert('请求失败: '+e);});
+    document.getElementById('car-my-videos').style.display='block';
+  }).catch(e=>{btn.disabled=false;btn.textContent='📦 获取我的投稿';alert('请求失败: '+e);});
 }
 
-function plAddSelected(){
-  const checks=document.querySelectorAll('#pl-video-list input[type="checkbox"]:checked');
-  if(!checks.length){alert('请先勾选要播放的视频');return;}
-  const list=document.getElementById('player-bv-list');
+function carAddSelected(){
+  const checks=document.querySelectorAll('#car-video-list input[type="checkbox"]:checked');
+  if(!checks.length){alert('请先勾选要提升的视频');return;}
+  const list=document.getElementById('car-bv-list');
+  // 清除空的默认行
   const rows=list.querySelectorAll('.bv-row');
   rows.forEach(row=>{
     const inp=row.querySelector('input');
@@ -5316,6 +5297,7 @@ function plAddSelected(){
   });
   checks.forEach(cb=>{
     const bvid=cb.value;
+    // 检查是否已存在
     const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
     if(existing)return;
     const row=document.createElement('div');
@@ -5323,118 +5305,10 @@ function plAddSelected(){
     row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
     list.appendChild(row);
   });
+  // 取消勾选
   checks.forEach(cb=>{cb.checked=false;cb.closest('.video-pick-item').classList.remove('selected');});
-  if(!list.querySelector('.bv-row')){bvAdd('player-bv-list');}
-}
-
-function playerRun(){
-  const bvList=bvGetList('player-bv-list');
-  const rounds=document.getElementById('player-rounds').value.trim()||'1';
-  if(!bvList.length){alert('请填写 BV号');return;}
-  const bv=bvList.join(',');
-  const useProxyEl=document.getElementById('player-use-proxy');
-  const use_proxy=!!(useProxyEl&&useProxyEl.checked);
-  const btn=document.getElementById('player-run-btn');
-  const stopBtn=document.getElementById('player-stop-btn');
-  btn.disabled=true;btn.textContent='运行中...';
-  stopBtn.style.display='inline-block';stopBtn.disabled=false;
-  document.getElementById('player-log').textContent='启动中...';
-  // 重置结果面板
-  plResultState={videos:{},completed:0,total:0,success:0,failed:0,totalGrowth:0};
-  document.getElementById('pl-rp-round-tag').innerHTML='<span style="font-size:14px">⏳</span> 等待播放完成...';
-  document.getElementById('pl-rp-overview').innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:4px 0">运行中，等待数据...</div>';
-  document.getElementById('pl-rp-videos').innerHTML='';
-
-  fetch('/api/player/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bv,rounds,use_proxy})})
-    .then(r=>r.json()).then(d=>{
-      if(d.error){alert(d.error);btn.disabled=false;btn.textContent='▶ 启动播放';stopBtn.style.display='none';return;}
-      playerTaskId=d.task_id;
-      startPoll(`/api/player/status/${playerTaskId}`,2000,playerUpdate);
-    });
-}
-function playerStop(){
-  fetch('/api/player/stop',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({task_id:playerTaskId})});
-}
-function playerUpdate(d){
-  const log=document.getElementById('player-log');
-  if(d.output){
-    const lines=d.output.split('\n').filter(l=>!l.includes('[RESULT]')).join('\n');
-    log.textContent=lines;
-    plParseResults(d.output);
-  }
-  log.scrollTop=log.scrollHeight;
-  const done=d.status==='completed'||d.status==='error';
-  if(d.status==='stopping'){
-    document.getElementById('player-log').textContent+='\n[SYSTEM] 正在停止...';
-  }
-  if(done){
-    document.getElementById('player-run-btn').disabled=false;
-    document.getElementById('player-run-btn').textContent='▶ 启动播放';
-    document.getElementById('player-stop-btn').style.display='none';
-    stopPoll(`/api/player/status/${playerTaskId}`);
-  }
-}
-
-// ── Player 结果面板状态 ──
-let plResultState={videos:{},completed:0,total:0,success:0,failed:0,totalGrowth:0};
-
-function plParseResults(output){
-  if(!output)return;
-  const lines=output.split('\n');
-  let changed=false;
-  for(const line of lines){
-    const m=line.match(/\[RESULT\]\s*(video\|.+|round\|.+)/);
-    if(!m)continue;
-    const parts=m[1].split('|');
-    if(parts[0]==='video'&&parts.length>=6){
-      plResultState.videos[parts[1]]={bvid:parts[1],views:parseInt(parts[2]),growth:parseInt(parts[3]),round:parseInt(parts[4]),rounds:parseInt(parts[5])};
-      changed=true;
-    }else if(parts[0]==='round'&&parts.length>=6){
-      plResultState.completed=parseInt(parts[1]);
-      plResultState.total=parseInt(parts[2]);
-      plResultState.success=parseInt(parts[3]);
-      plResultState.failed=parseInt(parts[4]);
-      plResultState.totalGrowth=parseInt(parts[5]);
-      changed=true;
-    }
-  }
-  if(changed)plRenderResultPanel();
-}
-
-function plRenderResultPanel(){
-  const panel=document.getElementById('pl-result-panel');
-  if(!panel)return;
-  const s=plResultState;
-  const tag=document.getElementById('pl-rp-round-tag');
-  if(s.completed>0){
-    tag.innerHTML=`<span style="font-size:14px">🔄</span> 已完成 ${s.completed}/${s.total} 轮`;
-  }else{
-    tag.innerHTML=`<span style="font-size:14px">⏳</span> 等待播放完成...`;
-  }
-
-  const ov=document.getElementById('pl-rp-overview');
-  ov.innerHTML=
-    `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${s.totalGrowth}</div><div class="bst-rp-stat-label">播放增长</div></div>`+
-    `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${s.completed}/${s.total}</div><div class="bst-rp-stat-label">完成进度</div></div>`+
-    `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${s.success}✅ ${s.failed}❌</div><div class="bst-rp-stat-label">成功/失败</div></div>`;
-
-  const vl=document.getElementById('pl-rp-videos');
-  vl.innerHTML='';
-  const vids=Object.values(plResultState.videos);
-  if(vids.length===0){vl.innerHTML='<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0">等待播放完成...</div>';return;}
-  for(const v of vids){
-    const done=v.growth>0;
-    const row=document.createElement('div');
-    row.className='bst-rp-video-row'+(done?' reached':'');
-    row.innerHTML=
-      `<span class="bst-rp-video-status">${done?'✅':'📈'}</span>`+
-      `<span class="bst-rp-video-bvid">${v.bvid}</span>`+
-      `<span class="bst-rp-video-views">${v.views.toLocaleString()}</span>`+
-      `<span class="bst-rp-video-growth">+${v.growth.toLocaleString()}</span>`+
-      `<span class="bst-rp-video-clicks">轮次: ${v.round}/${v.rounds}</span>`;
-    vl.appendChild(row);
-  }
+  // 如果列表空了，加回默认行
+  if(!list.querySelector('.bv-row')){bvAdd('car-bv-list');}
 }
 
 /* ============================================================
@@ -6661,10 +6535,9 @@ function tsCalcStats(){
   });
 }
 
-/* ---- 通用：按标签添加稿件（booster / player 共用，复用标签助手缓存） ---- */
+/* ---- 通用：按标签添加稿件（booster 用，复用标签助手缓存） ---- */
 const TP_CFG={
-  bst:{listId:'booster-bv-list',tagsId:'bst-pick-tags',inputId:'bst-pick-input',areaId:'bst-tag-pick',resultsId:'bst-tag-results',resListId:'bst-tag-results-list',countId:'bst-tag-count',selAllId:'bst-tag-select-all',modeName:'bst-pick-mode'},
-  pl:{listId:'player-bv-list',tagsId:'pl-pick-tags',inputId:'pl-pick-input',areaId:'pl-tag-pick',resultsId:'pl-tag-results',resListId:'pl-tag-results-list',countId:'pl-tag-count',selAllId:'pl-tag-select-all',modeName:'pl-pick-mode'}
+  bst:{listId:'booster-bv-list',tagsId:'bst-pick-tags',inputId:'bst-pick-input',areaId:'bst-tag-pick',resultsId:'bst-tag-results',resListId:'bst-tag-results-list',countId:'bst-tag-count',selAllId:'bst-tag-select-all',modeName:'bst-pick-mode'}
 };
 
 function tpEnsureAllTags(){
@@ -6837,10 +6710,9 @@ async function dashRefresh(){
   await Promise.all([
     _dget('/api/auto/login/config', j => { d.autoLogin = !!(j && j.login_uid); }),
     _dget('/api/auto/schedule/status', j => { d.autoRun = !!(j && j.running); }),
-    _dget('/api/booster/tasks', j => { d.boosterRun = _anyTaskStatus(j, 'running'); d.boosterErr = _anyTaskStatus(j, 'error'); }),
+    _dget('/api/booster/tasks', j => { d.boosterRun = _anyTaskStatus(j, 'running') || _anyTaskStatus(j, 'car'); d.boosterErr = _anyTaskStatus(j, 'error'); }),
     _dget('/api/booster/schedule/status', j => { d.boosterSched = !!(j && j.running); if(d.boosterSched || (j && j.active_tasks && j.active_tasks.length)) d.boosterRun = true; }),
-    _dget('/api/player/config', j => { d.playerLogin = !!(j && (j.accounts || []).some(a => a.login_uid && a.has_sessdata)); }),
-    _dget('/api/player/tasks', j => { d.playerRun = _anyTaskStatus(j, 'running'); }),
+    _dget('/api/booster/car/status', j => { d.carRun = !!(j && j.running); }),
     _dget('/api/redpocket/config', j => { d.rpLogin = !!(j && (j.sessdata || j.login_uid)); }),
     _dget('/api/redpocket/status', j => { d.rpRun = !!(j && j.running); }),
     _dget('/api/livehelper/config', j => { d.lhLogin = !!(j && (j._has_login || j._login_uid)); }),
@@ -6864,8 +6736,7 @@ function dashRender(){
   _dashBadge('dash-medal-login', d.autoLogin ? 'ok' : 'off', '复用主账号');
   _dashBadge('dash-booster-run', d.boosterRun ? 'run' : (d.boosterErr ? 'err' : 'off'),
     d.boosterRun ? '运行中' : (d.boosterErr ? '有任务出错' : '空闲'));
-  _dashBadge('dash-player-login', d.playerLogin ? 'ok' : 'off', d.playerLogin ? '已登录' : '未登录');
-  _dashBadge('dash-player-run', d.playerRun ? 'run' : 'off', d.playerRun ? '运行中' : '空闲');
+  _dashBadge('dash-car-run', d.carRun ? 'run' : 'off', d.carRun ? '运行中' : '空闲');
   _dashBadge('dash-redpocket-login', d.rpLogin ? 'ok' : 'off', d.rpLogin ? '已登录' : '未登录');
   _dashBadge('dash-redpocket-run', d.rpRun ? 'run' : 'off', d.rpRun ? '监听中' : '未运行');
   _dashBadge('dash-livehelper-login', d.lhLogin ? 'ok' : 'off', d.lhLogin ? '已登录' : '未登录');
@@ -6881,14 +6752,13 @@ function dashRender(){
 
   _heroBadge('hero-auto-badge', d.autoLogin, d.autoLogin ? '已登录' : '未登录');
   _heroBadge('hero-booster-badge', d.boosterRun, d.boosterRun ? '运行中' : '空闲');
-  _heroBadge('hero-player-badge', d.playerRun, d.playerRun ? '运行中' : '空闲');
   _heroBadge('hero-redpocket-badge', d.rpRun, d.rpRun ? '监听中' : '未运行');
   _heroBadge('hero-livehelper-badge', d.lhRun, d.lhRun ? '运行中' : '未运行');
   _heroBadge('hero-collection-badge', d.collLogin, d.collLogin ? '已登录' : '未登录');
   _heroBadge('hero-tagsearch-badge', d.tsLogin, d.tsLogin ? '已登录' : '未登录');
 
-  const loginCount = [d.autoLogin, d.autoLogin, d.autoLogin, d.playerLogin, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin].filter(Boolean).length;
-  const runCount = [d.autoRun, d.boosterRun, d.playerRun, d.rpRun, d.lhRun].filter(Boolean).length;
+  const loginCount = [d.autoLogin, d.autoLogin, d.autoLogin, true, d.rpLogin, d.lhLogin, d.collLogin, d.tsLogin].filter(Boolean).length;
+  const runCount = [d.autoRun, d.boosterRun, d.carRun, d.rpRun, d.lhRun].filter(Boolean).length;
   const sl = document.getElementById('dash-sum-login');
   if(sl) sl.textContent = loginCount + ' / 8';
   const sr = document.getElementById('dash-sum-run');
@@ -7045,7 +6915,7 @@ function toggleTheme(){
   try{ localStorage.setItem('bili-theme', isDark ? 'light' : 'dark'); }catch(e){}
 }
 
-rpCheckStatus();rpLoadRooms();plLoadConfig();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();bstWebhookSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
+rpCheckStatus();rpLoadRooms();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();bstWebhookSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
 </script>
 <!-- 联想下拉（挂在 body 末尾，fixed 定位，不受 .card overflow/transform 影响） -->
 <div id="ts-autocomplete" style="display:none;position:fixed;z-index:9999;max-height:200px;overflow-y:auto;border-radius:var(--radius-sm)"></div>

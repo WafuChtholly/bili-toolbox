@@ -5,9 +5,8 @@
 # 注意:
 # 1. bilibili-api-python 16.1.1 用 ~= 强制锁定 httpx~=0.24.1 / aiohttp~=3.8.6，
 #    其余依赖版本已与其对齐，勿随意升级。
-# 2. bili-player 的播放功能依赖 Playwright/Chromium，而 Chromium 110+ 已放弃 Win7，
-#    故 Win7 上不安装 playwright，该功能不可用；bili-booster 的 proxy 播放量提升
-#    和自动互动功能不受影响。
+# 2. 车机长线依赖 pycryptodomex 做 AES 加密上报，纯 Python 兼容 Win7；
+#    bili-booster 的 proxy 播放量提升和自动互动功能不受影响。
 
 # --- 统一 WebUI (app.py) ---
 flask~=3.0.3
@@ -25,6 +24,9 @@ aiohttp~=3.8.6
 # --- bili-booster 播放量提升(proxy) ---
 requests~=2.31.0
 fake-useragent~=1.5.1
+
+# --- 车机长线（AES 加密上报） ---
+pycryptodomex~=3.20.0
 
 # --- bili-redpocket 直播红包助手（可选） ---
 loguru~=0.7.2
