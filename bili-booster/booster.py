@@ -113,23 +113,71 @@ def build_random_cookies():
     return f'buvid3={buvid3}; buvid4={buvid4}; b_nut={b_nut}; i-wanna-go-back=-1; header_theme_version=BMD25032713'
 
 
-def fetch_video_info(video_id):
-    params = build_view_params(video_id)
-    response = requests.get(
-        'https://api.bilibili.com/x/web-interface/view',
-        params=params,
-        headers={'User-Agent': _ua_instance.random},
-        timeout=timeout + 2
-    )
+_VIEW_URL = 'https://api.bilibili.com/x/web-interface/view'
+# 机房 IP 只带 UA 直连 view 接口极易被 WAF 判 412，固定桌面 Chrome UA 并补全 Referer/Cookie，
+# 模拟正常网页内 XHR 请求。
+_VIEW_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+
+
+def _fetch_view_payload(params, proxy=None):
+    headers = {
+        'User-Agent': _VIEW_UA,
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://www.bilibili.com/',
+        'Origin': 'https://www.bilibili.com',
+        'Cookie': build_random_cookies(),
+    }
+    kwargs = {'params': params, 'headers': headers, 'timeout': timeout + 2}
+    if proxy:
+        kwargs['proxies'] = {'http': f'http://{proxy}', 'https': f'http://{proxy}'}
+    response = requests.get(_VIEW_URL, **kwargs)
     response.raise_for_status()
-    payload = response.json()
+    return response.json()
+
+
+def _need_proxy_retry(error):
+    """只有被风控（HTTP 412/403/429 或风控 code）才值得换代理重试；BV 不存在之类的错误换 IP 无用。"""
+    resp = getattr(error, 'response', None)
+    if resp is not None and resp.status_code in (403, 412, 429):
+        return True
+    return getattr(error, 'code', None) in (-352, -412, -509, -799)
+
+
+def _parse_view_payload(payload):
     if payload.get('code') != 0 or 'data' not in payload:
         msg = payload.get('message', 'unknown error')
-        raise RuntimeError(f'bilibili API error: code={payload.get("code")} message={msg}')
+        err = RuntimeError(f'bilibili API error: code={payload.get("code")} message={msg}')
+        err.code = payload.get('code')
+        raise err
     data = payload['data']
     if not data.get('aid') or not data.get('bvid'):
         raise RuntimeError('video info missing key identifiers')
     return data
+
+
+def fetch_video_info(video_id, proxies=None, proxy_attempts=3):
+    """拉取稿件详情（含 stat.view）。
+
+    先直连一次；机房 IP 被 WAF 判 412 / 返回风控 code 时，从代理池随机抽几个代理重试。
+    代理池只用于这里的取数失败兜底，刷播放的 click/心跳通道不变。
+    """
+    params = build_view_params(video_id)
+    try:
+        return _parse_view_payload(_fetch_view_payload(params))
+    except Exception as direct_error:
+        candidates = [p for p in (proxies or []) if p]
+        if not candidates or not _need_proxy_retry(direct_error):
+            raise
+        random.shuffle(candidates)
+        last_error = direct_error
+        for proxy in candidates[:max(1, proxy_attempts)]:
+            try:
+                return _parse_view_payload(_fetch_view_payload(params, proxy))
+            except Exception as proxy_error:
+                last_error = proxy_error
+        raise RuntimeError(f'直连失败（{direct_error}），代理重试均失败（{last_error}）')
 
 
 def time_fmt(seconds):
@@ -492,7 +540,7 @@ def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, vi
         v['total_hits'] += hits
 
     try:
-        fresh = fetch_video_info(v['bvid'])
+        fresh = fetch_video_info(v['bvid'], proxies=total_proxies)
         with video_lock:
             v['current'] = fresh['stat']['view']
         gap = max(0, target - v['current'])
@@ -525,25 +573,41 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
     target = int(target_input)
 
     videos = []
+    info_proxies = list(proxies) if proxies is not None else None
     for raw_bv in bv_list:
         if stop_event and stop_event.is_set():
             log('stopped by user')
             return
         log(f'fetching info for {raw_bv}...')
+        info = None
         try:
-            info = fetch_video_info(raw_bv)
-            videos.append({
-                'bvid': info['bvid'],
-                'info': info,
-                'initial': info['stat']['view'],
-                'current': info['stat']['view'],
-                'total_hits': 0,
-            })
-            gap = max(0, target - info['stat']['view'])
-            log(f'  {info["bvid"]}: initial views = {info["stat"]["view"]}')
-            log(f'[RESULT] video|{info["bvid"]}|{info["stat"]["view"]}|0|0|{gap}')
+            info = fetch_video_info(raw_bv, proxies=info_proxies)
         except Exception as e:
-            log(f'  failed: {e}')
+            # 手动任务未注入代理快照：直连被 WAF 拦（412 等风控）时才懒加载一次代理池
+            if info_proxies is None and _need_proxy_retry(e):
+                log(f'  直连被风控（{e}），获取代理池重试...')
+                try:
+                    info_proxies = get_total_proxies(log, stop_event=stop_event) or []
+                except Exception as pe:
+                    log(f'  获取代理池失败: {pe}')
+                    info_proxies = []
+                try:
+                    info = fetch_video_info(raw_bv, proxies=info_proxies)
+                except Exception as e2:
+                    e = e2
+            if info is None:
+                log(f'  failed: {e}')
+                continue
+        videos.append({
+            'bvid': info['bvid'],
+            'info': info,
+            'initial': info['stat']['view'],
+            'current': info['stat']['view'],
+            'total_hits': 0,
+        })
+        gap = max(0, target - info['stat']['view'])
+        log(f'  {info["bvid"]}: initial views = {info["stat"]["view"]}')
+        log(f'[RESULT] video|{info["bvid"]}|{info["stat"]["view"]}|0|0|{gap}')
 
     if not videos:
         log('no videos available, exiting')
@@ -561,6 +625,11 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
             return
         refetch_proxies = False
         log(f'使用共享代理快照（共 {len(total_proxies)} 个），所有轮次复用')
+    elif info_proxies:
+        # 首轮 info 拉取时因 412 懒加载的代理池，直接复用，避免重复拉取
+        total_proxies = list(info_proxies)
+        refetch_proxies = False
+        log(f'复用首轮获取的代理（共 {len(total_proxies)} 个），所有轮次复用')
     elif not refetch_proxies:
         try:
             total_proxies = get_total_proxies(log, stop_event=stop_event)

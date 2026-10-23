@@ -139,9 +139,19 @@ def hb_mobile(info, session, buvid, buvid4, played, duration, play_type):
 
 
 def fetch_video_info(bv):
+    # 机房 IP 只带 UA 直连 view 接口易被 WAF 判 412，补全 Referer/Cookie 模拟网页内 XHR
+    headers = {
+        'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                       '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'),
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Referer': 'https://www.bilibili.com/',
+        'Origin': 'https://www.bilibili.com',
+        'Cookie': (f'buvid3={generate_buvid3()}; buvid4={generate_buvid4()}; '
+                   f'b_nut={int(time.time())}'),
+    }
     r = requests.get('https://api.bilibili.com/x/web-interface/view', params={'bvid': bv},
-                     timeout=TIMEOUT + 2,
-                     headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+                     timeout=TIMEOUT + 2, headers=headers)
     r.raise_for_status()
     p = r.json()
     if p.get('code') != 0 or 'data' not in p:
