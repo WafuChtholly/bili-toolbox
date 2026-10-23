@@ -4676,7 +4676,7 @@ let bstSchedPollTimer=null;
 let bstSchedLastLogLen=-1;
 let bstSchedIdleTicks=0;
 let bstSchedLogRaw='';        // 最近一次取到的完整定时任务日志
-let bstSchedLogBvs=[];        // 日志中出现过的稿件 BV（并发时用于筛选）
+let bstSchedLogBvs=[];        // 当前活跃（排队/运行中）的稿件 BV（并发时用于筛选）
 let bstSchedLogFilter=null;   // 当前筛选的 BV，null = 全部
 
 let bstSchedAccounts=[];        // [{uid,name,is_primary,has_sessdata}]
@@ -4810,13 +4810,15 @@ function bstSchedSetLogFilter(bv){
   bstSchedRenderLog();
 }
 
-function bstSchedSyncLog(text){
+function bstSchedSyncLog(text, activeBvs){
   bstSchedLogRaw=text||'';
+  // 筛选条只保留仍在排队/运行中的稿件，跑完即消失，避免历史稿件越积越多
+  const active=Array.isArray(activeBvs)?new Set(activeBvs):null;
   const bvs=[];
   const re=/^\s*└ \[([A-Za-z0-9]+)\]/;
   for(const l of bstSchedLogRaw.split('\n')){
     const m=l.match(re);
-    if(m&&!bvs.includes(m[1]))bvs.push(m[1]);
+    if(m&&(!active||active.has(m[1]))&&!bvs.includes(m[1]))bvs.push(m[1]);
   }
   const changed=bvs.join(',')!==bstSchedLogBvs.join(',');
   if(changed){
@@ -4847,7 +4849,7 @@ function bstScheduleUpdateStatus(s){
     setDot('bst-sched-dot','off');
     setText('bst-sched-text','定时任务未运行');
   }
-  if(s.log)bstSchedSyncLog(s.log);
+  if(s.log)bstSchedSyncLog(s.log,(s.active_tasks||[]).map(t=>t.bv));
 }
 
 function bstScheduleToggle(){
