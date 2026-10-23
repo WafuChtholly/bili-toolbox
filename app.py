@@ -1580,11 +1580,161 @@ def _fetch_member_videos(cred: dict, limit: int = BOOSTER_SCAN_LIMIT_DEFAULT) ->
     return videos
 
 
+def _fetch_season_videos(cred: dict, mid, limit=None, public=False) -> list:
+    """获取指定账号所有合集内的稿件，用于补齐空间防刷屏导致的漏稿。
+
+    空间防刷屏开启后，合集内除最早发布的稿件外，其余稿件会从空间接口
+    （x/space/wbi/arc/search）隐藏；合集详情接口 seasons_archives_list 不受该设置影响。
+    public=True 时用公开接口拿合集列表（可查他人 UID）；否则用创作中心接口（自己账号，更全）。
+    单个合集失败只跳过，不影响其他合集。limit 与扫描深度一致（0=全量，带上限）。"""
+    import random
+    import httpx
+
+    sessdata = cred.get("sessdata", "")
+    uid = str(mid or cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or "")
+    if not uid or (not public and not sessdata):
+        return []
+
+    ua = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+          "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+
+    limit = int(limit or 0)
+    cap = BOOSTER_MAX_SCAN_LIMIT if limit <= 0 else max(limit, FETCH_MEMBER_PAGE_SIZE * 2)
+
+    # 1) 拿合集 ID 列表
+    season_ids = []
+    if public:
+        # 公开接口：任意账号的合集列表（page_size 上限 20，超过会返回 -400）
+        headers = {"User-Agent": ua,
+                   "Referer": f"https://space.bilibili.com/{uid}/channel/collectiondetail"}
+        with httpx.Client(timeout=FETCH_VIDEOS_TIMEOUT, headers=headers) as client:
+            pn = 1
+            while pn <= 20:
+                if pn > 1:
+                    time.sleep(random.uniform(*FETCH_PAGE_DELAY))
+                resp = client.get("https://api.bilibili.com/x/polymer/web-space/seasons_series_list",
+                                  params={"mid": uid, "page_num": pn, "page_size": 20})
+                data = resp.json()
+                code = data.get("code")
+                if code != 0:
+                    raise RuntimeError(f"公开合集列表接口返回异常 code={code} msg={data.get('message') or ''}")
+                items = (data.get("data") or {}).get("items_lists") or {}
+                seasons = items.get("seasons_list") or []
+                for s in seasons:
+                    sid = (s.get("meta") or {}).get("season_id")
+                    if sid:
+                        try:
+                            season_ids.append(int(sid))
+                        except (TypeError, ValueError):
+                            pass
+                page = items.get("page") or {}
+                total = int(page.get("total") or 0)
+                size = int(page.get("page_size") or 20)
+                if not seasons or len(seasons) < size or (total and pn * size >= total):
+                    break
+                pn += 1
+    else:
+        # 创作中心：自己名下全部合集（含未公开状态）
+        headers = {"User-Agent": ua, "Referer": "https://member.bilibili.com/",
+                   "Origin": "https://member.bilibili.com"}
+        cookies = {"SESSDATA": sessdata, "bili_jct": cred.get("bili_jct", ""), "DedeUserID": uid}
+        with httpx.Client(timeout=FETCH_VIDEOS_TIMEOUT, headers=headers, cookies=cookies) as client:
+            pn = 1
+            while pn <= 20:
+                if pn > 1:
+                    time.sleep(random.uniform(*FETCH_PAGE_DELAY))
+                resp = client.get("https://member.bilibili.com/x2/creative/web/seasons",
+                                  params={"pn": pn, "ps": FETCH_MEMBER_PAGE_SIZE})
+                data = resp.json()
+                code = data.get("code")
+                if code != 0:
+                    raise RuntimeError(f"合集列表接口返回异常 code={code} msg={data.get('message') or ''}")
+                d = data.get("data") or {}
+                items = d.get("seasons") or []
+                for s in items:
+                    sobj = s.get("season") if isinstance(s.get("season"), dict) else s
+                    sid = sobj.get("id") or s.get("id")
+                    if sid:
+                        try:
+                            season_ids.append(int(sid))
+                        except (TypeError, ValueError):
+                            pass
+                total = int(d.get("total") or 0)
+                if len(items) < FETCH_MEMBER_PAGE_SIZE or (total and pn * FETCH_MEMBER_PAGE_SIZE >= total):
+                    break
+                pn += 1
+
+    if not season_ids:
+        return []
+
+    # 2) 合集详情（公开接口）：逐合集翻页取全部稿件
+    videos = []
+    space_headers = {"User-Agent": ua,
+                     "Referer": f"https://space.bilibili.com/{uid}/channel/collectiondetail"}
+    with httpx.Client(timeout=FETCH_VIDEOS_TIMEOUT, headers=space_headers) as client:
+        for sid in season_ids:
+            if len(videos) >= cap:
+                break
+            try:
+                page_num = 1
+                while page_num <= 100:
+                    if page_num > 1:
+                        time.sleep(random.uniform(*FETCH_PAGE_DELAY))
+                    resp = client.get(
+                        "https://api.bilibili.com/x/polymer/web-space/seasons_archives_list",
+                        params={"mid": uid, "season_id": sid, "page_num": page_num,
+                                "page_size": FETCH_MEMBER_PAGE_SIZE, "sort_reverse": "false"})
+                    data = resp.json()
+                    code = data.get("code")
+                    if code != 0:
+                        raise RuntimeError(f"code={code} msg={data.get('message') or ''}")
+                    d = data.get("data") or {}
+                    archives = d.get("archives") or []
+                    for a in archives:
+                        stat = a.get("stat") or {}
+                        videos.append({
+                            "aid": int(a.get("aid") or 0),
+                            "bvid": a.get("bvid", ""),
+                            "title": a.get("title", ""),
+                            "pic": a.get("pic", ""),
+                            "play": int(stat.get("view", 0) or 0),
+                            "created": int(a.get("pubdate") or a.get("ctime") or 0),
+                            "length": _fmt_duration(a.get("duration")),
+                        })
+                        if len(videos) >= cap:
+                            break
+                    page_info = d.get("page") or {}
+                    total = int(page_info.get("total") or 0)
+                    size = int(page_info.get("page_size") or FETCH_MEMBER_PAGE_SIZE)
+                    if len(videos) >= cap or not archives or len(archives) < size \
+                            or (total and page_num * size >= total):
+                        break
+                    page_num += 1
+            except Exception as e:
+                print(f"[WARN] 合集 {sid} 稿件获取失败，已跳过: {e}")
+    return videos
+
+
+def _merge_videos(*lists) -> list:
+    """按 bvid 去重合并多个投稿列表（保留先出现的记录，即主列表优先）。"""
+    merged = []
+    seen = set()
+    for lst in lists:
+        for v in lst or []:
+            bvid = str(v.get("bvid") or "").strip()
+            if bvid:
+                if bvid in seen:
+                    continue
+                seen.add(bvid)
+            merged.append(v)
+    return merged
+
+
 def _fetch_my_videos(cred: dict, mid=None, limit=None) -> list:
     """获取投稿列表，供 my-videos 接口和定时任务共用。
 
-    - 自己（mid 为空或等于凭证本人）：走创作中心接口（最全，不漏稿）；失败时回退空间接口。
-    - 他人 UID：只能走空间接口（公开数据，可能漏稿）。
+    - 自己（mid 为空或等于凭证本人）：创作中心接口为主（失败回退空间接口），再用合集接口补齐合集稿件。
+    - 他人 UID：空间接口（单页 50 条）+ 公开合集接口补齐合集稿件；合集外的更早稿件仍可能漏。
     limit 为扫描深度（None 时读配置，0=全量）。"""
     from bilibili_api import Credential
     from bilibili_api.user import User, VideoOrder
@@ -1601,9 +1751,20 @@ def _fetch_my_videos(cred: dict, mid=None, limit=None) -> list:
 
     if own_mid and target_mid == own_mid:
         try:
-            return _fetch_member_videos(cred, limit)
+            videos = _fetch_member_videos(cred, limit)
         except Exception as e:
             print(f"[WARN] 创作中心接口获取投稿失败，回退空间接口（可能漏稿）: {e}")
+        else:
+            # 空间防刷屏会把合集内非首个稿件从空间接口隐藏，创作中心接口同样可能只返回首个；
+            # 合集详情接口不受该设置影响，这里补齐并统一按发布时间倒序。
+            try:
+                videos = _merge_videos(videos, _fetch_season_videos(cred, own_mid, limit))
+            except Exception as e:
+                print(f"[WARN] 合集稿件补充失败（不影响主列表）: {e}")
+            videos.sort(key=lambda v: int(v.get("created") or 0), reverse=True)
+            if limit > 0:
+                videos = videos[:limit]
+            return videos
 
     # Credential 会自动处理 SESSDATA 编码和 buvid 获取
     credential = Credential(
@@ -1646,6 +1807,15 @@ def _fetch_my_videos(cred: dict, mid=None, limit=None) -> list:
             "created": v.get("created", 0),
             "length": v.get("length", ""),
         })
+
+    # 空间防刷屏会把合集内非首个稿件从空间接口隐藏，用公开合集接口补齐（他人 UID 同样可查）
+    try:
+        videos = _merge_videos(videos, _fetch_season_videos(cred, target_mid, limit, public=True))
+    except Exception as e:
+        print(f"[WARN] UID {target_mid} 合集稿件补充失败（不影响主列表）: {e}")
+    videos.sort(key=lambda v: int(v.get("created") or 0), reverse=True)
+    if limit > 0:
+        videos = videos[:limit]
     return videos
 
 
@@ -1866,7 +2036,7 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
                 if stop_event.is_set():
                     _append_log(log_target, "[SYSTEM] 正在停止...")
                     break
-                _append_log(log_target, f"获取监控 UID {uid} 的投稿列表...（扫描{scan_desc}，他人稿件走空间接口最多 50 条，"
+                _append_log(log_target, f"获取监控 UID {uid} 的投稿列表...（扫描{scan_desc}，空间接口最多 50 条 + 合集补齐，"
                                         f"筛选条件：播放量 < {threshold}，目标播放数：{target}）")
                 try:
                     videos = _fetch_my_videos(main_cred, mid=uid, limit=scan_limit)
@@ -3118,7 +3288,7 @@ def collection_orphan_videos():
         except Exception as e:
             print(f"[COLLECTION] 补充 section_id 失败: {e}")
 
-        # 3) 获取用户全部投稿（空间 API，可靠）
+        # 3) 获取用户全部投稿（空间 API；防刷屏会隐藏合集内稿件，见 3a 补齐）
         all_videos_raw = []
         pn = 1
         loop2 = asyncio.new_event_loop()
@@ -3148,11 +3318,28 @@ def collection_orphan_videos():
         finally:
             loop2.close()
 
+        # 3a) 合集补齐：空间接口受「防刷屏」影响会隐藏合集内除首个外的稿件，
+        #     用合集详情接口（不受影响）补回，并同步并入 season_aids 兜底。
+        try:
+            _season_cred = {"sessdata": sessdata, "bili_jct": bili_jct, "dedeuserid": str(mid)}
+            _season_vids = _fetch_season_videos(_season_cred, mid, limit=0)
+            if _season_vids:
+                for _v in _season_vids:
+                    if _v.get("aid"):
+                        season_aids.add(_v["aid"])
+                    _v["_from_season"] = True
+                _before = len(all_videos_raw)
+                all_videos_raw = _merge_videos(all_videos_raw, _season_vids)
+                print(f"[COLLECTION] 合集补齐稿件: +{len(all_videos_raw) - _before}（合计 {len(all_videos_raw)}）")
+        except Exception as e:
+            print(f"[COLLECTION] 合集补齐失败（不影响散落扫描）: {e}")
+
         # 3b) 初步过滤：mid 不匹配的为联投
+        #     合集接口返回不含 mid，用 _from_season 标记跳过该判定
         coop_count = 0
         normal_videos = []
         for v in all_videos_raw:
-            if str(v.get("mid", "")) != str(mid):
+            if not v.get("_from_season") and str(v.get("mid", "")) != str(mid):
                 coop_count += 1
             else:
                 normal_videos.append(v)
@@ -4255,6 +4442,17 @@ def _ts_scan_worker(sessdata, bili_jct, mid, mode):
             loop.close()
 
         _ts_log(f"[TAG-SEARCH] 空间投稿总数: {len(all_vids)}")
+
+        # 空间防刷屏会把合集内除首个外的稿件从空间接口隐藏，用公开合集接口补齐，避免漏扫
+        try:
+            season_cred = {"sessdata": sessdata, "bili_jct": bili_jct, "dedeuserid": str(mid)}
+            season_vids = _fetch_season_videos(season_cred, mid, limit=0, public=True)
+            if season_vids:
+                before = len(all_vids)
+                all_vids = _merge_videos(all_vids, season_vids)
+                _ts_log(f"[TAG-SEARCH] 合集补齐: +{len(all_vids) - before}（合计 {len(all_vids)}）")
+        except Exception as e:
+            _ts_log(f"[TAG-SEARCH] 合集补齐失败（不影响扫描）: {e}")
 
         # 2) 确定需扫描的 aid
         cache = _load_tag_cache()
