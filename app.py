@@ -368,6 +368,9 @@ def _read_auto_cred():
 # ---- B站用户名查询（内存缓存 10 分钟） ----
 _UNAME_CACHE: dict = {}
 
+# ---- 监控 UID 昵称/头像缓存（uid -> (name, face, 时间戳)，6 小时） ----
+_WATCH_USER_CACHE: dict = {}
+
 
 def _fetch_bili_uname(sessdata: str, uid) -> str:
     """通过 nav 接口查询 UID 对应用户名；失败或无凭证返回空串。"""
@@ -2189,6 +2192,49 @@ def booster_schedule_config_get():
         "account_uids": cfg.get("account_uids") or [],
         "uids": cfg.get("uids") or [],
     })
+
+
+@app.route("/api/booster/user-info")
+def booster_user_info():
+    """批量查询 UID 的昵称与头像，用于定时任务页展示监控对象。
+    参数 uids=逗号分隔（最多 100 个）；返回 {success, users: {uid: {name, face}}}。"""
+    raw = (request.args.get("uids") or "").strip()
+    uids = [x.strip() for x in raw.split(",") if x.strip().isdigit()][:100]
+    if not uids:
+        return jsonify({"success": False, "message": "缺少有效 UID"}), 400
+
+    now = time.time()
+    users = {}
+    missing = []
+    for uid in uids:
+        hit = _WATCH_USER_CACHE.get(uid)
+        if hit and now - hit[2] < 6 * 3600:
+            users[uid] = {"name": hit[0], "face": hit[1]}
+        else:
+            missing.append(uid)
+
+    if missing:
+        # web-interface/card 未签名易被风控（-352），改用 bilibili_api 的 WBI 签名接口
+        from bilibili_api.user import User as BiliUser
+        loop = asyncio.new_event_loop()
+        try:
+            for uid in missing:
+                try:
+                    info = loop.run_until_complete(BiliUser(int(uid)).get_user_info())
+                    name = str(info.get("name") or "")
+                    face = str(info.get("face") or "")
+                    if face.startswith("http://"):
+                        face = "https://" + face[len("http://"):]
+                    if not name:
+                        continue
+                    users[uid] = {"name": name, "face": face}
+                    _WATCH_USER_CACHE[uid] = (name, face, now)
+                except Exception:
+                    continue
+                time.sleep(0.2)  # 轻微限速，避免短时间批量查询触发风控
+        finally:
+            loop.close()
+    return jsonify({"success": True, "users": users})
 
 
 @app.route("/api/booster/schedule/config", methods=["POST"])

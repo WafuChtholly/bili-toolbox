@@ -4915,10 +4915,32 @@ function bstSchedulePollTick(){
 
 // ── 监控 UID 列表（低播放量刷量任务的目标） ──
 let bstUserUids=[];             // 当前监控的 UID 列表
+let bstUserInfoCache={};        // uid -> {name, face}（昵称/头像缓存）
+let bstUserInfoTried={};        // 已请求过但查不到的 uid，避免重复请求
 let bstUserFollowingCache=null; // 关注列表缓存
 let bstUserGroupsCache=[];      // 关注分组列表缓存
 let bstUserGroupMembersCache={};// tagid -> 分组成员列表
 let bstUserCurrentGroup=null;   // 当前选中的分组 tagid（null = 全部）
+
+/* 把关注列表里的昵称/头像写入缓存 */
+function bstUserCacheInfo(list){
+  (list||[]).forEach(u=>{
+    if(u&&u.uid)bstUserInfoCache[String(u.uid)]={name:u.name||'',face:u.face||''};
+  });
+}
+
+/* 补齐当前监控 UID 中缺失的昵称/头像（只请求缺失项） */
+function bstUserEnsureInfo(){
+  const missing=bstUserUids.filter(uid=>!bstUserInfoCache[uid]&&!bstUserInfoTried[uid]);
+  if(!missing.length)return Promise.resolve();
+  missing.forEach(uid=>{bstUserInfoTried[uid]=true;});
+  return fetch('/api/booster/user-info?uids='+encodeURIComponent(missing.join(',')))
+    .then(r=>r.json()).then(d=>{
+      if(!d.success)return;
+      Object.keys(d.users||{}).forEach(uid=>{bstUserInfoCache[uid]=d.users[uid];});
+      bstUserRenderUids();
+    }).catch(()=>{});
+}
 
 function bstUserRenderUids(){
   const box=document.getElementById('bst-user-uid-list');
@@ -4927,8 +4949,16 @@ function bstUserRenderUids(){
       box.innerHTML='<span style="font-size:12px;color:var(--text-tertiary)">暂无监控 UID，请添加或从关注列表选择</span>';
     }else{
       box.innerHTML=bstUserUids.map((u,i)=>{
+        const info=bstUserInfoCache[u]||{};
+        const face=info.face
+          ?'<img src="'+_escHtml(info.face)+'" referrerpolicy="no-referrer" style="width:20px;height:20px;border-radius:50%;object-fit:cover;margin-right:6px;vertical-align:middle">'
+          :'';
+        const name=info.name?_escHtml(info.name):'UID '+_escHtml(u);
+        const sub=info.name?' <span style="font-size:11px;color:var(--text-tertiary)">UID '+_escHtml(u)+'</span>':'';
         return '<span class="video-pick-item selected" style="flex:0 0 auto;padding:6px 10px" title="UID: '+_escHtml(u)+'">'
-          +'<span style="font-size:13px">'+_escHtml(u)+'</span>'
+          +face
+          +'<span style="font-size:13px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle">'+name+'</span>'
+          +sub
           +'<span style="cursor:pointer;margin-left:6px;color:var(--warn)" onclick="bstUserRemoveUid('+i+')">✕</span></span>';
       }).join('');
     }
@@ -4937,6 +4967,7 @@ function bstUserRenderUids(){
   document.querySelectorAll('#bst-user-following-box input[type=checkbox]').forEach(cb=>{
     cb.checked=bstUserUids.includes(String(cb.dataset.uid));
   });
+  bstUserEnsureInfo();
 }
 
 function bstUserAddUid(uid){
@@ -4945,6 +4976,7 @@ function bstUserAddUid(uid){
   if(!val)return;
   if(!/^\d+$/.test(val)){alert('UID 必须为纯数字');return;}
   if(!bstUserUids.includes(val))bstUserUids.push(val);
+  delete bstUserInfoTried[val];  // 手动添加时允许重新查询昵称/头像
   if(input)input.value='';
   bstUserRenderUids();
 }
@@ -5025,6 +5057,7 @@ function bstUserSelectAllGroup(){
   const members=bstUserGroupMembersCache[String(bstUserCurrentGroup)]||[];
   if(!members.length)return;
   members.forEach(u=>{const uid=String(u.uid);if(!bstUserUids.includes(uid))bstUserUids.push(uid);});
+  bstUserCacheInfo(members);
   bstUserRenderUids();
   bstUserRenderFollowing(members);
 }
@@ -5033,6 +5066,7 @@ function bstUserRenderFollowing(list){
   const box=document.getElementById('bst-user-following-box');
   if(!box)return;
   if(!list.length){box.innerHTML='<p style="color:var(--text-tertiary);font-size:12px;text-align:center;padding:16px">无关注用户</p>';return;}
+  bstUserCacheInfo(list);
   box.innerHTML=list.map(u=>{
     const checked=bstUserUids.includes(String(u.uid))?'checked':'';
     const face=u.face?`<img src="${u.face}" referrerpolicy="no-referrer" style="width:28px;height:28px;border-radius:50%;margin-right:8px;object-fit:cover">`:'';
