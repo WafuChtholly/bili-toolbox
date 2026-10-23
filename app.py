@@ -365,6 +365,21 @@ def _read_auto_cred():
     return {}
 
 
+def _booster_view_cookie(cred) -> str:
+    """把账号凭证拼成 view 接口用的 Cookie 头：机房 IP 带登录态可降低被 WAF 判 412 的概率。"""
+    cred = cred or {}
+    sessdata = cred.get("sessdata") or ""
+    if not sessdata:
+        return ""
+    parts = [f"SESSDATA={sessdata}"]
+    if cred.get("bili_jct"):
+        parts.append(f"bili_jct={cred['bili_jct']}")
+    uid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
+    if uid:
+        parts.append(f"DedeUserID={uid}")
+    return "; ".join(parts)
+
+
 # ---- B站用户名查询（内存缓存 10 分钟） ----
 _UNAME_CACHE: dict = {}
 
@@ -1117,7 +1132,7 @@ def _make_booster_logger(task_id: str):
     return _log
 
 
-def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True, proxies: list = None, probe_cache: dict = None, car_rounds: int = 0):
+def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True, proxies: list = None, probe_cache: dict = None, car_rounds: int = 0, cookie: str = ""):
     # 等待并发闸门：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
     _booster_gate.acquire()
     try:
@@ -1135,7 +1150,7 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
         logger = _make_booster_logger(task_id)
         try:
             bv_input = ",".join(bv_list)
-            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies, proxies=proxies, probe_cache=probe_cache, log_fn=logger)
+            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies, proxies=proxies, probe_cache=probe_cache, log_fn=logger, cookie=cookie or None)
             with booster_lock:
                 if booster_tasks[task_id]["status"] != "cancelled":
                     booster_tasks[task_id]["status"] = "completed"
@@ -1242,7 +1257,11 @@ def booster_run():
         }
     with log_lock:
         log_buffers[tid] = []
-    t = threading.Thread(target=_run_booster_task, args=(tid, bv_list, int(target), stop_event, max_rounds, refetch_proxies), daemon=True)
+    t = threading.Thread(target=_run_booster_task,
+                         kwargs={"task_id": tid, "bv_list": bv_list, "target": int(target), "stop_event": stop_event,
+                                 "max_rounds": max_rounds, "refetch_proxies": refetch_proxies,
+                                 "cookie": _booster_view_cookie(_read_auto_cred())},
+                         daemon=True)
     t.start()
     return jsonify({"task_id": tid})
 
@@ -1885,12 +1904,13 @@ def _booster_active_bvids() -> set:
 
 
 def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Event, log_target: str,
-                         proxies: list = None, probe_cache: dict = None, car_rounds: int = 0) -> int:
+                         proxies: list = None, probe_cache: dict = None, car_rounds: int = 0, cookie: str = "") -> int:
     """为给定稿件列表各创建一个 booster 子任务，返回创建数量。
 
     已在队列/运行中的 bvid，以及当前播放量已达目标的稿件直接跳过，避免每轮重复派发造成堆积。
     proxies 为本轮共享的代理快照：同一批子任务共用一份，避免各自重复拉取代理池。
     probe_cache 为共享的探测结果缓存：同一批子任务对同一批代理只探测一次。
+    cookie 为账号 Cookie：view 接口带登录态，降低服务器机房 IP 被判 412 的概率。
     """
     created = 0
     active_bvids = _booster_active_bvids()
@@ -1926,7 +1946,10 @@ def _booster_spawn_tasks(low_videos: list, target: int, stop_event: threading.Ev
             log_buffers[tid] = []
         _append_log(log_target, f"已创建任务 {tid} → {bvid}《{v.get('title','')}》（当前播放 {play}）")
         t = threading.Thread(target=_run_booster_task,
-                             args=(tid, [bvid], target, stop_event, 5, proxies is None, proxies, probe_cache, car_rounds), daemon=True)
+                             kwargs={"task_id": tid, "bv_list": [bvid], "target": target, "stop_event": stop_event,
+                                     "max_rounds": 5, "refetch_proxies": proxies is None, "proxies": proxies,
+                                     "probe_cache": probe_cache, "car_rounds": car_rounds, "cookie": cookie},
+                             daemon=True)
         t.start()
         created += 1
     return created
@@ -2028,7 +2051,7 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
                     ", ".join(v["bvid"] for v in low))
         total_created += _booster_spawn_tasks(low, target, stop_event, log_target,
                                               proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache,
-                                              car_rounds=car_rounds)
+                                              car_rounds=car_rounds, cookie=_booster_view_cookie(acc_cred))
 
     # 监控 UID：统一用主账号凭证抓取其公开投稿
     if watch_uids and not stop_event.is_set():
@@ -2060,7 +2083,7 @@ def _booster_schedule_once(stop_event: threading.Event, log_target: str = "boost
                             ", ".join(v["bvid"] for v in low))
                 total_created += _booster_spawn_tasks(low, target, stop_event, log_target,
                                                       proxies=_get_shared_proxies(), probe_cache=_booster_probe_cache,
-                                                      car_rounds=car_rounds)
+                                                      car_rounds=car_rounds, cookie=_booster_view_cookie(main_cred))
 
     # 「once」模式下不进入循环：等所有派生的 booster 子任务都结束后才标记结束
     if _booster_schedule["running"] == "once":

@@ -114,31 +114,70 @@ def build_random_cookies():
 
 
 _VIEW_URL = 'https://api.bilibili.com/x/web-interface/view'
+_WBI_VIEW_URL = 'https://api.bilibili.com/x/web-interface/wbi/view'
 # 机房 IP 只带 UA 直连 view 接口极易被 WAF 判 412，固定桌面 Chrome UA 并补全 Referer/Cookie，
 # 模拟正常网页内 XHR 请求。
 _VIEW_UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
             '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36')
+# WBI 签名用的重排表（img_key + sub_key 取前 32 位）
+_WBI_MIXIN_TAB = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49,
+                  33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40,
+                  61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62,
+                  11, 36, 20, 34, 44, 52]
+_wbi_key_cache = {'key': '', 'ts': 0}
 
 
-def _fetch_view_payload(params, proxy=None):
-    headers = {
+def _build_view_headers(cookie):
+    cookies = build_random_cookies()
+    if cookie:
+        # 账号 Cookie（SESSDATA 等）能显著降低机房 IP 被 WAF 判 412 的概率
+        cookies = f'{cookie}; {cookies}'
+    return {
         'User-Agent': _VIEW_UA,
         'Accept': 'application/json, text/plain, */*',
         'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
         'Referer': 'https://www.bilibili.com/',
         'Origin': 'https://www.bilibili.com',
-        'Cookie': build_random_cookies(),
+        'Cookie': cookies,
     }
-    kwargs = {'params': params, 'headers': headers, 'timeout': timeout + 2}
-    if proxy:
-        kwargs['proxies'] = {'http': f'http://{proxy}', 'https': f'http://{proxy}'}
-    response = requests.get(_VIEW_URL, **kwargs)
+
+
+def _fetch_view_payload(params, cookie=None):
+    response = requests.get(_VIEW_URL, params=params, headers=_build_view_headers(cookie), timeout=timeout + 2)
     response.raise_for_status()
     return response.json()
 
 
-def _need_proxy_retry(error):
-    """只有被风控（HTTP 412/403/429 或风控 code）才值得换代理重试；BV 不存在之类的错误换 IP 无用。"""
+def _wbi_mixin_key():
+    """取 WBI 签名密钥（img_key + sub_key），进程内缓存 1 小时。"""
+    now = time_module.time()
+    if _wbi_key_cache['key'] and now - _wbi_key_cache['ts'] < 3600:
+        return _wbi_key_cache['key']
+    resp = requests.get('https://api.bilibili.com/x/web-interface/nav',
+                        headers=_build_view_headers(None), timeout=timeout + 2)
+    resp.raise_for_status()
+    wbi_img = (resp.json().get('data') or {}).get('wbi_img') or {}
+    img_key = wbi_img['img_url'].rsplit('/', 1)[-1].split('.')[0]
+    sub_key = wbi_img['sub_url'].rsplit('/', 1)[-1].split('.')[0]
+    raw = img_key + sub_key
+    key = ''.join(raw[i] for i in _WBI_MIXIN_TAB)[:32]
+    _wbi_key_cache.update(key=key, ts=now)
+    return key
+
+
+def _fetch_wbi_view_payload(params, cookie=None):
+    """走 WBI 签名版 view 接口：空间等 WBI 接口在机房 IP 上可用，用作被 WAF 拦时的备用通道。"""
+    signed = dict(params)
+    signed['wts'] = str(int(time_module.time()))
+    query = '&'.join(f'{k}={signed[k]}' for k in sorted(signed))
+    signed['w_rid'] = hashlib.md5((query + _wbi_mixin_key()).encode()).hexdigest()
+    response = requests.get(_WBI_VIEW_URL, params=signed, headers=_build_view_headers(cookie), timeout=timeout + 2)
+    response.raise_for_status()
+    return response.json()
+
+
+def _is_risk_control(error):
+    """被风控（HTTP 412/403/429 或风控 code）时才值得换通道；BV 不存在之类的错误换通道无用。"""
     resp = getattr(error, 'response', None)
     if resp is not None and resp.status_code in (403, 412, 429):
         return True
@@ -157,27 +196,25 @@ def _parse_view_payload(payload):
     return data
 
 
-def fetch_video_info(video_id, proxies=None, proxy_attempts=3):
-    """拉取稿件详情（含 stat.view）。
+def fetch_video_info(video_id, cookie=None):
+    """拉取稿件详情（含 stat.view / aid / cid）。
 
-    先直连一次；机房 IP 被 WAF 判 412 / 返回风控 code 时，从代理池随机抽几个代理重试。
-    代理池只用于这里的取数失败兜底，刷播放的 click/心跳通道不变。
+    只走直连，按通道依次降级：
+    1) 普通 view 接口（带浏览器头 + 账号 Cookie）；
+    2) 被 WAF 判 412 时改用 WBI 签名版 view 接口（空间等 WBI 接口在机房 IP 上可用）。
+    免费代理池仅做过 HTTP 可达性探测、基本不具备 HTTPS CONNECT 能力，因此不再走代理取数。
+    两条通道都失败时由调用方决定降级（如用扫描阶段已知的播放数）。
     """
     params = build_view_params(video_id)
     try:
-        return _parse_view_payload(_fetch_view_payload(params))
+        return _parse_view_payload(_fetch_view_payload(params, cookie))
     except Exception as direct_error:
-        candidates = [p for p in (proxies or []) if p]
-        if not candidates or not _need_proxy_retry(direct_error):
+        if not _is_risk_control(direct_error):
             raise
-        random.shuffle(candidates)
-        last_error = direct_error
-        for proxy in candidates[:max(1, proxy_attempts)]:
-            try:
-                return _parse_view_payload(_fetch_view_payload(params, proxy))
-            except Exception as proxy_error:
-                last_error = proxy_error
-        raise RuntimeError(f'直连失败（{direct_error}），代理重试均失败（{last_error}）')
+        try:
+            return _parse_view_payload(_fetch_wbi_view_payload(params, cookie))
+        except Exception as wbi_error:
+            raise RuntimeError(f'view 接口不可用（{direct_error}），WBI 接口也失败（{wbi_error}）')
 
 
 def time_fmt(seconds):
@@ -525,7 +562,7 @@ def _tagged_logger(log, tag):
     return _log
 
 
-def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache=None):
+def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache=None, cookie=None):
     """单个视频的 boost 任务，供多视频并发调用。"""
     if stop_event and stop_event.is_set():
         return
@@ -540,17 +577,20 @@ def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, vi
         v['total_hits'] += hits
 
     try:
-        fresh = fetch_video_info(v['bvid'], proxies=total_proxies)
+        fresh = fetch_video_info(v['bvid'], cookie=cookie)
         with video_lock:
             v['current'] = fresh['stat']['view']
+            v['verified'] = True
         gap = max(0, target - v['current'])
         log(f'  {v["bvid"]} views: {v["current"]} (+{v["current"] - v["initial"]})')
         log(f'[RESULT] video|{v["bvid"]}|{v["current"]}|{v["current"] - v["initial"]}|{v["total_hits"]}|{gap}')
     except Exception as e:
-        log(f'  failed to check views: {e}')
+        with video_lock:
+            v['verified'] = False
+        log(f'  无法刷新播放数（{e}），沿用 {v["current"]}')
 
 
-def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True, proxies=None, probe_cache=None, log_fn=None):
+def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True, proxies=None, probe_cache=None, log_fn=None, cookie=None):
     """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。
     max_rounds 为最大轮数，传 0 或 None 表示无上限。
     refetch_proxies 为 True 时每轮重新获取代理，为 False 时只在启动时获取一次并复用。
@@ -559,7 +599,8 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
     probe_cache 为外部注入的探测结果缓存（跨稿件/跨轮共享）：不传则本任务内部新建，
     至少保证同一任务的多轮之间不重复探测。
     log_fn 为外部注入的日志函数：并发任务各自传入绑定到自己缓冲区的 log，
-    避免靠切换全局 sys.stdout 捕获日志（多任务会互相抢占，导致日志串台）。"""
+    避免靠切换全局 sys.stdout 捕获日志（多任务会互相抢占，导致日志串台）。
+    cookie 为账号 Cookie 头（SESSDATA 等）：view 接口带登录态可降低机房 IP 被 WAF 判 412 的概率。"""
     log = log_fn or print
 
     if probe_cache is None:
@@ -573,37 +614,23 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
     target = int(target_input)
 
     videos = []
-    info_proxies = list(proxies) if proxies is not None else None
     for raw_bv in bv_list:
         if stop_event and stop_event.is_set():
             log('stopped by user')
             return
         log(f'fetching info for {raw_bv}...')
-        info = None
         try:
-            info = fetch_video_info(raw_bv, proxies=info_proxies)
+            info = fetch_video_info(raw_bv, cookie=cookie)
         except Exception as e:
-            # 手动任务未注入代理快照：直连被 WAF 拦（412 等风控）时才懒加载一次代理池
-            if info_proxies is None and _need_proxy_retry(e):
-                log(f'  直连被风控（{e}），获取代理池重试...')
-                try:
-                    info_proxies = get_total_proxies(log, stop_event=stop_event) or []
-                except Exception as pe:
-                    log(f'  获取代理池失败: {pe}')
-                    info_proxies = []
-                try:
-                    info = fetch_video_info(raw_bv, proxies=info_proxies)
-                except Exception as e2:
-                    e = e2
-            if info is None:
-                log(f'  failed: {e}')
-                continue
+            log(f'  failed: {e}')
+            continue
         videos.append({
             'bvid': info['bvid'],
             'info': info,
             'initial': info['stat']['view'],
             'current': info['stat']['view'],
             'total_hits': 0,
+            'verified': True,
         })
         gap = max(0, target - info['stat']['view'])
         log(f'  {info["bvid"]}: initial views = {info["stat"]["view"]}')
@@ -625,11 +652,6 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
             return
         refetch_proxies = False
         log(f'使用共享代理快照（共 {len(total_proxies)} 个），所有轮次复用')
-    elif info_proxies:
-        # 首轮 info 拉取时因 412 懒加载的代理池，直接复用，避免重复拉取
-        total_proxies = list(info_proxies)
-        refetch_proxies = False
-        log(f'复用首轮获取的代理（共 {len(total_proxies)} 个），所有轮次复用')
     elif not refetch_proxies:
         try:
             total_proxies = get_total_proxies(log, stop_event=stop_event)
@@ -679,24 +701,27 @@ def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=
         # 多视频完全并发执行
         video_lock = threading.Lock()
         pending = [v for v in videos if v['current'] < target]
+        for v in pending:
+            v['verified'] = False
         threads = []
         for v in pending:
             if stop_event and stop_event.is_set():
                 break
-            t = threading.Thread(target=_boost_single_video, args=(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache))
+            t = threading.Thread(target=_boost_single_video, args=(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache, cookie))
             t.start()
             threads.append(t)
         for t in threads:
             t.join()
 
         # check if any video grew this round
-        any_growth = False
-        for v in videos:
-            if v['current'] > views_before[v['bvid']]:
-                any_growth = True
-                break
-
-        if any_growth:
+        # 只统计本轮成功刷新到播放数的稿件：view 接口长期 412 时无法判断增长，
+        # 不能据此提前停止（否则刷量还在跑就被「no growth」判定结束）
+        verified = [v for v in videos if v.get('verified')]
+        any_growth = any(v['current'] > views_before[v['bvid']] for v in verified)
+        if not verified:
+            no_growth_streak = 0
+            log('\n  warning: view 接口不可用，本轮无法确认播放增长，跳过停止判定')
+        elif any_growth:
             no_growth_streak = 0
         else:
             no_growth_streak += 1
