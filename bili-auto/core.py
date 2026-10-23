@@ -1445,6 +1445,45 @@ async def _get_default_fav_folder(cred: Credential, my_uid: int) -> int | None:
     return None
 
 
+COIN_ADD_URL = "https://api.bilibili.com/x/web-interface/coin/add"
+
+
+async def _pay_coin_direct(aid: int, bvid: str, num: int, cred: Credential) -> dict:
+    """直接调用投币接口。
+
+    实测（2026-10）：select_like=0 会被风控直接判 -401 非法访问（只投币不点赞
+    属于典型刷币特征），select_like=1 可正常 code=0。故固定附带点赞。
+    bilibili_api 的 pay_coin 只传 bvid、且用 like 字段（接口要 select_like），
+    这里按网页端口径带上 aid/bvid/multiply/select_like。
+    """
+    import aiohttp
+
+    data = {
+        "bvid": bvid,
+        "multiply": 1 if num == 1 else 2,
+        "select_like": 1,
+        "csrf": cred.bili_jct,
+    }
+    if aid:
+        data["aid"] = aid
+
+    headers = {
+        **_BILI_WEB_HEADERS,
+        "Referer": f"https://www.bilibili.com/video/{bvid}",
+        "Origin": "https://www.bilibili.com",
+    }
+    timeout = aiohttp.ClientTimeout(total=15)
+    async with aiohttp.ClientSession(cookies=cred.get_cookies(), headers=headers, timeout=timeout) as session:
+        async with session.post(COIN_ADD_URL, data=data) as resp:
+            if resp.status == 412:
+                raise RuntimeError("HTTP 412（风控拦截）")
+            result = await resp.json(content_type=None)
+
+    if result.get("code") != 0:
+        raise RuntimeError(f"code={result.get('code')} msg={result.get('message')}")
+    return result
+
+
 # ---- interact ----
 async def _interruptible_sleep(seconds: float, stop_event: threading.Event | None = None) -> bool:
     """Sleep that can be interrupted by stop_event. Returns True if interrupted."""
@@ -1526,14 +1565,20 @@ async def interact_with_video(
             return results
         coin_num = int(cfg.get("coin_num", 2) or 2)
         try:
-            await v.pay_coin(num=coin_num, like=False)
-            logger.info("✅ 投币(%d币): %s", coin_num, bvid)
+            await _pay_coin_direct(aid, bvid, coin_num, cred)
+            logger.info("✅ 投币(%d币，按接口要求附带点赞): %s", coin_num, bvid)
             results["coin"] = "success"
         except Exception as e:
             err_str = str(e)
             if "34005" in err_str:
                 logger.info("✅ 投币: %s (已投币)", bvid)
                 results["coin"] = "already_done"
+            elif "-101" in err_str:
+                logger.error("❌ 投币失败，凭证失效，请重新登录: %s", bvid)
+                results["coin"] = "auth_failed"
+            elif "412" in err_str:
+                logger.warning("⚠️ 投币失败（风控拦截）: %s — %s", bvid, e)
+                results["coin"] = "risk_control"
             else:
                 logger.warning("⚠️ 投币失败: %s — %s", bvid, e)
                 results["coin"] = "failed"

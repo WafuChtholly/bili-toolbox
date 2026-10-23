@@ -784,6 +784,8 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   flex-shrink: 0;
 }
 .coin-num-select:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(247,113,159,0.18); }
+/* 投币行：下拉紧挨开关，避免两个 auto 外边距把下拉挤到行中间 */
+.switch-row .coin-num-select + input[type="checkbox"] { margin-left: 8px; }
 
 /* 悬停行（JS 生成的用户行 / 视频行） */
 .following-item { display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:10px; cursor:pointer; transition: background var(--transition); }
@@ -1943,13 +1945,13 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             </label>
             <div id="auto-sub-actions" class="act-sub" style="display:none">
               <label class="switch-row"><span>点赞</span><input type="checkbox" id="auto-act-like" onchange="onSubActionChange()"></label>
-              <label class="switch-row"><span>投币</span>
+              <div class="switch-row"><label for="auto-act-coin" style="flex:1;cursor:pointer">投币</label>
                 <select id="auto-coin-num" class="coin-num-select" title="每次投币数量">
                   <option value="2">双币</option>
                   <option value="1">单币</option>
                 </select>
                 <input type="checkbox" id="auto-act-coin" onchange="onSubActionChange()">
-              </label>
+              </div>
               <label class="switch-row"><span>收藏</span><input type="checkbox" id="auto-act-favorite" onchange="onSubActionChange()"></label>
             </div>
           </div>
@@ -2148,13 +2150,13 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
             </label>
             <div id="hist-sub-actions" class="act-sub" style="display:none">
               <label class="switch-row"><span>点赞</span><input type="checkbox" id="hist-act-like" onchange="histOnSubActionChange()"></label>
-              <label class="switch-row"><span>投币</span>
+              <div class="switch-row"><label for="hist-act-coin" style="flex:1;cursor:pointer">投币</label>
                 <select id="hist-coin-num" class="coin-num-select" title="每次投币数量">
                   <option value="2">双币</option>
                   <option value="1">单币</option>
                 </select>
                 <input type="checkbox" id="hist-act-coin" onchange="histOnSubActionChange()">
-              </label>
+              </div>
               <label class="switch-row"><span>收藏</span><input type="checkbox" id="hist-act-favorite" onchange="histOnSubActionChange()"></label>
             </div>
           </div>
@@ -2261,14 +2263,21 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
     <div class="card-body">
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span id="bst-login-info" style="color:var(--text-secondary)">加载中...</span>
-        <button class="btn btn-outline btn-sm" onclick="bstFetchMyVideos(this)">📦 获取我的投稿</button>
+        <button class="btn btn-outline btn-sm" id="bst-fetch-btn" onclick="bstFetchMyVideos(this)">📦 获取我的投稿</button>
       </div>
       <div id="bst-my-videos" style="display:none;margin-top:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="color:var(--text-secondary);font-size:13px">最近投稿（点击勾选，再点击下方按钮添加）</span>
+          <span style="color:var(--text-secondary);font-size:13px">投稿列表（可翻页，跨页勾选后统一点击右侧按钮添加）</span>
           <button class="btn btn-outline btn-sm" onclick="bstAddSelected()">✅ 添加选中到下方</button>
         </div>
         <div id="bst-video-list" style="max-height:320px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+        <div id="bst-video-pager" style="display:none;justify-content:center;align-items:center;gap:8px;margin-top:10px">
+          <button class="btn btn-outline btn-sm" id="bst-page-prev" onclick="bstPageTo(bstPage.pn-1)">上一页</button>
+          <span id="bst-page-info" style="font-size:12px;color:var(--text-tertiary)"></span>
+          <button class="btn btn-outline btn-sm" id="bst-page-next" onclick="bstPageTo(bstPage.pn+1)">下一页</button>
+          <input id="bst-page-jump" class="form-input" type="number" min="1" placeholder="页码" style="width:64px;height:28px;font-size:12px" onkeydown="if(event.key==='Enter')bstJumpPage()">
+          <button class="btn btn-outline btn-sm" onclick="bstJumpPage()">跳转</button>
+        </div>
       </div>
     </div>
   </div>
@@ -4575,23 +4584,59 @@ function bstLoadLoginStatus(){
   });
 }
 
+const bstPage={pn:1,ps:50,total:null,hasMore:false,selected:new Set(),loading:false};
+
 function bstFetchMyVideos(btnEl){
-  const btn=btnEl||event.target;
-  btn.disabled=true;btn.textContent='加载中...';
-  fetch('/api/booster/my-videos').then(r=>r.json()).then(d=>{
-    btn.disabled=false;btn.textContent='📦 获取我的投稿';
+  bstPage.selected.clear();
+  bstPage.pn=1;
+  bstLoadPage(1,btnEl);
+}
+
+function bstPageTo(pn){
+  if(bstPage.loading||pn<1||pn===bstPage.pn)return;
+  if(pn>bstPage.pn&&!bstPage.hasMore)return;
+  bstLoadPage(pn);
+}
+
+function bstJumpPage(){
+  const inp=document.getElementById('bst-page-jump');
+  let pn=parseInt(inp.value,10);
+  if(isNaN(pn)||pn<1){alert('请输入正确的页码');return;}
+  const totalPages=bstPage.total!=null?Math.max(1,Math.ceil(bstPage.total/bstPage.ps)):null;
+  if(totalPages&&pn>totalPages)pn=totalPages;
+  inp.value='';
+  bstLoadPage(pn);
+}
+
+function bstLoadPage(pn,btnEl){
+  if(bstPage.loading)return;
+  bstPage.loading=true;
+  const btn=btnEl||document.getElementById('bst-fetch-btn');
+  if(btn){btn.disabled=true;btn.textContent='加载中...';}
+  fetch('/api/booster/my-videos?pn='+pn+'&ps='+bstPage.ps).then(r=>r.json()).then(d=>{
+    bstPage.loading=false;
+    if(btn){btn.disabled=false;btn.textContent='📦 获取我的投稿';}
     if(!d.success){alert(d.message||'获取失败');return;}
-    if(!d.videos||d.videos.length===0){alert('没有找到投稿视频');return;}
+    const videos=d.videos||[];
+    if(!videos.length){
+      if((d.page||pn)===1){alert('没有找到投稿视频');return;}
+      alert('该页没有更多投稿了');
+      return;
+    }
+    bstPage.pn=d.page||pn;
+    bstPage.total=(d.total==null?null:d.total);
+    bstPage.hasMore=!!d.has_more;
     const box=document.getElementById('bst-video-list');
     box.innerHTML='';
-    d.videos.forEach(v=>{
+    videos.forEach(v=>{
       const date=new Date(v.created*1000);
       const dateStr=date.getFullYear()+'-'+(date.getMonth()+1).toString().padStart(2,'0')+'-'+date.getDate().toString().padStart(2,'0')+' '+date.getHours().toString().padStart(2,'0')+':'+date.getMinutes().toString().padStart(2,'0');
       const playText=v.play>=10000?(v.play/10000).toFixed(1)+'万':v.play;
+      const checked=bstPage.selected.has(v.bvid);
       const item=document.createElement('label');
-      item.className='video-pick-item';
+      item.className='video-pick-item'+(checked?' selected':'');
       item.innerHTML=`
-        <input type="checkbox" value="${v.bvid}" onchange="this.closest('.video-pick-item').classList.toggle('selected',this.checked)">
+        <input type="checkbox" value="${v.bvid}" ${checked?'checked':''} onchange="bstToggleSelect(this)">
         <img class="video-pick-thumb" src="${v.pic}@160w_90h.webp" loading="lazy" onerror="this.style.display='none'">
         <div class="video-pick-info">
           <div class="video-pick-title">${v.title}</div>
@@ -4600,12 +4645,39 @@ function bstFetchMyVideos(btnEl){
       box.appendChild(item);
     });
     document.getElementById('bst-my-videos').style.display='block';
-  }).catch(e=>{btn.disabled=false;btn.textContent='📦 获取我的投稿';alert('请求失败: '+e);});
+    bstUpdatePager();
+  }).catch(e=>{
+    bstPage.loading=false;
+    if(btn){btn.disabled=false;btn.textContent='📦 获取我的投稿';}
+    alert('请求失败: '+e);
+  });
+}
+
+function bstToggleSelect(cb){
+  if(cb.checked)bstPage.selected.add(cb.value);
+  else bstPage.selected.delete(cb.value);
+  cb.closest('.video-pick-item').classList.toggle('selected',cb.checked);
+  bstUpdatePager();
+}
+
+function bstUpdatePager(){
+  const pager=document.getElementById('bst-video-pager');
+  if(!pager)return;
+  pager.style.display='flex';
+  const totalPages=bstPage.total!=null?Math.max(1,Math.ceil(bstPage.total/bstPage.ps)):null;
+  let info='第 '+bstPage.pn+(totalPages?' / '+totalPages:'')+' 页';
+  if(bstPage.total!=null)info+=' · 共 '+bstPage.total+' 个稿件';
+  if(bstPage.selected.size)info+=' · 已选 '+bstPage.selected.size+' 个';
+  document.getElementById('bst-page-info').textContent=info;
+  document.getElementById('bst-page-prev').disabled=bstPage.pn<=1;
+  document.getElementById('bst-page-next').disabled=!bstPage.hasMore;
+  const jump=document.getElementById('bst-page-jump');
+  if(totalPages)jump.max=totalPages;
+  else jump.removeAttribute('max');
 }
 
 function bstAddSelected(){
-  const checks=document.querySelectorAll('#bst-video-list input[type="checkbox"]:checked');
-  if(!checks.length){alert('请先勾选要提升的视频');return;}
+  if(!bstPage.selected.size){alert('请先勾选要提升的视频');return;}
   const list=document.getElementById('booster-bv-list');
   // 清除空的默认行
   const rows=list.querySelectorAll('.bv-row');
@@ -4613,8 +4685,7 @@ function bstAddSelected(){
     const inp=row.querySelector('input');
     if(inp&&!inp.value.trim())row.remove();
   });
-  checks.forEach(cb=>{
-    const bvid=cb.value;
+  bstPage.selected.forEach(bvid=>{
     // 检查是否已存在
     const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
     if(existing)return;
@@ -4623,8 +4694,12 @@ function bstAddSelected(){
     row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
     list.appendChild(row);
   });
-  // 取消勾选
-  checks.forEach(cb=>{cb.checked=false;cb.closest('.video-pick-item').classList.remove('selected');});
+  // 取消勾选（含其他页已选）
+  bstPage.selected.clear();
+  document.querySelectorAll('#bst-video-list input[type="checkbox"]').forEach(cb=>{
+    cb.checked=false;cb.closest('.video-pick-item').classList.remove('selected');
+  });
+  bstUpdatePager();
   // 如果列表空了，加回默认行
   if(!list.querySelector('.bv-row')){bvAdd('booster-bv-list');}
 }

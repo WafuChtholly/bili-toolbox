@@ -1492,22 +1492,30 @@ def booster_car_status():
 
 @app.route("/api/booster/my-videos")
 def booster_my_videos():
-    """获取登录账号最近的投稿视频列表（通过 bilibili_api 库，自动处理 wbi/buvid）"""
+    """获取登录账号的投稿视频列表，支持 pn/ps 分页（选稿弹窗翻页用）"""
     cred = _read_auto_cred()
     sessdata = cred.get("sessdata", "")
     mid = cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or ""
     if not sessdata or not mid:
         return jsonify({"success": False, "message": "请先在「自动互动」页面登录账号"})
 
+    pn = max(1, request.args.get("pn", type=int) or 1)
+    ps = max(1, min(request.args.get("ps", type=int) or FETCH_MEMBER_PAGE_SIZE, 100))
+
     try:
-        videos = _fetch_my_videos(cred)
-        return jsonify({"success": True, "videos": videos, "mid": mid})
+        result = _fetch_member_videos_page(cred, pn, ps)
+        return jsonify({"success": True, "mid": mid, **result})
     except Exception as e:
-        import traceback
-        error_msg = f"{type(e).__name__}: {str(e)}"
-        print(f"[ERROR] booster_my_videos: {error_msg}")
-        traceback.print_exc()
-        return jsonify({"success": False, "message": error_msg})
+        print(f"[WARN] 创作中心接口分页失败，回退空间接口（可能漏稿）: {e}")
+        try:
+            result = _fetch_space_videos_page(cred, mid, pn, min(ps, 50))
+            return jsonify({"success": True, "mid": mid, **result})
+        except Exception as e2:
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e2)}"
+            print(f"[ERROR] booster_my_videos: {error_msg}")
+            traceback.print_exc()
+            return jsonify({"success": False, "message": error_msg})
 
 
 FETCH_VIDEOS_TIMEOUT = 30          # 获取投稿列表的单次超时（秒）
@@ -1600,6 +1608,114 @@ def _fetch_member_videos(cred: dict, limit: int = BOOSTER_SCAN_LIMIT_DEFAULT) ->
                 break
             pn += 1
     return videos
+
+
+def _fetch_member_videos_page(cred: dict, pn: int = 1, ps: int = FETCH_MEMBER_PAGE_SIZE) -> dict:
+    """创作中心「稿件管理」接口的指定页，供选稿弹窗翻页使用。
+
+    返回 {videos, total, has_more, page, page_size}；total 取不到时为 None。"""
+    import httpx
+
+    sessdata = cred.get("sessdata", "")
+    uid = str(cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or "")
+    if not sessdata or not uid:
+        raise ValueError("缺少 SESSDATA 或 UID")
+
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"),
+        "Referer": "https://member.bilibili.com/",
+        "Origin": "https://member.bilibili.com",
+    }
+    cookies = {"SESSDATA": sessdata, "bili_jct": cred.get("bili_jct", ""), "DedeUserID": uid}
+
+    pn = max(1, int(pn))
+    ps = max(1, min(int(ps), 100))
+    with httpx.Client(timeout=FETCH_VIDEOS_TIMEOUT, headers=headers, cookies=cookies) as client:
+        resp = client.get("https://member.bilibili.com/x/web/archives",
+                          params={"status": "pubed", "pn": pn, "ps": ps, "coop": 1})
+        data = resp.json()
+    code = data.get("code")
+    if code != 0:
+        raise RuntimeError(f"创作中心接口返回异常 code={code} msg={data.get('message') or ''}")
+
+    payload = data.get("data") or {}
+    items = payload.get("arc_audits") or []
+    page = payload.get("page") or {}
+    total = None
+    for key in ("count", "total", "total_count"):
+        try:
+            if page.get(key) is not None:
+                total = int(page.get(key))
+                break
+        except (TypeError, ValueError):
+            continue
+
+    videos = []
+    for item in items:
+        arc = item.get("Archive") or item
+        if int(arc.get("state", 0) or 0) != 0:  # 只保留已通过（公开）稿件
+            continue
+        stat = item.get("stat") or {}
+        videos.append({
+            "bvid": arc.get("bvid", ""),
+            "title": arc.get("title", ""),
+            "pic": arc.get("cover", ""),
+            "play": int(stat.get("view", 0) or 0),
+            "created": int(arc.get("ptime", 0) or 0),
+            "length": _fmt_duration(arc.get("duration")),
+        })
+
+    has_more = (pn * ps < total) if total is not None else (len(items) >= ps)
+    return {"videos": videos, "total": total, "has_more": has_more, "page": pn, "page_size": ps}
+
+
+def _fetch_space_videos_page(cred: dict, mid, pn: int = 1, ps: int = 50) -> dict:
+    """空间接口分页（创作中心接口失败时的兜底，单页上限 50，可能漏合集内稿件）。"""
+    from bilibili_api import Credential
+    from bilibili_api.user import User, VideoOrder
+
+    own_mid = str(cred.get("dedeuserid") or cred.get("mid") or cred.get("login_uid") or "")
+    target_mid = str(mid or own_mid).strip()
+    if not target_mid:
+        raise ValueError("缺少 UID")
+
+    credential = Credential(
+        sessdata=cred.get("sessdata", ""),
+        bili_jct=cred.get("bili_jct", ""),
+        dedeuserid=own_mid,
+        ac_time_value=cred.get("ac_time_value", ""),
+    )
+    u = User(int(target_mid), credential=credential)
+    pn = max(1, int(pn))
+    ps = max(1, min(int(ps), 50))
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(asyncio.wait_for(
+            u.get_videos(pn=pn, ps=ps, order=VideoOrder.PUBDATE), timeout=FETCH_VIDEOS_TIMEOUT))
+    finally:
+        loop.close()
+
+    vlist = (result or {}).get("list", {}).get("vlist", [])
+    videos = [{
+        "bvid": v.get("bvid", ""),
+        "title": v.get("title", ""),
+        "pic": v.get("pic", ""),
+        "play": v.get("play", 0),
+        "created": v.get("created", 0),
+        "length": v.get("length", ""),
+    } for v in vlist]
+
+    page = (result or {}).get("page") or {}
+    total = None
+    try:
+        if page.get("count") is not None:
+            total = int(page.get("count"))
+    except (TypeError, ValueError):
+        total = None
+    has_more = (pn * ps < total) if total is not None else (len(vlist) >= ps)
+    return {"videos": videos, "total": total, "has_more": has_more, "page": pn, "page_size": ps}
 
 
 def _fetch_season_videos(cred: dict, mid, limit=None, public=False) -> list:
