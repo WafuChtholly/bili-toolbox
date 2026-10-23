@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,11 +14,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build with PyAppify
         id: build-app
-        uses: ok-oldking/pyappify-action@master
+        uses: ok-oldking/pyappify-action@v1.1.0
 
       - name: Release
         uses: softprops/action-gh-release@v2
