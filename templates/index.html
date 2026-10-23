@@ -1067,6 +1067,21 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 .log-box::-webkit-scrollbar-track { background: transparent; }
 .log-box::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 3px; }
 
+/* 日志按稿件筛选的 chip 行（多稿件并发时只看某一条流） */
+.log-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 6px; }
+.log-filter-chip {
+  font-size: 12px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--card-border);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.log-filter-chip:hover { border-color: var(--card-border-hover); }
+.log-filter-chip.active { border-color: var(--pink); color: var(--pink); background: rgba(251,114,153,0.12); }
+
 /* ============================================================
    STATUS（大横幅状态卡，依据 dot 状态自动着色）
    ============================================================ */
@@ -3245,6 +3260,7 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <div class="btn-row" style="margin-top:8px">
           <button class="btn btn-pink" onclick="bstScheduleRunOnce()">▶ 立即执行一次</button>
         </div>
+        <div class="log-filter-bar" id="bst-sched-log-filters" style="display:none"></div>
         <div class="log-box" id="bst-sched-log" style="margin-top:12px">等待运行...</div>
       </div>
     </div>
@@ -4659,6 +4675,9 @@ function bstStopAll(){
 let bstSchedPollTimer=null;
 let bstSchedLastLogLen=-1;
 let bstSchedIdleTicks=0;
+let bstSchedLogRaw='';        // 最近一次取到的完整定时任务日志
+let bstSchedLogBvs=[];        // 日志中出现过的稿件 BV（并发时用于筛选）
+let bstSchedLogFilter=null;   // 当前筛选的 BV，null = 全部
 
 let bstSchedAccounts=[];        // [{uid,name,is_primary,has_sessdata}]
 let bstSchedSelectedUids=null;  // 勾选的刷量账号 UID 列表（null = 尚未加载）
@@ -4759,6 +4778,56 @@ function bstScheduleUpdateBtn(s){
   }
 }
 
+function bstSchedLogFiltered(){
+  if(!bstSchedLogFilter)return bstSchedLogRaw;
+  const needle='└ ['+bstSchedLogFilter+']';
+  return bstSchedLogRaw.split('\n').filter(l=>l.includes(needle)).join('\n');
+}
+
+function bstSchedRenderLog(){
+  const log=document.getElementById('bst-sched-log');
+  if(!log)return;
+  log.textContent=bstSchedLogFiltered();
+  log.scrollTop=log.scrollHeight;
+}
+
+function bstSchedRenderLogFilters(){
+  const box=document.getElementById('bst-sched-log-filters');
+  if(!box)return;
+  // 只有一个稿件时不显示筛选条，避免占位
+  if(bstSchedLogBvs.length<2){box.style.display='none';box.innerHTML='';return;}
+  box.style.display='flex';
+  const chip=(label,val)=>{
+    const active=(bstSchedLogFilter||'')===(val||'');
+    return '<span class="log-filter-chip'+(active?' active':'')+'" onclick="bstSchedSetLogFilter(\''+(val||'')+'\')">'+label+'</span>';
+  };
+  box.innerHTML=chip('全部','')+bstSchedLogBvs.map(bv=>chip(bv,bv)).join('');
+}
+
+function bstSchedSetLogFilter(bv){
+  bstSchedLogFilter=bv||null;
+  bstSchedRenderLogFilters();
+  bstSchedRenderLog();
+}
+
+function bstSchedSyncLog(text){
+  bstSchedLogRaw=text||'';
+  const bvs=[];
+  const re=/^\s*└ \[([A-Za-z0-9]+)\]/;
+  for(const l of bstSchedLogRaw.split('\n')){
+    const m=l.match(re);
+    if(m&&!bvs.includes(m[1]))bvs.push(m[1]);
+  }
+  const changed=bvs.join(',')!==bstSchedLogBvs.join(',');
+  if(changed){
+    bstSchedLogBvs=bvs;
+    // 选中的稿件已不在日志里（新一轮任务换了稿件）时回到「全部」
+    if(bstSchedLogFilter&&!bvs.includes(bstSchedLogFilter))bstSchedLogFilter=null;
+    bstSchedRenderLogFilters();
+  }
+  bstSchedRenderLog();
+}
+
 function bstScheduleUpdateStatus(s){
   if(s.running){
     setDot('bst-sched-dot','run');
@@ -4778,8 +4847,7 @@ function bstScheduleUpdateStatus(s){
     setDot('bst-sched-dot','off');
     setText('bst-sched-text','定时任务未运行');
   }
-  const log=document.getElementById('bst-sched-log');
-  if(s.log){log.textContent=s.log;log.scrollTop=log.scrollHeight;}
+  if(s.log)bstSchedSyncLog(s.log);
 }
 
 function bstScheduleToggle(){

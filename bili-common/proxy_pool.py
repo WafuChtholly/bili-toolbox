@@ -22,7 +22,13 @@ timeout = 5
 #  一、代理源
 # =========================================================================
 
-def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7):
+def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7, union_days=3):
+    """取「最近若干天」归档的并集（默认前 3 天）。
+
+    单日列表已能过 min_count，但相邻日之间仍有不重叠的 IP；并入多日可抬高候选总量
+    （扩池用），同时通过 union_days 限制回看天数，避免为凑数拉太多天。
+    """
+    collected = set()
     for offset in range(max_lookback_days):
         day = date.today() - timedelta(days=offset)
         proxy_url = f'https://checkerproxy.net/v1/landing/archive/{day.strftime("%Y-%m-%d")}'
@@ -42,36 +48,56 @@ def fetch_from_checkerproxy(log, min_count=100, max_lookback_days=7):
 
         proxies_obj = data_obj.get('proxyList')
         if isinstance(proxies_obj, list):
-            total_proxies = proxies_obj
+            day_proxies = [p for p in proxies_obj if p]
         elif isinstance(proxies_obj, dict):
-            total_proxies = [proxy for proxy in proxies_obj.values() if proxy]
+            day_proxies = [p for p in proxies_obj.values() if p]
         else:
             log(f'unexpected checkerproxy proxyList type: {type(proxies_obj)}')
             continue
 
-        if len(total_proxies) >= min_count:
-            log(f'successfully get {len(total_proxies)} proxies from checkerproxy')
-            return total_proxies
-        log(f'only have {len(total_proxies)} proxies from checkerproxy')
+        if len(day_proxies) < min_count:
+            log(f'only have {len(day_proxies)} proxies from checkerproxy[{day}]')
+            continue
+
+        before = len(collected)
+        collected.update(day_proxies)
+        log(f'checkerproxy[{day}]: +{len(collected) - before} new (day total {len(day_proxies)})')
+        if offset + 1 >= union_days:
+            break
+
+    if collected:
+        log(f'successfully get {len(collected)} proxies from checkerproxy')
+        return list(collected)
     return []
 
 
-def fetch_from_geonode(log, limit=500):
+def fetch_from_geonode(log, limit=500, pages=3):
+    """按 lastChecked 倒序翻页取前 pages 页（每页 limit 条），凑更多「较新」候选。"""
     proxy_url = 'https://proxylist.geonode.com/api/proxy-list'
-    params = {
-        'limit': limit,
-        'page': 1,
-        'sort_by': 'lastChecked',
-        'sort_type': 'desc',
-        'protocols': 'http',
-    }
-    log(f'getting proxies from {proxy_url} ...')
-    response = requests.get(proxy_url, params=params, timeout=timeout + 2)
-    response.raise_for_status()
-    data = response.json().get('data', [])
-    proxies = [f"{item['ip']}:{item['port']}" for item in data if item.get('ip') and item.get('port')]
-    log(f'successfully get {len(proxies)} proxies from geonode')
-    return proxies
+    all_proxies = []
+    for page in range(1, pages + 1):
+        params = {
+            'limit': limit,
+            'page': page,
+            'sort_by': 'lastChecked',
+            'sort_type': 'desc',
+            'protocols': 'http',
+        }
+        try:
+            response = requests.get(proxy_url, params=params, timeout=timeout + 3)
+            response.raise_for_status()
+            data = response.json().get('data', [])
+        except Exception as err:
+            log(f'  geonode page {page} failed: {err}')
+            break
+        page_proxies = [f"{item['ip']}:{item['port']}"
+                        for item in data if item.get('ip') and item.get('port')]
+        if not page_proxies:
+            break
+        all_proxies.extend(page_proxies)
+        log(f'  geonode page {page}: got {len(page_proxies)} proxies')
+    log(f'successfully get {len(all_proxies)} proxies from geonode')
+    return all_proxies
 
 
 def fetch_plaintext_proxy_list(log, url, label, req_timeout=15):
@@ -87,10 +113,37 @@ def fetch_plaintext_proxy_list(log, url, label, req_timeout=15):
         return []
 
 
+def fetch_github_list_via_jsdelivr(log, repo_path, label, req_timeout=12):
+    """经 jsdelivr CDN 拉 GitHub 上的纯文本代理列表。
+
+    raw.githubusercontent.com 在本机常因 TLS 证书校验失败拿不到，jsdelivr 走 CDN、
+    证书链正常，作为 GitHub 类列表的稳定入口。
+    """
+    url = f'https://cdn.jsdelivr.net/gh/{repo_path}'
+    return fetch_plaintext_proxy_list(log, url, label, req_timeout)
+
+
 def fetch_from_monosans(log):
+    # 优先 jsdelivr 镜像（raw.githubusercontent 本机常 SSL 失败），失败再退回直连 raw
+    proxies = fetch_github_list_via_jsdelivr(
+        log, 'monosans/proxy-list@main/proxies/http.txt', 'monosans jsdelivr')
+    if proxies:
+        return proxies
     return fetch_plaintext_proxy_list(log,
         'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
         'monosans GitHub list', 8)
+
+
+def fetch_from_proxyscrape(log, req_timeout=15):
+    url = ('https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http'
+           '&timeout=10000&country=all&ssl=all&anonymity=all')
+    return fetch_plaintext_proxy_list(log, url, 'proxyscrape', req_timeout)
+
+
+def fetch_from_proxy_list_download(log, req_timeout=15):
+    return fetch_plaintext_proxy_list(
+        log, 'https://www.proxy-list.download/api/v1/get?type=http',
+        'proxy-list.download', req_timeout)
 
 
 def fetch_from_scdnio(log, max_count=100):
@@ -178,6 +231,14 @@ def get_total_proxies(log, stop_event=None):
         ('scdnio', fetch_from_scdnio),
         ('monosans', fetch_from_monosans),
         ('geonode', fetch_from_geonode),
+        ('proxyscrape', fetch_from_proxyscrape),
+        ('proxylistdownload', fetch_from_proxy_list_download),
+        ('TheSpeedX', lambda log: fetch_github_list_via_jsdelivr(
+            log, 'TheSpeedX/PROXY-List@master/http.txt', 'TheSpeedX jsdelivr')),
+        ('ShiftyTR', lambda log: fetch_github_list_via_jsdelivr(
+            log, 'ShiftyTR/Proxy-List@master/http.txt', 'ShiftyTR jsdelivr')),
+        ('clarketm', lambda log: fetch_github_list_via_jsdelivr(
+            log, 'clarketm/proxy-list@master/proxy-list-raw.txt', 'clarketm jsdelivr')),
     ]
     if stop_event and stop_event.is_set():
         return []

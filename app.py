@@ -1008,6 +1008,112 @@ def booster_webhook_state():
     return jsonify({"enabled": booster_webhook_enabled})
 
 
+# 镜像到 schedule 日志（定时任务页）时的降噪规则：
+# 代理探测、分批点击、进度条这类过程细节只保留在单任务日志里；
+# 多稿件并发时它们会以十几倍体量淹没真正有用的里程碑（轮次 / 结果 / 完成 / 错误）。
+_BOOSTER_MIRROR_SKIP = (
+    'filtering ',
+    'filtered ',
+    'sending clicks',
+    'chunk ',
+    'fetching info for',
+    '[PROGRESS]',
+)
+
+
+def _booster_task_log_line(task_id: str, line: str):
+    """把一行 booster 日志写入该任务自己的缓冲区，并镜像到 schedule 日志。
+
+    booster 内部已给普通日志加了 `[BV]` 前缀（同一任务内多稿并发时区分归属），
+    镜像时若已带前缀就不再重复添加。
+    """
+    with booster_lock:
+        if booster_tasks.get(task_id, {}).get("status") == "cancelled":
+            return
+        buf = log_buffers.get(task_id)
+        if buf is not None:
+            buf.append(f'[BOOSTER] {line}\n')
+        # 镜像子任务日志到 schedule 日志，便于在定时任务页跟踪执行进度
+        st = booster_tasks.get(task_id, {})
+        log_target = st.get("log_target")
+        bv = st.get("bv", "")
+    # 锁外追加 mirror，避免在 booster_lock 内长时间阻塞其他 booster 任务
+    if log_target and log_target != task_id:
+        if any(k in line for k in _BOOSTER_MIRROR_SKIP):
+            return
+        mirror = line if (bv and line.startswith(f'[{bv}]')) else f'[{bv}] {line}'
+        _append_log(log_target, f'  └ {mirror}\n')
+
+
+def _booster_task_log_progress(task_id: str, line: str):
+    """更新进度条：替换缓冲区里最后一条 `[BOOSTER] [PROGRESS]` 行，没有则追加。
+
+    进度条只留在单任务日志里，不镜像到 schedule 日志（高频刷新且信息量低）。
+    """
+    with booster_lock:
+        if booster_tasks.get(task_id, {}).get("status") == "cancelled":
+            return
+        buf = log_buffers.get(task_id)
+        if buf is None:
+            return
+        lines = ''.join(buf).splitlines()
+        if not lines:
+            buf.append(f'[BOOSTER] {line}\n')
+            return
+        for i in range(len(lines) - 1, -1, -1):
+            if lines[i].startswith('[BOOSTER] [PROGRESS]'):
+                lines[i] = f'[BOOSTER] {line}'
+                buf.clear()
+                buf.append('\n'.join(lines) + '\n')
+                return
+        buf.append(f'[BOOSTER] {line}\n')
+
+
+# 多个任务并发写控制台时，stdout 只有一份：加锁保证单次 write 不被其它线程截断。
+# 进度条用 \r 原地刷新且不带换行，后一条整行日志前补一个换行，避免粘在进度条同一行上。
+_console_lock = threading.Lock()
+_console_line_open = False
+
+
+def _make_booster_logger(task_id: str):
+    """生成绑定到指定任务的 booster 日志函数（注入 booster.main 的 log_fn）。
+
+    每个任务一个实例，日志只写进自己的缓冲区，因此多任务并发不会串台；
+    同时原样转发到终端，保留控制台实时输出与进度条的行内覆盖。
+    """
+    def _log(msg):
+        global _console_line_open
+        text = str(msg)
+        if not text:
+            return
+        try:
+            with _console_lock:
+                if not text.startswith('\r') and _console_line_open:
+                    sys.stdout.write('\n')
+                if text.startswith('\r') or text.endswith('\n'):
+                    sys.stdout.write(text)
+                else:
+                    sys.stdout.write(text + '\n')
+                sys.stdout.flush()
+                _console_line_open = not text.endswith('\n')
+        except Exception:
+            pass
+        if '\r' in text:
+            # booster 用 \r 覆盖同一行更新进度
+            _booster_task_log_progress(task_id, text.replace('\r', '').strip())
+            return
+        parts = text.split('\n')
+        if parts and parts[-1] == '':
+            parts.pop()
+        for part in parts:
+            if part:
+                _booster_task_log_line(task_id, part)
+            else:
+                _append_log(task_id, '')  # 保留原有的空行分隔
+
+    return _log
+
+
 def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event: threading.Event = None, max_rounds: int = 5, refetch_proxies: bool = True, proxies: list = None, probe_cache: dict = None, car_rounds: int = 0):
     # 等待并发闸门：最多 max_concurrent_boost_tasks 个任务同时运行，其余排队
     _booster_gate.acquire()
@@ -1020,91 +1126,13 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
                 return
             booster_tasks[task_id]["status"] = "running"
 
-        # sys.stdout 重定向捕获 booster 的 print() 输出（与 webui 完全一致）
-        class _CaptureOutput:
-            def __init__(self):
-                self.original_stdout = sys.stdout
-                self._buffer = ""
-            def _append_line(self, line):
-                with booster_lock:
-                    if booster_tasks.get(task_id, {}).get("status") == "cancelled":
-                        return
-                    buf = log_buffers.get(task_id)
-                    if buf is not None:
-                        buf.append(f'[BOOSTER] {line}\n')
-                    # 镜像全部子任务日志到 schedule 日志，便于在定时任务页看到完整执行进度
-                    log_target = booster_tasks.get(task_id, {}).get("log_target")
-                    bv = booster_tasks.get(task_id, {}).get("bv", "")
-                # 锁外追加 mirror，避免在 booster_lock 内长时间阻塞其他 booster 任务
-                if log_target and log_target != task_id:
-                    with log_lock:
-                        target_buf = log_buffers.get(log_target)
-                        if target_buf is not None:
-                            target_buf.append(f'  └ [{bv}] {line}\n')
-            def _replace_last_line(self, line):
-                with booster_lock:
-                    if booster_tasks.get(task_id, {}).get("status") == "cancelled":
-                        return
-                    buf = log_buffers.get(task_id)
-                    if buf is None:
-                        return
-                    text = ''.join(buf)
-                    lines = text.splitlines()
-                    if not lines:
-                        buf.append(f'[BOOSTER] {line}\n')
-                        return
-                    # 只替换上一个进度条行，避免覆盖普通日志
-                    for i in range(len(lines) - 1, -1, -1):
-                        if lines[i].startswith('[BOOSTER] [PROGRESS]'):
-                            old_progress = lines[i]
-                            lines[i] = f'[BOOSTER] {line}'
-                            buf.clear()
-                            buf.append('\n'.join(lines) + '\n')
-                            log_target = booster_tasks.get(task_id, {}).get("log_target")
-                            bv = booster_tasks.get(task_id, {}).get("bv", "")
-                            # 锁外替换镜像的进度行
-                            if log_target and log_target != task_id:
-                                with log_lock:
-                                    target_buf = log_buffers.get(log_target)
-                                    if target_buf is not None:
-                                        ttext = ''.join(target_buf)
-                                        tlines = ttext.splitlines()
-                                        prefix = f'  └ [{bv}] '
-                                        replaced = False
-                                        for j in range(len(tlines) - 1, -1, -1):
-                                            if tlines[j] == f'{prefix}{old_progress}':
-                                                tlines[j] = f'{prefix}{line}'
-                                                target_buf.clear()
-                                                target_buf.append('\n'.join(tlines) + '\n')
-                                                replaced = True
-                                                break
-                                        if not replaced:
-                                            # 没找到对应的旧行（可能因 LOG_MAX_LINES 截断），直接追加
-                                            target_buf.append(f'{prefix}{line}\n')
-                            return
-                    # 没有可替换的进度条行时作为新行追加
-                    buf.append(f'[BOOSTER] {line}\n')
-            def write(self, s):
-                self.original_stdout.write(s)
-                self._buffer += s
-                if '\r' in self._buffer:
-                    # booster 用 \r 覆盖同一行更新进度，保持终端行为
-                    line = self._buffer.replace('\r', '').rstrip('\n')
-                    self._buffer = ""
-                    self._replace_last_line(line)
-                elif '\n' in self._buffer:
-                    parts = self._buffer.split('\n')
-                    self._buffer = parts[-1]
-                    for part in parts[:-1]:
-                        self._append_line(part)
-            def flush(self):
-                self.original_stdout.flush()
-
-        capture = _CaptureOutput()
-        sys.stdout = capture
+        # booster 日志通过 log_fn 直连本任务缓冲区：不再切换全局 sys.stdout。
+        # 并发任务各自把 sys.stdout 换成自己的捕获对象时，后启动的会覆盖先启动的，
+        # 导致所有任务的输出都流进同一个捕获对象（日志串台），这里改为按任务分发。
+        logger = _make_booster_logger(task_id)
         try:
             bv_input = ",".join(bv_list)
-            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies, proxies=proxies, probe_cache=probe_cache)
+            booster.main(bv_input, str(target), stop_event=stop_event, max_rounds=max_rounds, refetch_proxies=refetch_proxies, proxies=proxies, probe_cache=probe_cache, log_fn=logger)
             with booster_lock:
                 if booster_tasks[task_id]["status"] != "cancelled":
                     booster_tasks[task_id]["status"] = "completed"
@@ -1114,23 +1142,20 @@ def _run_booster_task(task_id: str, bv_list: list[str], target: int, stop_event:
             with booster_lock:
                 booster_tasks[task_id]["status"] = "error"
         finally:
-            sys.stdout = capture.original_stdout
             # 任务结束后向 schedule 日志输出总结
             with booster_lock:
                 final_status = booster_tasks.get(task_id, {}).get("status", "")
                 bv = booster_tasks.get(task_id, {}).get("bv", "")
                 log_target = booster_tasks.get(task_id, {}).get("log_target")
             if log_target and log_target != task_id:
-                target_buf = log_buffers.get(log_target)
-                if target_buf is not None:
-                    if final_status == "completed" and car_rounds > 0:
-                        target_buf.append(f"  └ [{bv}] ⚡ 代理池完成，转车机长线 {car_rounds} 轮\n")
-                    elif final_status == "completed":
-                        target_buf.append(f"  └ [{bv}] ✅ 任务完成\n")
-                    elif final_status == "cancelled":
-                        target_buf.append(f"  └ [{bv}] ⏹ 已停止\n")
-                    elif final_status == "error":
-                        target_buf.append(f"  └ [{bv}] ❌ 任务出错\n")
+                if final_status == "completed" and car_rounds > 0:
+                    _append_log(log_target, f"  └ [{bv}] ⚡ 代理池完成，转车机长线 {car_rounds} 轮\n")
+                elif final_status == "completed":
+                    _append_log(log_target, f"  └ [{bv}] ✅ 任务完成\n")
+                elif final_status == "cancelled":
+                    _append_log(log_target, f"  └ [{bv}] ⏹ 已停止\n")
+                elif final_status == "error":
+                    _append_log(log_target, f"  └ [{bv}] ❌ 任务出错\n")
     finally:
         with booster_lock:
             booster_tasks[task_id]["end"] = time.time()
@@ -1152,10 +1177,7 @@ def _booster_car_relay(task_id: str, bv: str, rounds: int, stop_event, log_targe
     def _relay_log(line: str):
         _append_log(task_id, line)
         if log_target and log_target != task_id:
-            with log_lock:
-                buf = log_buffers.get(log_target)
-                if buf is not None:
-                    buf.append(f"  └ [{bv}] {line}\n")
+            _append_log(log_target, f"  └ [{bv}] {line}\n")
 
     with booster_lock:
         st = booster_tasks.get(task_id)
@@ -1181,11 +1203,8 @@ def _booster_car_relay(task_id: str, bv: str, rounds: int, stop_event, log_targe
             st["end"] = time.time()
             final_status = st["status"]
         if log_target and log_target != task_id:
-            with log_lock:
-                buf = log_buffers.get(log_target)
-                if buf is not None:
-                    buf.append(f"  └ [{bv}] " +
-                               ("✅ 车机长线跑完\n" if final_status == "completed" else "⏹ 车机长线已停止\n"))
+            _append_log(log_target, f"  └ [{bv}] " +
+                        ("✅ 车机长线跑完\n" if final_status == "completed" else "⏹ 车机长线已停止\n"))
 
 
 @app.route("/api/booster/run", methods=["POST"])

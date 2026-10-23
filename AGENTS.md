@@ -13,6 +13,7 @@ B站工具箱：单文件 Flask 应用（`app.py`，全部路由与调度逻辑�
 - 所有定时任务状态只存内存（`_booster_schedule` 等），重启即清零，不跨重启恢复。
 - booster 任务创建来源：手动 `/api/booster/run`、定时循环 `_booster_schedule_loop`（刷自己）、用户列表定时循环 `_booster_user_loop`（监控指定 UID 的稿件）、手动执行一次 `run-once`；webhook 只接收 BV 号，需前端确认后才建任务。
 - 子任务通过共享 `stop_event` + 信号量（并发 3）排队；停止定时时必须同步取消同 event 的子任务（含排队中的），否则排队任务拿到槽位后会照常执行。
+- 播放通道：同一存活代理在一轮内依次打 web（`click/web/h5`）、H5（`click/h5`）、PC（`x/report/click/pc/client`，本地自签名）三份独立额度。PC 侧固定 `did=''`、不传 `buvid4`、每次新 buvid3、每 IP 每轮 1 次（口径见 `docs/播放计数通道研究-PC增强包评估.md`）。
 - print 输出走 `_SafeStream`（Windows 控制台编码保护）；用户数据在 `data/`（已 gitignore）。
 
 ## 发布约定

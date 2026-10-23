@@ -1,7 +1,7 @@
 """
 B站播放量提升 — 核心模块
 完全基于 bili-booster-webui 逻辑，仅增加 stop_event 支持任务取消。
-输出使用 print()，由 app.py 端 sys.stdout 重定向捕获。"""
+输出通过 log_fn 注入：app.py 传入按任务绑定的 logger，避免多任务并发时日志串台。"""
 import os
 import sys
 import threading
@@ -11,6 +11,7 @@ import time as time_module
 from time import sleep
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
 import requests
 from fake_useragent import UserAgent
@@ -44,6 +45,17 @@ _mobile_ua = ('Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) '
               'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 '
               'Mobile/15E148 Safari/604.1')
 _mobile_click_url = 'http://api.bilibili.com/x/click-interface/click/h5'
+
+# ── PC 客户端通道（x/report/click/pc/client）：自签名，web / mobile / pc 三份独立额度 ──
+# 实测口径：一个 IP 每轮只打一次；不带 buvid4（共用 buvid4 会触发设备级去重，计数率 43% vs 100%）；
+# did 留空、每次请求新 buvid3（同 buvid 复用 rpdid 会被去重）。明文 HTTP 便于走代理免 TLS 隧道。
+_pc_click_url = 'http://api.bilibili.com/x/report/click/pc/client'
+_pc_ua = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+          '(KHTML, like Gecko) bilibili_pc/1.19.0 Chrome/108.0.5359.215 '
+          'Electron/22.3.27 Safari/537.36 build/1001019000')
+_pc_appkey = 'aa1e74ee4874176e'
+_pc_appsec = '54e6a9a31b911cd5fc0daa66ebf94bc4'
+_pc_build = '1001019000'
 
 
 # 代理池实现已抽到 bili-common/proxy_pool.py，本模块只保留探测与使用逻辑
@@ -274,14 +286,74 @@ def click_mobile_once(proxy, info, bv):
         return False
 
 
+def build_pc_payload(aid, cid, buvid):
+    """PC 客户端通道的 payload（字段与官方 electron 客户端一致，did 留空）。"""
+    now = int(time_module.time())
+    return {
+        'aid': str(aid), 'cid': str(cid), 'part': '1', 'lv': '0',
+        'ftime': str(now), 'stime': str(now),
+        'type': '3', 'sub_type': '0', 'refer_url': '', 'outer': '0',
+        'statistics': '{"appId":112,"platform":4}',
+        'mobi_app': 'pc_electron',
+        'device': 'win', 'platform': 'web', 'cur_language': '', 'perfer_type': '',
+        'play_mode': '1', 'spmid': 'main.play-detail.0.0.pv', 'from_spmid': '',
+        'session': hashlib.md5(f'{random.random()}{time_module.time()}'.encode()).hexdigest(),
+        'extra': '{"from_outer_spmid":""}',
+        'build': _pc_build, 'buvid': buvid, 'did': '',
+        'auto_play': '0', 'track_id': '', 'playlist_type': '', 'playlist_id': '',
+    }
+
+
+def build_pc_body(payload):
+    """PC 通道签名：md5(sorted_query + appsec)，body 保持 payload 插入序 + appkey/build/ts + sign。"""
+    params = dict(payload)
+    params['appkey'] = _pc_appkey
+    params['ts'] = str(int(time_module.time() * 1000))
+    sign_str = '&'.join(f'{k}={quote(str(v), safe="")}' for k, v in sorted(params.items()))
+    sign = hashlib.md5((sign_str + _pc_appsec).encode()).hexdigest()
+    body = '&'.join(f'{k}={quote(str(v), safe="")}' for k, v in params.items())
+    return f'{body}&sign={sign}'
+
+
+def build_pc_headers(buvid):
+    return {
+        'User-Agent': _pc_ua,
+        'Origin': 'https://www.bilibili.com',
+        'Referer': 'https://www.bilibili.com/client',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'x-app-version': '1.19.0',
+        'buvid': buvid,
+        'Cookie': f'buvid3={buvid}',
+    }
+
+
+def click_pc_once(proxy, info, bv):
+    """发送一次 PC 客户端播放点击（本地自签名，无需打开官方客户端）。
+
+    与 web / mobile 共用同一条存活代理，构成「一个 IP 打三份独立额度」。
+    """
+    try:
+        buvid = generate_buvid3()
+        body = build_pc_body(build_pc_payload(info['aid'], info['cid'], buvid))
+        resp = requests.post(_pc_click_url,
+                             proxies={'http': f'http://{proxy}'},
+                             headers=build_pc_headers(buvid),
+                             data=body.encode(),
+                             timeout=timeout)
+        return resp.status_code == 200
+    except:
+        return False
+
+
 def click_batch(proxies, info, bv, stop_event=None):
-    """批量并发点击：每个存活代理先打网页端、再打移动端（共用这一批存活代理）。
+    """批量并发点击：每个存活代理依次打网页端、移动端、PC 端（共用这一批存活代理）。
 
     并发上限 click_thread_num：不再「每个代理一个线程」，避免批量大时线程数被顶到 batch_size。
-    返回 (web_success, mobile_success)。
+    返回 (web_success, mobile_success, pc_success)。
     """
     web_ok = [0]
     mobile_ok = [0]
+    pc_ok = [0]
     lock = threading.Lock()
 
     def worker(proxy):
@@ -295,14 +367,19 @@ def click_batch(proxies, info, bv, stop_event=None):
         if click_mobile_once(proxy, info, bv):
             with lock:
                 mobile_ok[0] += 1
+        if stop_event and stop_event.is_set():
+            return
+        if click_pc_once(proxy, info, bv):
+            with lock:
+                pc_ok[0] += 1
 
     if not proxies:
-        return 0, 0
+        return 0, 0, 0
     workers = max(1, min(int(click_thread_num), len(proxies)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         list(pool.map(worker, proxies))
 
-    return web_ok[0], mobile_ok[0]
+    return web_ok[0], mobile_ok[0], pc_ok[0]
 
 
 def boost_video_once(video, total_proxies, batch_num, log, stop_event=None, probe_cache=None):
@@ -336,8 +413,8 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None, prob
                 active_proxies.append(proxy)
             valid = len(active_proxies)
             if n % 50 == 0 or n == total:
-                print(f'\r[PROGRESS] {pbar(n, total)} {100*n/total:.1f}% '
-                      f'[valid: {valid}, cached: {cache_reused[0]}]   ', end='')
+                log(f'\r[PROGRESS] {pbar(n, total)} {100*n/total:.1f}% '
+                    f'[valid: {valid}, cached: {cache_reused[0]}]   ')
 
     log(f'  filtering {total} proxies for {bv}...')
     start_filter = datetime.now()
@@ -356,35 +433,55 @@ def boost_video_once(video, total_proxies, batch_num, log, stop_event=None, prob
         log('  no valid proxies, skipping')
         return 0
 
-    log(f'  sending clicks (web + mobile per proxy) for {bv}...')
+    log(f'  sending clicks (web + mobile + pc per proxy) for {bv}...')
     start_click = datetime.now()
     web_clicks = 0
     mobile_clicks = 0
+    pc_clicks = 0
     for i in range(0, len(active_proxies), batch_size):
         if stop_event and stop_event.is_set():
             break
         chunk = active_proxies[i:i + batch_size]
-        w, m = click_batch(chunk, info, bv, stop_event=stop_event)
+        w, m, p = click_batch(chunk, info, bv, stop_event=stop_event)
         web_clicks += w
         mobile_clicks += m
+        pc_clicks += p
         log(f'    chunk {i//batch_size + 1}/{(len(active_proxies)-1)//batch_size + 1}: '
-            f'web {w}/{len(chunk)}, mobile {m}/{len(chunk)}')
+            f'web {w}/{len(chunk)}, mobile {m}/{len(chunk)}, pc {p}/{len(chunk)}')
         if request_delay > 0:
             sleep(request_delay)
     click_cost = int((datetime.now() - start_click).total_seconds())
-    log(f'  done: web {web_clicks} + mobile {mobile_clicks} clicks in {time_fmt(click_cost)}')
+    log(f'  done: web {web_clicks} + mobile {mobile_clicks} + pc {pc_clicks} clicks in {time_fmt(click_cost)}')
 
-    return web_clicks + mobile_clicks
+    return web_clicks + mobile_clicks + pc_clicks
 
 
 # =========================================================================
 #  三、主入口（webui 原始循环 + log_fn / stop_event / logger_name）
 # =========================================================================
 
+def _tagged_logger(log, tag):
+    """给单稿日志加 [BV] 前缀。
+
+    同一任务内多个稿件是并发线程执行的，日志天然交错，靠前缀区分归属；
+    进度条（以 \\r 开头、行内覆盖）不加前缀，避免破坏覆盖行为。
+    """
+    def _log(msg):
+        text = str(msg)
+        if text.startswith('\r'):
+            log(text)
+        elif text.startswith('\n'):
+            log('\n' + f'[{tag}] ' + text[1:])
+        else:
+            log(f'[{tag}] {text}')
+    return _log
+
+
 def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, video_lock, probe_cache=None):
     """单个视频的 boost 任务，供多视频并发调用。"""
     if stop_event and stop_event.is_set():
         return
+    log = _tagged_logger(log, v['bvid'])
     if v['current'] >= target:
         log(f'  {v["bvid"]} already at target ({v["current"]}), skipping')
         return
@@ -405,15 +502,17 @@ def _boost_single_video(v, total_proxies, round_num, target, log, stop_event, vi
         log(f'  failed to check views: {e}')
 
 
-def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True, proxies=None, probe_cache=None):
+def main(bv_input, target_input, stop_event=None, max_rounds=5, refetch_proxies=True, proxies=None, probe_cache=None, log_fn=None):
     """启动播放量提升任务。完全基于 bili-booster-webui 的 main() 循环逻辑。
     max_rounds 为最大轮数，传 0 或 None 表示无上限。
     refetch_proxies 为 True 时每轮重新获取代理，为 False 时只在启动时获取一次并复用。
     proxies 为外部注入的代理快照（定时任务一轮内多个稿件共用同一份）：提供时直接复用，
     不再自行拉取代理池（等价于 refetch_proxies=False）。
     probe_cache 为外部注入的探测结果缓存（跨稿件/跨轮共享）：不传则本任务内部新建，
-    至少保证同一任务的多轮之间不重复探测。"""
-    log = print
+    至少保证同一任务的多轮之间不重复探测。
+    log_fn 为外部注入的日志函数：并发任务各自传入绑定到自己缓冲区的 log，
+    避免靠切换全局 sys.stdout 捕获日志（多任务会互相抢占，导致日志串台）。"""
+    log = log_fn or print
 
     if probe_cache is None:
         probe_cache = {}
