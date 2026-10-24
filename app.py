@@ -1317,7 +1317,6 @@ _car_spec = _ilu.spec_from_file_location("car_channel", str(ROOT / "bili-booster
 car_channel = _ilu.module_from_spec(_car_spec)
 _car_spec.loader.exec_module(car_channel)
 
-CAR_STATS_FILE = str(ROOT / "data" / "car_stats.json")
 _car_lock = threading.RLock()
 _car_task = {
     "status": "idle",        # idle / running / stopping / stopped / completed / error
@@ -1329,48 +1328,18 @@ _car_task = {
     "stop_event": None,
     "thread": None,
 }
-_car_stats = None            # 今日累计，首次访问时从 data/car_stats.json 恢复
-
-
-def _car_today() -> str:
-    return datetime.now().strftime("%Y-%m-%d")
+_car_stats = None            # 本次运行累计，仅存内存，任务启动时重置
 
 
 def _car_fresh_stats() -> dict:
-    return {"date": _car_today(), "rounds": 0, "accepted": 0, "growth": 0, "per_bv": {}}
-
-
-def _car_load_stats() -> dict:
-    try:
-        with open(CAR_STATS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict) and data.get("date") == _car_today():
-            stats = _car_fresh_stats()
-            for k in ("rounds", "accepted", "growth"):
-                stats[k] = int(data.get(k) or 0)
-            stats["per_bv"] = data.get("per_bv") or {}
-            return stats
-    except (OSError, ValueError):
-        pass
-    return _car_fresh_stats()
-
-
-def _car_save_stats(stats: dict):
-    try:
-        os.makedirs(os.path.dirname(CAR_STATS_FILE), exist_ok=True)
-        with open(CAR_STATS_FILE, "w", encoding="utf-8") as f:
-            json.dump(stats, f, ensure_ascii=False)
-    except OSError:
-        pass
+    return {"rounds": 0, "accepted": 0, "growth": 0, "per_bv": {}}
 
 
 def _car_stats_current() -> dict:
-    """取今日累计（跨天自动清零）。调用方需持有 _car_lock 或接受快照语义。"""
+    """取本次运行累计（仅内存）。调用方需持有 _car_lock 或接受快照语义。"""
     global _car_stats
     with _car_lock:
         if _car_stats is None:
-            _car_stats = _car_load_stats()
-        if _car_stats.get("date") != _car_today():
             _car_stats = _car_fresh_stats()
         return _car_stats
 
@@ -1380,7 +1349,7 @@ def _car_log(line: str):
 
 
 def _car_on_cycle(ev: dict):
-    """每完成一轮会话回调：累加今日统计并落盘；每 20 轮打一条累计日志。"""
+    """每完成一轮会话回调：累加本次统计；每 20 轮打一条累计日志。"""
     global _car_stats
     summary = None
     with _car_lock:
@@ -1398,9 +1367,8 @@ def _car_on_cycle(ev: dict):
             stats["growth"] += ev["delta"]
             per["growth"] += ev["delta"]
         if stats["rounds"] % 20 == 0:
-            summary = (f'[CAR] 今日累计：{stats["rounds"]} 轮 / 有效 {stats["accepted"]} / '
+            summary = (f'[CAR] 本次累计：{stats["rounds"]} 轮 / 有效 {stats["accepted"]} / '
                        f'播放增长 {stats["growth"]:+d}')
-        _car_save_stats(stats)
     if summary:
         _car_log(summary)
 
@@ -1432,6 +1400,7 @@ def _run_car_task(bv_list, play_s, interval, stop_event):
 
 @app.route("/api/booster/car/start", methods=["POST"])
 def booster_car_start():
+    global _car_stats
     data = request.json or {}
     raw = str(data.get("bv", "")).replace("，", ",")
     bv_list = [b.strip() for b in raw.split(",") if b.strip()]
@@ -1449,6 +1418,7 @@ def booster_car_start():
     with _car_lock:
         if _car_task["status"] in ("running", "stopping"):
             return jsonify({"error": "车机长线已在运行，请先停止"}), 400
+        _car_stats = _car_fresh_stats()   # 本次运行重新累计，不读回上次结果
         stop_event = threading.Event()
         _car_task.update({
             "status": "running", "start": time.time(), "end": None,
@@ -1488,6 +1458,34 @@ def booster_car_status():
         elapsed = int((task["end"] or time.time()) - task["start"])
     return jsonify({**task, "running": running, "elapsed": elapsed,
                     "stats": stats, "output": _get_log("car")})
+
+
+@app.route("/api/booster/car/stats/remove", methods=["POST"])
+def booster_car_stats_remove():
+    """删除本次统计里的单个稿件行；all=True 时清空本次全部统计。"""
+    data = request.json or {}
+    bv = str(data.get("bv") or "").strip()
+    all_flag = bool(data.get("all"))
+    if not bv and not all_flag:
+        return jsonify({"error": "缺少 bv"}), 400
+
+    with _car_lock:
+        stats = _car_stats_current()
+        if all_flag:
+            stats["rounds"] = 0
+            stats["accepted"] = 0
+            stats["growth"] = 0
+            stats["per_bv"] = {}
+        else:
+            removed = stats["per_bv"].pop(bv, None)
+            if removed is None:
+                return jsonify({"error": "该稿件不在本次统计中"}), 404
+            # 汇总数值同步扣掉被删稿件的部分，避免出现「没有明细但有总量」
+            stats["rounds"] = max(0, stats["rounds"] - int(removed.get("rounds") or 0))
+            stats["accepted"] = max(0, stats["accepted"] - int(removed.get("accepted") or 0))
+            stats["growth"] -= int(removed.get("growth") or 0)
+        snapshot = json.loads(json.dumps(stats, ensure_ascii=False))
+    return jsonify({"success": True, "stats": snapshot})
 
 
 @app.route("/api/booster/my-videos")

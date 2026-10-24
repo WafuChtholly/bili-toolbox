@@ -1334,6 +1334,20 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   white-space: nowrap;
 }
 .bst-rp-video-status { width: 22px; text-align: center; flex-shrink: 0; }
+.car-stat-del {
+  width: 24px; height: 24px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all var(--transition);
+}
+.car-stat-del:hover { background: #fdeeee; color: var(--danger); border-color: #f0c4c6; }
+html[data-theme="dark"] .car-stat-del:hover { background: rgba(242,90,94,0.12); border-color: rgba(242,90,94,0.30); }
 
 .spinner {
   width: 20px; height: 20px;
@@ -2446,8 +2460,9 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         <button class="btn btn-pink" id="car-run-btn" onclick="carStart()">▶ 启动长线</button>
         <button class="btn btn-stop" id="car-stop-btn" onclick="carStop()" style="display:none">⏹ 停止</button>
         <button class="btn btn-outline" onclick="carLoad()">🔄 刷新统计</button>
+        <button class="btn btn-outline" onclick="carClearStats()">🧹 清空本次统计</button>
       </div>
-      <div id="car-stats" style="margin-top:12px;color:var(--text-tertiary);font-size:13px">今日累计：暂无数据</div>
+      <div id="car-stats" style="margin-top:12px;color:var(--text-tertiary);font-size:13px">本次累计：暂无数据</div>
       <div class="log-box" id="car-log" style="margin-top:12px;max-height:260px">等待启动...</div>
     </div>
   </div>
@@ -5373,12 +5388,13 @@ function carRenderStats(d){
       `<span class="bst-rp-video-bvid">${bv}</span>`+
       `<span class="bst-rp-video-views">${(v.views||0).toLocaleString()}</span>`+
       `<span class="bst-rp-video-growth">+${v.growth||0}</span>`+
-      `<span class="bst-rp-video-clicks">${v.rounds||0} 轮 / 有效 ${v.accepted||0}</span></div>`;
+      `<span class="bst-rp-video-clicks">${v.rounds||0} 轮 / 有效 ${v.accepted||0}</span>`+
+      `<button type="button" class="car-stat-del" onclick="carRemoveStat('${bv}')" title="从今日统计中删除">✕</button></div>`;
   }).join('');
   document.getElementById('car-stats').innerHTML=
     `<div class="bst-rp-overview">`+
-      `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${st.growth||0}</div><div class="bst-rp-stat-label">今日播放增长</div></div>`+
-      `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${st.rounds||0}</div><div class="bst-rp-stat-label">今日轮次</div></div>`+
+      `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${st.growth||0}</div><div class="bst-rp-stat-label">本次播放增长</div></div>`+
+      `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${st.rounds||0}</div><div class="bst-rp-stat-label">本次轮次</div></div>`+
       `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${st.accepted||0}</div><div class="bst-rp-stat-label">有效会话</div></div>`+
       `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${d.elapsed!=null?carFmtDuration(d.elapsed):'-'}</div><div class="bst-rp-stat-label">已运行</div></div>`+
     `</div>`+(rows||'<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0">暂无稿件数据</div>');
@@ -5434,6 +5450,25 @@ function carStart(){
 
 function carStop(){
   fetch('/api/booster/car/stop',{method:'POST'}).then(r=>r.json()).then(()=>carLoad());
+}
+
+function carRemoveStat(bv){
+  fetch('/api/booster/car/stats/remove',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({bv:bv})})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){alert(d.error);return;}
+      carLoad();
+    }).catch(e=>alert('删除失败: '+e));
+}
+
+function carClearStats(){
+  if(!confirm('确定清空本次车机统计吗？（只清统计，不影响正在运行的任务）'))return;
+  fetch('/api/booster/car/stats/remove',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({all:true})})
+    .then(r=>r.json()).then(d=>{
+      if(d.error){alert(d.error);return;}
+      carLoad();
+    }).catch(e=>alert('清空失败: '+e));
 }
 
 function carFetchMyVideos(btnEl){
