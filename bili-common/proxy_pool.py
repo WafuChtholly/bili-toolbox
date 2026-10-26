@@ -7,6 +7,7 @@
 # 兼容 Python 3.8 (Win7)：注解语法延迟求值
 from __future__ import annotations
 
+import re
 from time import sleep
 from datetime import date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +17,28 @@ from requests.exceptions import RequestException
 
 # 单个代理源的请求超时（秒）
 timeout = 5
+
+# 归一化：允许 "ip:port" 与 "http://ip:port" 两种写法，丢掉列表站的垃圾行
+_PROXY_RE = re.compile(r'^(?:[a-zA-Z]+://)?(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$')
+_PRIVATE_PREFIXES = (0, 10, 127)     # 0.x 占位、10.x / 127.x 本机或内网
+
+
+def normalize_proxy(raw):
+    """把列表行规整成 ip:port；非法/内网/占位地址返回 None。"""
+    m = _PROXY_RE.match((raw or '').strip())
+    if not m:
+        return None
+    ip, port = m.group(1), int(m.group(2))
+    octets = [int(x) for x in ip.split('.')]
+    if any(x > 255 for x in octets) or octets[0] in _PRIVATE_PREFIXES:
+        return None
+    if octets[0] == 172 and 16 <= octets[1] <= 31:
+        return None
+    if octets[0] == 192 and octets[1] == 168:
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return f'{ip}:{port}'
 
 
 # =========================================================================
@@ -113,25 +136,33 @@ def fetch_plaintext_proxy_list(log, url, label, req_timeout=15):
         return []
 
 
-def fetch_github_list_via_jsdelivr(log, repo_path, label, req_timeout=12):
-    """经 jsdelivr CDN 拉 GitHub 上的纯文本代理列表。
+GITHUB_MIRRORS = (
+    'https://ghproxy.net/https://raw.githubusercontent.com/{repo_path}',
+    'https://cdn.jsdelivr.net/gh/{repo_path}',
+)
 
-    raw.githubusercontent.com 在本机常因 TLS 证书校验失败拿不到，jsdelivr 走 CDN、
-    证书链正常，作为 GitHub 类列表的稳定入口。
+
+def fetch_github_list(log, repo_path, label, req_timeout=12):
+    """拉 GitHub 上的纯文本代理列表：先 ghproxy 镜像，再退 jsdelivr。
+
+    raw.githubusercontent.com 在本机常被重置、jsdelivr 近期也频繁 10054，
+    两个入口各试一次可明显提高 GitHub 类列表的可用率。
     """
-    url = f'https://cdn.jsdelivr.net/gh/{repo_path}'
-    return fetch_plaintext_proxy_list(log, url, label, req_timeout)
+    for tpl in GITHUB_MIRRORS:
+        proxies = fetch_plaintext_proxy_list(
+            log, tpl.format(repo_path=repo_path), label, req_timeout)
+        if proxies:
+            return proxies
+    return []
 
 
 def fetch_from_monosans(log):
-    # 优先 jsdelivr 镜像（raw.githubusercontent 本机常 SSL 失败），失败再退回直连 raw
-    proxies = fetch_github_list_via_jsdelivr(
-        log, 'monosans/proxy-list@main/proxies/http.txt', 'monosans jsdelivr')
-    if proxies:
-        return proxies
-    return fetch_plaintext_proxy_list(log,
-        'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
-        'monosans GitHub list', 8)
+    return fetch_github_list(log, 'monosans/proxy-list/main/proxies/http.txt', 'monosans mirror')
+
+
+def fetch_from_proxifly(log):
+    return fetch_github_list(
+        log, 'proxifly/free-proxy-list/main/proxies/protocols/http/data.txt', 'proxifly mirror')
 
 
 def fetch_from_proxyscrape(log, req_timeout=15):
@@ -214,6 +245,21 @@ def fetch_from_zdopen(log):
     return all_proxies
 
 
+def fetch_from_openproxylist(log):
+    """OpenProxyList：自有域名、分钟级校验，最接近 checkerproxy 的平替。"""
+    all_proxies = []
+    for kind in ('http', 'https'):
+        all_proxies.extend(fetch_plaintext_proxy_list(
+            log, f'https://api.openproxylist.xyz/{kind}.txt',
+            f'openproxylist {kind}', timeout + 3))
+    return all_proxies
+
+
+def fetch_from_proxyspace(log):
+    return fetch_plaintext_proxy_list(
+        log, 'https://proxyspace.pro/http.txt', 'proxyspace', timeout + 3)
+
+
 # =========================================================================
 #  二、聚合
 # =========================================================================
@@ -221,24 +267,28 @@ def fetch_from_zdopen(log):
 def get_total_proxies(log, stop_event=None):
     """并发从各代理源抓取并去重，任一源失败不影响其它源。
 
-    6 个源同时抓（原来是串行），总耗时从「各源之和」压缩到「最慢一个源」。
+    各源同时抓（原来是串行），总耗时从「各源之和」压缩到「最慢一个源」。
+    入库前统一 normalize_proxy，过滤占位/内网/格式不符的垃圾行。
     所有源都拿不到时抛 RuntimeError（保持与原 booster 行为一致）。
     """
     fetchers = [
         ('checkerproxy', fetch_from_checkerproxy),
         ('89ip', fetch_from_89ip),
         ('zdopen', fetch_from_zdopen),
+        ('openproxylist', fetch_from_openproxylist),
+        ('proxyspace', fetch_from_proxyspace),
+        ('proxifly', fetch_from_proxifly),
         ('scdnio', fetch_from_scdnio),
         ('monosans', fetch_from_monosans),
         ('geonode', fetch_from_geonode),
         ('proxyscrape', fetch_from_proxyscrape),
         ('proxylistdownload', fetch_from_proxy_list_download),
-        ('TheSpeedX', lambda log: fetch_github_list_via_jsdelivr(
-            log, 'TheSpeedX/PROXY-List@master/http.txt', 'TheSpeedX jsdelivr')),
-        ('ShiftyTR', lambda log: fetch_github_list_via_jsdelivr(
-            log, 'ShiftyTR/Proxy-List@master/http.txt', 'ShiftyTR jsdelivr')),
-        ('clarketm', lambda log: fetch_github_list_via_jsdelivr(
-            log, 'clarketm/proxy-list@master/proxy-list-raw.txt', 'clarketm jsdelivr')),
+        ('TheSpeedX', lambda log: fetch_github_list(
+            log, 'TheSpeedX/PROXY-List/master/http.txt', 'TheSpeedX mirror')),
+        ('ShiftyTR', lambda log: fetch_github_list(
+            log, 'ShiftyTR/Proxy-List/master/http.txt', 'ShiftyTR mirror')),
+        ('clarketm', lambda log: fetch_github_list(
+            log, 'clarketm/proxy-list/master/proxy-list-raw.txt', 'clarketm mirror')),
     ]
     if stop_event and stop_event.is_set():
         return []
@@ -264,7 +314,9 @@ def get_total_proxies(log, stop_event=None):
                 log(str(result))
                 continue
             for proxy in result:
-                all_proxies.add(proxy)
+                cleaned = normalize_proxy(proxy)
+                if cleaned:
+                    all_proxies.add(cleaned)
     if stop_event and stop_event.is_set():
         return []
     if all_proxies:
