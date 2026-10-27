@@ -2308,9 +2308,17 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         </div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('booster-bv-list')">+ 添加视频</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvPasteToggle('bst')">📋 批量粘贴</button>
           <button type="button" class="btn btn-outline btn-sm" id="bst-webhook-btn" onclick="bstWebhookToggle()">🔗 从活动助手获取</button>
           <button type="button" class="btn btn-outline btn-sm" onclick="tpToggle('bst')">🏷 按标签添加</button>
           <button type="button" class="btn btn-outline btn-sm" onclick="bvClear('booster-bv-list')">🗑 一键清空</button>
+        </div>
+        <div id="bst-paste-area" style="display:none;margin-top:8px">
+          <textarea id="bst-paste-text" class="form-input" rows="4" style="height:auto;font-size:12px;line-height:1.6" placeholder="粘贴 BV 号：每行一个，也可直接粘贴分享链接或整段文本，自动提取并去重"></textarea>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button type="button" class="btn btn-outline btn-sm" onclick="bvPasteApply('bst','booster-bv-list')">导入到列表</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="bvPasteToggle('bst')">取消</button>
+          </div>
         </div>
         <div id="bst-webhook-area" class="soft-note blue" style="display:none;margin-top:10px">
           <div style="display:flex;justify-content:space-between;align-items:center">
@@ -2430,8 +2438,59 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
         </div>
         <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
           <button type="button" class="btn btn-outline btn-sm" onclick="bvAdd('car-bv-list')">+ 添加视频</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="bvPasteToggle('car')">📋 批量粘贴</button>
           <button type="button" class="btn btn-outline btn-sm" id="car-fetch-btn" onclick="carFetchMyVideos(this)">📦 获取我的投稿</button>
+          <button type="button" class="btn btn-outline btn-sm" id="car-webhook-btn" onclick="carWebhookToggle()">🔗 从活动助手获取</button>
+          <button type="button" class="btn btn-outline btn-sm" onclick="tpToggle('car')">🏷 按标签添加</button>
           <button type="button" class="btn btn-outline btn-sm" onclick="bvClear('car-bv-list')">🗑 一键清空</button>
+        </div>
+        <div id="car-paste-area" style="display:none;margin-top:8px">
+          <textarea id="car-paste-text" class="form-input" rows="4" style="height:auto;font-size:12px;line-height:1.6" placeholder="粘贴 BV 号：每行一个，也可直接粘贴分享链接或整段文本，自动提取并去重"></textarea>
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <button type="button" class="btn btn-outline btn-sm" onclick="bvPasteApply('car','car-bv-list')">导入到列表</button>
+            <button type="button" class="btn btn-outline btn-sm" onclick="bvPasteToggle('car')">取消</button>
+          </div>
+        </div>
+        <div id="car-webhook-area" class="soft-note blue" style="display:none;margin-top:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="color:var(--info);font-size:13px">📡 Webhook 监听中</span>
+            <button type="button" class="btn btn-outline btn-sm" onclick="carWebhookToggle()" style="font-size:12px;padding:2px 10px">关闭</button>
+          </div>
+          <div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">
+            POST <code id="car-webhook-url"></code>
+          </div>
+          <div style="margin-top:6px;font-size:12px;color:var(--warn)">⚠ 与「B站播放量提升」共用同一监听入口，收到推送后自动填入本页 BV 列表并询问是否启动长线</div>
+          <div style="margin-top:4px;font-size:11px;color:var(--text-tertiary)">
+            Body: <code>{"bvid":"BVxxx"}</code> 或 <code>{"bvid":["BV1","BV2"]}</code>
+          </div>
+          <div id="car-webhook-status" style="margin-top:6px;font-size:12px;color:var(--text-tertiary)">等待接收...</div>
+        </div>
+        <!-- 按标签选稿（复用标签助手缓存） -->
+        <div id="car-tag-pick" style="display:none;margin-top:10px;padding:12px 14px;background:var(--input-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:13px;color:var(--text-secondary)">🏷 按标签选择稿件（数据来自「标签助手」缓存，未扫描请先到标签助手页扫描）</span>
+            <button type="button" class="btn btn-outline btn-sm" style="font-size:12px;padding:2px 10px" onclick="tpToggle('car')">收起</button>
+          </div>
+          <div id="car-pick-tags" class="tp-tags" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px 10px;background:var(--card-bg);border:1px solid var(--input-border);border-radius:var(--radius-sm);cursor:text" onclick="document.getElementById('car-pick-input').focus()">
+            <input id="car-pick-input" type="text" placeholder="输入标签名后按回车添加" style="flex:1;min-width:120px;border:none;background:transparent;color:var(--text-primary);font-size:13px;outline:none;padding:2px 0" onkeydown="tpKeydown(event,'car')" oninput="tpAutocomplete('car')">
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap">
+            <div class="seg">
+              <label><input type="radio" name="car-pick-mode" value="and" checked><span>交集（同时包含所有标签）</span></label>
+              <label><input type="radio" name="car-pick-mode" value="or"><span>并集（包含任一标签）</span></label>
+            </div>
+            <button type="button" class="btn btn-pink btn-sm" onclick="tpSearch('car')" style="margin-left:auto">搜索</button>
+          </div>
+          <div id="car-tag-results" style="display:none;margin-top:10px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;flex-wrap:wrap;gap:6px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <label class="switch-row"><span>全选</span><input type="checkbox" id="car-tag-select-all" onchange="tpToggleAll('car')"></label>
+                <span style="font-size:12px;color:var(--text-secondary)">匹配: <b id="car-tag-count">0</b> 个稿件</span>
+              </div>
+              <button type="button" class="btn btn-outline btn-sm" onclick="tpAddSelected('car')">✅ 添加选中到上方</button>
+            </div>
+            <div id="car-tag-results-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+          </div>
         </div>
         <div id="car-my-videos" style="display:none;margin-top:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -3444,8 +3503,12 @@ function switchTab(name){
   if(name==='dashboard'){dashRefresh();}
   if(name==='booster'){
     withPanelLoader('panel-booster', () => bstLoadLoginStatus(), '正在加载代理池状态…');
-  } else { bstWebhookStopPoll(); }
+  }
   if(name==='car'){ withPanelLoader('panel-car', () => carLoad(), '正在加载车机长线状态…'); }
+  // webhook 轮询只跟随 booster / 车机页签，离开时暂停（服务端监听不受影响，推送继续排队）
+  if(name==='booster'||name==='car'){
+    if(whVisibleTargets().length)whStartPoll();
+  } else { whStopPoll(); }
   if(name==='redpocket'){ withPanelLoader('panel-redpocket', () => Promise.all([rpLoadRooms(), rpCheckStatus()]), '正在加载红包助手…'); }
   if(name==='auto'){ withPanelLoader('panel-auto', () => Promise.all([autoLoadConfig(), loadAutoConfig()]), '正在加载自动互动配置…'); }
   if(name==='livehelper'){ withPanelLoader('panel-livehelper', () => lhLoadConfig(), '正在加载弹幕助手配置…'); }
@@ -3599,6 +3662,47 @@ function bvClear(listId){
   const filled=Array.from(list.querySelectorAll('input')).filter(i=>i.value.trim()).length;
   if(filled&&!confirm(`确定清空 ${filled} 个视频吗？`))return;
   list.innerHTML='<div class="bv-row"><input class="form-input" placeholder="BV1xx411c7mD" maxlength="12"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button></div>';
+}
+
+/* ===== 通用：批量粘贴 BV 号（每行一个 / 链接 / 整段文本） ===== */
+function bvPasteToggle(prefix){
+  const area=document.getElementById(prefix+'-paste-area');
+  const show=area.style.display==='none';
+  area.style.display=show?'block':'none';
+  if(show)document.getElementById(prefix+'-paste-text').focus();
+}
+
+function bvAddMany(listId,bvs){
+  const list=document.getElementById(listId);
+  // 清除空的默认行
+  list.querySelectorAll('.bv-row').forEach(row=>{
+    const inp=row.querySelector('input');
+    if(inp&&!inp.value.trim())row.remove();
+  });
+  let added=0,dup=0;
+  bvs.forEach(bvid=>{
+    const exists=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
+    if(exists){dup++;return;}
+    const row=document.createElement('div');
+    row.className='bv-row';
+    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
+    list.appendChild(row);
+    added++;
+  });
+  if(!list.querySelector('.bv-row'))bvAdd(listId);
+  return {added,dup};
+}
+
+function bvPasteApply(prefix,listId){
+  const ta=document.getElementById(prefix+'-paste-text');
+  const raw=(ta.value||'').trim();
+  const matched=raw.match(/BV[0-9A-Za-z]{10}/g)||[];
+  const bvs=[...new Set(matched.map(s=>'BV'+s.slice(2)))];
+  if(!bvs.length){alert('没有识别到 BV 号（应为 BV 开头共 12 位）');return;}
+  const r=bvAddMany(listId,bvs);
+  ta.value='';
+  document.getElementById(prefix+'-paste-area').style.display='none';
+  alert(`已导入 ${r.added} 个${r.dup?`，跳过重复 ${r.dup} 个`:''}`);
 }
 
 /* ===== 通用：轮询日志 ===== */
@@ -5204,104 +5308,104 @@ function bstUserToggleFollowing(cb){
   bstUserRenderUids();
 }
 
-// ── Webhook（活动助手推送） ──
-let bstWebhookPollTimer=null;
-let bstWebhookReceived=[];
+// ── Webhook（活动助手推送，booster 与车机共用同一入口与队列） ──
+const WH_TARGETS={
+  bst:{areaId:'bst-webhook-area',btnId:'bst-webhook-btn',statusId:'bst-webhook-status',urlId:'bst-webhook-url',listId:'booster-bv-list',ask:'是否立即开始提升？',run:()=>boosterRun()},
+  car:{areaId:'car-webhook-area',btnId:'car-webhook-btn',statusId:'car-webhook-status',urlId:'car-webhook-url',listId:'car-bv-list',ask:'是否立即启动车机长线？',run:()=>carStart()}
+};
+let whPollTimer=null;
+let whReceived={bst:0,car:0};
 
-function bstWebhookToggle(){
-  const area=document.getElementById('bst-webhook-area');
-  const btn=document.getElementById('bst-webhook-btn');
-  if(area.style.display==='none'){
-    // 开启 webhook
+function whVisibleTargets(){
+  // 只认当前可见页签里的目标，避免后台页签也抢同一批推送
+  return Object.keys(WH_TARGETS).filter(p=>{
+    const el=document.getElementById(WH_TARGETS[p].areaId);
+    return el&&el.offsetParent!==null;
+  });
+}
+
+function whUiOn(p,text){
+  const c=WH_TARGETS[p];
+  document.getElementById(c.areaId).style.display='block';
+  const btn=document.getElementById(c.btnId);
+  btn.textContent='🔗 监听中...';
+  btn.style.borderColor='var(--info)';
+  btn.style.color='var(--info)';
+  const loc=window.location;
+  document.getElementById(c.urlId).textContent=loc.protocol+'//'+loc.host+'/booster';
+  document.getElementById(c.statusId).textContent=text;
+}
+
+function whUiOff(p){
+  const c=WH_TARGETS[p];
+  document.getElementById(c.areaId).style.display='none';
+  const btn=document.getElementById(c.btnId);
+  btn.textContent='🔗 从活动助手获取';
+  btn.style.borderColor='';
+  btn.style.color='';
+}
+
+function whToggle(p){
+  const c=WH_TARGETS[p];
+  const turnOn=document.getElementById(c.areaId).style.display==='none';
+  if(turnOn){
     fetch('/api/booster/webhook/start',{method:'POST'}).then(r=>r.json()).then(d=>{
-      if(d.success){
-        area.style.display='block';
-        btn.textContent='🔗 监听中...';
-        btn.style.borderColor='var(--info)';
-        btn.style.color='var(--info)';
-        const loc=window.location;
-        document.getElementById('bst-webhook-url').textContent=loc.protocol+'//'+loc.host+'/booster';
-        document.getElementById('bst-webhook-status').textContent='等待接收...';
-        bstWebhookReceived=[];
-        bstWebhookStartPoll();
-      }
+      if(!d.success)return;
+      try{localStorage.setItem('wh_ui_target',p);}catch(e){}
+      whReceived={bst:0,car:0};
+      whUiOn(p,'等待接收...');
+      whStartPoll();
     });
-  } else {
-    // 关闭 webhook
+  }else{
     fetch('/api/booster/webhook/stop',{method:'POST'}).then(()=>{
-      area.style.display='none';
-      btn.textContent='🔗 从活动助手获取';
-      btn.style.borderColor='';
-      btn.style.color='';
-      bstWebhookStopPoll();
+      whUiOff('bst');
+      whUiOff('car');
+      whStopPoll();
     });
   }
 }
 
-function bstWebhookStartPoll(){
-  bstWebhookStopPoll();
-  bstWebhookPollTimer=setInterval(()=>{
+function whStartPoll(){
+  whStopPoll();
+  whPollTimer=setInterval(()=>{
     fetch('/api/booster/webhook/poll').then(r=>r.json()).then(d=>{
-      if(d.bvs&&d.bvs.length>0){
-        bstWebhookReceived.push(...d.bvs);
-        const statusEl=document.getElementById('bst-webhook-status');
-        statusEl.innerHTML='<span style="color:var(--success)">✓ 收到 '+d.bvs.length+' 个BV号: '+d.bvs.join(', ')+'</span> — 共 '+bstWebhookReceived.length+' 个待处理';
-
-        // 自动填充到 BV 输入列表
-        bstWebhookFillBVs(d.bvs);
-
-        // 弹窗确认是否开始提升
+      if(!d.bvs||!d.bvs.length)return;
+      const targets=whVisibleTargets();
+      targets.forEach(p=>{
+        const c=WH_TARGETS[p];
+        bvAddMany(c.listId,d.bvs);
+        whReceived[p]=(whReceived[p]||0)+d.bvs.length;
+        document.getElementById(c.statusId).innerHTML='<span style="color:var(--success)">✓ 收到 '+d.bvs.length+' 个BV号: '+d.bvs.join(', ')+'</span> — 共 '+whReceived[p]+' 个待处理';
+      });
+      // 只有一个可见目标时才弹窗询问启动，避免多目标重复启动
+      if(targets.length===1){
+        const c=WH_TARGETS[targets[0]];
         setTimeout(()=>{
-          if(confirm('收到 '+d.bvs.length+' 个BV号: '+d.bvs.join(', ')+'\n\n是否立即开始提升？')){
-            boosterRun();
-          }
+          if(confirm('收到 '+d.bvs.length+' 个BV号: '+d.bvs.join(', ')+'\n\n'+c.ask))c.run();
         },300);
       }
     }).catch(()=>{});
   },1500);
 }
 
-function bstWebhookStopPoll(){
-  if(bstWebhookPollTimer){clearInterval(bstWebhookPollTimer);bstWebhookPollTimer=null;}
+function whStopPoll(){
+  if(whPollTimer){clearInterval(whPollTimer);whPollTimer=null;}
 }
 
-function bstWebhookSyncState(){
+function whSyncState(){
   // 页面加载/刷新后同步 webhook 实际监听状态（服务端开关在程序重启前一直保持）
   fetch('/api/booster/webhook/state').then(r=>r.json()).then(d=>{
     if(!d.enabled)return;
-    const area=document.getElementById('bst-webhook-area');
-    const btn=document.getElementById('bst-webhook-btn');
-    if(!area||!btn)return;
-    area.style.display='block';
-    btn.textContent='🔗 监听中...';
-    btn.style.borderColor='var(--info)';
-    btn.style.color='var(--info)';
-    const loc=window.location;
-    document.getElementById('bst-webhook-url').textContent=loc.protocol+'//'+loc.host+'/booster';
-    document.getElementById('bst-webhook-status').textContent='监听恢复（页面刷新不影响后台监听）...';
-    bstWebhookStartPoll();
+    let p='bst';
+    try{p=localStorage.getItem('wh_ui_target')||'bst';}catch(e){}
+    if(!WH_TARGETS[p])p='bst';
+    whUiOn(p,'监听恢复（页面刷新不影响后台监听）...');
+    whStartPoll();
   }).catch(()=>{});
 }
 
-function bstWebhookFillBVs(bvs){
-  const list=document.getElementById('booster-bv-list');
-  // 清除空行
-  list.querySelectorAll('.bv-row').forEach(row=>{
-    const inp=row.querySelector('input');
-    if(inp&&!inp.value.trim())row.remove();
-  });
-  bvs.forEach(bvid=>{
-    // 检查是否已存在
-    const existing=Array.from(list.querySelectorAll('input')).some(i=>i.value.trim()===bvid);
-    if(existing)return;
-    const row=document.createElement('div');
-    row.className='bv-row';
-    row.innerHTML='<input class="form-input" placeholder="BV1xx411c7mD" maxlength="12" value="'+bvid+'"><button type="button" class="bv-del" onclick="bvRemove(this)" title="删除">✕</button>';
-    list.appendChild(row);
-  });
-  // 如果列表空了加回默认行
-  if(!list.querySelector('.bv-row')){bvAdd('booster-bv-list');}
-}
+function bstWebhookToggle(){whToggle('bst');}
+function carWebhookToggle(){whToggle('car');}
 
 // ── 结果面板状态 ──
 let bstResultState={videos:{},round:null,totalClicks:0,totalGrowth:0,reached:0,videoCount:0};
@@ -6845,9 +6949,10 @@ function tsCalcStats(){
   });
 }
 
-/* ---- 通用：按标签添加稿件（booster 用，复用标签助手缓存） ---- */
+/* ---- 通用：按标签添加稿件（booster / 车机共用，复用标签助手缓存） ---- */
 const TP_CFG={
-  bst:{listId:'booster-bv-list',tagsId:'bst-pick-tags',inputId:'bst-pick-input',areaId:'bst-tag-pick',resultsId:'bst-tag-results',resListId:'bst-tag-results-list',countId:'bst-tag-count',selAllId:'bst-tag-select-all',modeName:'bst-pick-mode'}
+  bst:{listId:'booster-bv-list',tagsId:'bst-pick-tags',inputId:'bst-pick-input',areaId:'bst-tag-pick',resultsId:'bst-tag-results',resListId:'bst-tag-results-list',countId:'bst-tag-count',selAllId:'bst-tag-select-all',modeName:'bst-pick-mode'},
+  car:{listId:'car-bv-list',tagsId:'car-pick-tags',inputId:'car-pick-input',areaId:'car-tag-pick',resultsId:'car-tag-results',resListId:'car-tag-results-list',countId:'car-tag-count',selAllId:'car-tag-select-all',modeName:'car-pick-mode'}
 };
 
 function tpEnsureAllTags(){
@@ -7225,7 +7330,7 @@ function toggleTheme(){
   try{ localStorage.setItem('bili-theme', isDark ? 'light' : 'dark'); }catch(e){}
 }
 
-rpCheckStatus();rpLoadRooms();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();bstWebhookSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
+rpCheckStatus();rpLoadRooms();autoLoadConfig();bstLoadLoginStatus();bstScheduleLoad();whSyncState();lhLoadConfig();collLoadStatus();tsLoadStatus();dashRefresh();
 </script>
 <!-- 联想下拉（挂在 body 末尾，fixed 定位，不受 .card overflow/transform 影响） -->
 <div id="ts-autocomplete" style="display:none;position:fixed;z-index:9999;max-height:200px;overflow-y:auto;border-radius:var(--radius-sm)"></div>
