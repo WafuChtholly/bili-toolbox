@@ -75,6 +75,8 @@ PROXY_ALIVE_TTL = 600        # 探活成功后多久内可直接取用
 PROXY_DEAD_TTL = 1800        # 探活/使用失败后的冷却期
 PROXY_PER_IP_LIMIT = 180     # 同一出口跑满这么多次就轮换（180×85s ≈ 4.2h）
 PROXY_NO_GAIN_LIMIT = 6      # 同一出口连续这么多轮不计播放就判死（机房 IP 常见，约 8.5 分钟）
+WHOLE_NO_GAIN_ROUNDS = 12    # 整稿判死：连续这么多轮播放零增长（约 17 分钟）
+WHOLE_NO_GAIN_EXITS = 2      # 整稿判死：零增长期间至少换过这么多个出口（含直连）
 PROXY_TIMEOUT = 5            # 走代理时连接超时（免费代理挂掉的多，别死等 TIMEOUT）
 PROBE_CONNECT_TIMEOUT = 3
 PROBE_READ_TIMEOUT = 5
@@ -450,13 +452,16 @@ def run_session(info, play_s=DEFAULT_PLAY_S, stop_event=None, proxy=None):
 
 # ── 长线循环 ──────────────────────────────────────────────────────────
 def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=None,
-             vault=None):
+             vault=None, ctx=None):
     last_views = None
     cycle = 0
     proxy = None
     proxy_hits = 0
     gain_hist = deque(maxlen=PROXY_NO_GAIN_LIMIT)   # 当前出口最近几轮的播放增量
     last_session_proxy = None                       # 上一轮会话实际用的出口
+    zero_streak = 0                                 # 连续零增长轮数（整稿判死用）
+    zero_exits = set()                              # 这段零增长期间用过的出口
+    bv_gain = 0                                     # 单稿模式下的本稿累计净增
     try:
         while not stop_event.is_set():
             if max_rounds and cycle >= max_rounds:
@@ -478,6 +483,52 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
             # 增量是上一轮会话的结果，只在同一出口连续时才算进当前出口的账
             if delta is not None and last_session_proxy and last_session_proxy == proxy:
                 gain_hist.append(delta)
+
+            # 整稿判死 / 目标播放上限都基于累计净增，先更新再看是否收线
+            if delta is not None:
+                if delta > 0:
+                    zero_streak, zero_exits = 0, set()
+                else:
+                    zero_streak += 1
+                    zero_exits.add(last_session_proxy or 'direct')
+                if ctx is not None:
+                    if ctx['mode'] == 'per_bv':
+                        with ctx['lock']:
+                            ctx['gain'] += delta
+                            bv_gain += delta
+                        if ctx['target'] and bv_gain >= ctx['target']:
+                            log(f'[CAR] {bv} 本次累计播放增长 {bv_gain:+d} 已达单稿上限 '
+                                f'{ctx["target"]}，停止本稿')
+                            with ctx['lock']:
+                                ctx['target_bvs'].add(bv)
+                            break
+                    else:
+                        reached = False
+                        with ctx['lock']:
+                            if not ctx['stopped']:
+                                ctx['gain'] += delta
+                                if ctx['target'] and ctx['gain'] >= ctx['target']:
+                                    ctx['stopped'] = True
+                                    ctx['reason'] = 'target'
+                                    reached = True
+                        if reached:
+                            log(f'[CAR] 本次累计播放增长 {ctx["gain"]:+d} 已达目标 {ctx["target"]}，'
+                                f'停止任务')
+                            stop_event.set()
+                            break
+
+            if zero_streak >= WHOLE_NO_GAIN_ROUNDS and len(zero_exits) >= WHOLE_NO_GAIN_EXITS:
+                log(f'[CAR] {bv} 连续 {zero_streak} 轮播放零增长，期间已换 {len(zero_exits)} 个出口'
+                    f'（{"、".join(sorted(zero_exits))}），判定整稿不可用，停止本稿')
+                if ctx is not None:
+                    with ctx['lock']:
+                        ctx['dead_bvs'].add(bv)
+                if on_cycle:
+                    try:
+                        on_cycle({'bv': bv, 'dead_whole': True})
+                    except Exception:
+                        pass
+                break
 
             # 出口轮换：连续多轮不计播放 / 跑满额度，都换 IP
             if vault is not None:
@@ -537,8 +588,13 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
 
 
 def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=None,
-        on_cycle=None, log=None, max_rounds=None):
-    """阻塞运行，直到 stop_event 置位或各稿件跑满 max_rounds。每稿一线程，各自 85s 节拍。"""
+        on_cycle=None, log=None, max_rounds=None, target_gain=None, target_mode='total'):
+    """阻塞运行，直到 stop_event 置位、各稿件跑满 max_rounds、达到目标增长或整稿判死。
+
+    target_gain：目标净增播放量；target_mode='total' 为本次任务多稿件合计，
+    'per_bv' 为每稿各自上限。None/0 表示不限。
+    返回 {'stop_reason', 'gain', 'dead_bvs'}，stop_reason 为 'target' / 'dead_whole' / None。
+    """
     stop_event = stop_event or threading.Event()
     log = log or print
     interval = max(MIN_INTERVAL, int(interval))
@@ -547,6 +603,11 @@ def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=No
     if PROXY_ENABLED and get_total_proxies is not None:
         vault = _acquire_vault(log)
         log('[CAR] 免费代理池（实验性）已启用：后台探活 HTTPS CONNECT 出口，取不到时自动直连')
+
+    ctx = {'target': max(0, int(target_gain or 0)),
+           'mode': 'per_bv' if target_mode == 'per_bv' else 'total',
+           'gain': 0, 'stopped': False, 'reason': None,
+           'dead_bvs': set(), 'target_bvs': set(), 'lock': threading.Lock()}
 
     try:
         infos = {}
@@ -560,15 +621,18 @@ def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=No
                 log(f'[CAR] {bv} 获取稿件信息失败：{type(e).__name__}: {e}')
         if not infos:
             log('[CAR] 没有可用稿件，任务结束')
-            return
+            return {'stop_reason': None, 'gain': 0, 'dead_bvs': []}
 
+        target_txt = ''
+        if ctx['target']:
+            target_txt = f'，目标增长 +{ctx["target"]}' + ('/稿' if ctx['mode'] == 'per_bv' else '/合计')
         log(f'[CAR] 长线启动：{len(infos)} 个稿件，每稿 {interval}s 一轮（play_s={play_s}'
-            f'{f"，轮数上限 {max_rounds}" if max_rounds else ""}）')
+            f'{f"，轮数上限 {max_rounds}" if max_rounds else ""}{target_txt}）')
         threads = []
         for bv, info in infos.items():
             t = threading.Thread(target=_bv_loop,
                                  args=(bv, info, play_s, interval, stop_event, on_cycle, log,
-                                       max_rounds, vault),
+                                       max_rounds, vault, ctx),
                                  daemon=True)
             t.start()
             threads.append(t)
@@ -576,6 +640,15 @@ def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=No
             while t.is_alive():
                 t.join(0.5)
         log('[CAR] 长线已停止')
+        reason = ctx['reason']
+        if reason is None and infos:
+            if len(ctx['target_bvs']) >= len(infos):
+                reason = 'target'
+                log('[CAR] 全部稿件均已达到单稿目标，任务收线')
+            elif ctx['dead_bvs'] and len(ctx['dead_bvs']) >= len(infos):
+                reason = 'dead_whole'
+                log('[CAR] 全部稿件均已判定整稿不可用，任务收线')
+        return {'stop_reason': reason, 'gain': ctx['gain'], 'dead_bvs': sorted(ctx['dead_bvs'])}
     finally:
         if vault is not None:
             _release_vault()

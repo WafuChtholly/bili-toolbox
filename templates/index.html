@@ -2448,15 +2448,28 @@ html[data-theme="dark"] #ts-autocomplete { background: #221e2c; }
           </div>
         </div>
       </div>
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <div class="form-group" style="flex:1;min-width:140px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group">
           <label class="form-label">单会话播放秒数</label>
           <input class="form-input" id="car-play-s" type="number" min="1" max="300" value="20">
         </div>
-        <div class="form-group" style="flex:1;min-width:140px">
+        <div class="form-group">
           <label class="form-label">节拍（秒 / 轮）</label>
           <input class="form-input" id="car-interval" type="number" min="70" value="85">
           <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">实测计数窗口 65~85s，低于 70s 会被服务端合并</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">目标播放上限</label>
+          <input class="form-input" id="car-target-gain" type="number" min="0" value="0">
+          <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">达到目标即自动停止；0 表示不限</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label">目标模式</label>
+          <select class="form-input" id="car-target-mode">
+            <option value="total">多稿件合计</option>
+            <option value="per_bv">单稿件</option>
+          </select>
+          <p style="color:var(--text-tertiary);font-size:12px;margin-top:6px">合计：本次任务所有稿件共用一个目标；单稿：每稿各自上限</p>
         </div>
       </div>
       <div class="status-bar">
@@ -5391,8 +5404,9 @@ function carRenderStats(d){
   const per=st.per_bv||{};
   const rows=Object.keys(per).map(bv=>{
     const v=per[bv];
-    return `<div class="bst-rp-video-row"><span class="bst-rp-video-status">${v.accepted>0?'📈':'⚠️'}</span>`+
-      `<span class="bst-rp-video-bvid">${bv}</span>`+
+    const icon=v.dead?'⛔':(v.accepted>0?'📈':'⚠️');
+    return `<div class="bst-rp-video-row"><span class="bst-rp-video-status">${icon}</span>`+
+      `<span class="bst-rp-video-bvid">${bv}${v.dead?'（整稿判死）':''}</span>`+
       `<span class="bst-rp-video-views">${(v.views||0).toLocaleString()}</span>`+
       `<span class="bst-rp-video-growth">+${v.growth||0}</span>`+
       `<span class="bst-rp-video-clicks">${v.rounds||0} 轮 / 有效 ${v.accepted||0}</span>`+
@@ -5403,6 +5417,7 @@ function carRenderStats(d){
       `<div class="bst-rp-stat"><div class="bst-rp-stat-val green">+${st.growth||0}</div><div class="bst-rp-stat-label">本次播放增长</div></div>`+
       `<div class="bst-rp-stat"><div class="bst-rp-stat-val pink">${st.rounds||0}</div><div class="bst-rp-stat-label">本次轮次</div></div>`+
       `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${st.accepted||0}</div><div class="bst-rp-stat-label">有效会话</div></div>`+
+      (d.target_gain?`<div class="bst-rp-stat"><div class="bst-rp-stat-val">${d.target_mode==='per_bv'?'+'+d.target_gain+'/稿':(st.growth||0)+'/'+d.target_gain}</div><div class="bst-rp-stat-label">目标进度</div></div>`:'')+
       `<div class="bst-rp-stat"><div class="bst-rp-stat-val">${d.elapsed!=null?carFmtDuration(d.elapsed):'-'}</div><div class="bst-rp-stat-label">已运行</div></div>`+
     `</div>`+(rows||'<div style="color:var(--text-tertiary);font-size:13px;padding:8px 0">暂无稿件数据</div>');
 }
@@ -5418,11 +5433,16 @@ function carUpdate(d){
     runBtn.disabled=true;runBtn.textContent='长线运行中...';
     stopBtn.style.display='inline-block';
     setDot('car-dot','run');
-    setText('car-status-text','运行中 · '+(d.bv||[]).length+' 个稿件 · 每 '+d.interval+'s 一轮');
+    setText('car-status-text','运行中 · '+(d.bv||[]).length+' 个稿件 · 每 '+d.interval+'s 一轮'+
+      (d.target_gain?' · 目标 +'+d.target_gain+(d.target_mode==='per_bv'?'/稿':'（合计）'):''));
   }else{
     runBtn.disabled=false;runBtn.textContent='▶ 启动长线';
     stopBtn.style.display='none';
-    const txt={completed:'已完成',stopped:'已停止',error:'出错'}[d.status]||'未启动';
+    let txt={completed:'已完成',stopped:'已停止',error:'出错'}[d.status]||'未启动';
+    if(d.stop_reason==='target')txt=d.target_mode==='per_bv'
+      ?'已达单稿目标 · 停止'
+      :'已达标停止（+'+(d.stats&&d.stats.growth||0)+'）';
+    if(d.stop_reason==='dead_whole')txt='整稿判死 · 无播放增长';
     setDot('car-dot',d.status==='error'?'err':'off');
     setText('car-status-text',txt);
     stopPoll('/api/booster/car/status');
@@ -5441,9 +5461,12 @@ function carStart(){
   if(!bvList.length){alert('请填写 BV号');return;}
   const playS=parseInt(document.getElementById('car-play-s').value||'20',10);
   const interval=parseInt(document.getElementById('car-interval').value||'85',10);
+  const targetGain=parseInt(document.getElementById('car-target-gain').value||'0',10);
+  const targetMode=document.getElementById('car-target-mode').value||'total';
   if(isNaN(playS)||isNaN(interval)){alert('播放秒数 / 节拍需为整数');return;}
+  if(isNaN(targetGain)||targetGain<0){alert('目标播放上限需为不小于 0 的整数（0 表示不限）');return;}
   fetch('/api/booster/car/start',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({bv:bvList.join(','),play_s:playS,interval:interval})})
+    body:JSON.stringify({bv:bvList.join(','),play_s:playS,interval:interval,target_gain:targetGain,target_mode:targetMode})})
     .then(r=>r.json()).then(d=>{
       if(d.error){alert(d.error);return;}
       document.getElementById('car-log').textContent='启动中...';

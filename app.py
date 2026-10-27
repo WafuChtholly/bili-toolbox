@@ -1325,6 +1325,9 @@ _car_task = {
     "bv": [],
     "play_s": car_channel.DEFAULT_PLAY_S,
     "interval": car_channel.DEFAULT_INTERVAL,
+    "target_gain": 0,
+    "target_mode": "total",  # total=多稿件合计 / per_bv=每稿各自上限
+    "stop_reason": None,     # target（达标）/ dead_whole（整稿判死）/ None
     "stop_event": None,
     "thread": None,
 }
@@ -1351,6 +1354,13 @@ def _car_log(line: str):
 def _car_on_cycle(ev: dict):
     """每完成一轮会话回调：累加本次统计；每 20 轮打一条累计日志。"""
     global _car_stats
+    if ev.get("dead_whole"):
+        # 整稿判死：只标记该稿件不可用，不计轮次
+        with _car_lock:
+            per = _car_stats_current()["per_bv"].setdefault(
+                ev["bv"], {"views": 0, "growth": 0, "rounds": 0, "accepted": 0})
+            per["dead"] = True
+        return
     summary = None
     with _car_lock:
         stats = _car_stats_current()
@@ -1383,12 +1393,18 @@ def _car_stop():
             _car_task["status"] = "stopping"
 
 
-def _run_car_task(bv_list, play_s, interval, stop_event):
+def _run_car_task(bv_list, play_s, interval, stop_event, target_gain=0, target_mode="total"):
     try:
-        car_channel.run(bv_list, play_s=play_s, interval=interval, stop_event=stop_event,
-                        on_cycle=_car_on_cycle, log=_car_log)
+        result = car_channel.run(bv_list, play_s=play_s, interval=interval, stop_event=stop_event,
+                                 on_cycle=_car_on_cycle, log=_car_log, target_gain=target_gain,
+                                 target_mode=target_mode)
+        reason = (result or {}).get("stop_reason")
         with _car_lock:
-            _car_task["status"] = "stopped" if stop_event.is_set() else "completed"
+            _car_task["stop_reason"] = reason
+            if reason in ("target", "dead_whole"):
+                _car_task["status"] = "completed"
+            else:
+                _car_task["status"] = "stopped" if stop_event.is_set() else "completed"
     except Exception as e:
         _car_log(f'[CAR] 任务出错：{type(e).__name__}: {e}')
         with _car_lock:
@@ -1409,10 +1425,16 @@ def booster_car_start():
     try:
         play_s = int(data.get("play_s") or car_channel.DEFAULT_PLAY_S)
         interval = int(data.get("interval") or car_channel.DEFAULT_INTERVAL)
+        target_gain = int(data.get("target_gain") or 0)
     except (TypeError, ValueError):
-        return jsonify({"error": "播放秒数 / 节拍必须是整数"}), 400
+        return jsonify({"error": "播放秒数 / 节拍 / 目标播放上限必须是整数"}), 400
     if not 1 <= play_s <= 300:
         return jsonify({"error": "单会话播放秒数需在 1~300 之间"}), 400
+    if not 0 <= target_gain <= 1000000:
+        return jsonify({"error": "目标播放上限需在 0~1000000 之间（0 表示不限）"}), 400
+    target_mode = data.get("target_mode") or "total"
+    if target_mode not in ("total", "per_bv"):
+        return jsonify({"error": "目标模式只能是 total（多稿合计）或 per_bv（每稿）"}), 400
     interval = max(car_channel.MIN_INTERVAL, interval)
 
     with _car_lock:
@@ -1423,15 +1445,18 @@ def booster_car_start():
         _car_task.update({
             "status": "running", "start": time.time(), "end": None,
             "bv": bv_list, "play_s": play_s, "interval": interval,
+            "target_gain": target_gain, "target_mode": target_mode, "stop_reason": None,
             "stop_event": stop_event,
         })
         with log_lock:
             log_buffers["car"] = []
         t = threading.Thread(target=_run_car_task,
-                             args=(bv_list, play_s, interval, stop_event), daemon=True)
+                             args=(bv_list, play_s, interval, stop_event, target_gain, target_mode),
+                             daemon=True)
         _car_task["thread"] = t
         t.start()
-    return jsonify({"success": True, "bv": bv_list, "play_s": play_s, "interval": interval})
+    return jsonify({"success": True, "bv": bv_list, "play_s": play_s, "interval": interval,
+                    "target_gain": target_gain, "target_mode": target_mode})
 
 
 @app.route("/api/booster/car/stop", methods=["POST"])
@@ -1450,6 +1475,9 @@ def booster_car_status():
             "bv": list(_car_task["bv"]),
             "play_s": _car_task["play_s"],
             "interval": _car_task["interval"],
+            "target_gain": _car_task["target_gain"],
+            "target_mode": _car_task["target_mode"],
+            "stop_reason": _car_task["stop_reason"],
         }
         stats = json.loads(json.dumps(_car_stats_current(), ensure_ascii=False))
     running = task["status"] in ("running", "stopping")
