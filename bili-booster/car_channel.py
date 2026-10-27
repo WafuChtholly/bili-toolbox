@@ -74,6 +74,7 @@ PROXY_PROBE_WORKERS = 80     # 并发探活线程数
 PROXY_ALIVE_TTL = 600        # 探活成功后多久内可直接取用
 PROXY_DEAD_TTL = 1800        # 探活/使用失败后的冷却期
 PROXY_PER_IP_LIMIT = 180     # 同一出口跑满这么多次就轮换（180×85s ≈ 4.2h）
+PROXY_NO_GAIN_LIMIT = 6      # 同一出口连续这么多轮不计播放就判死（机房 IP 常见，约 8.5 分钟）
 PROXY_TIMEOUT = 5            # 走代理时连接超时（免费代理挂掉的多，别死等 TIMEOUT）
 PROBE_CONNECT_TIMEOUT = 3
 PROBE_READ_TIMEOUT = 5
@@ -213,6 +214,10 @@ class ProxyVault:
         with self._lock:
             if not alive:
                 self._dead_at[proxy] = now
+                try:
+                    self._ready.remove(proxy)   # 判死的出口不能还留在仓里被再次取到
+                except ValueError:
+                    pass
                 return
             self._alive_at[proxy] = now
             if proxy not in self._ready and len(self._ready) < PROXY_MAX_READY:
@@ -450,6 +455,8 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
     cycle = 0
     proxy = None
     proxy_hits = 0
+    gain_hist = deque(maxlen=PROXY_NO_GAIN_LIMIT)   # 当前出口最近几轮的播放增量
+    last_session_proxy = None                       # 上一轮会话实际用的出口
     try:
         while not stop_event.is_set():
             if max_rounds and cycle >= max_rounds:
@@ -468,14 +475,25 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
                     delta = views - last_views
                 last_views = views
 
-            # 出口轮换：跑满额度就换 IP；没有可用出口则直连
+            # 增量是上一轮会话的结果，只在同一出口连续时才算进当前出口的账
+            if delta is not None and last_session_proxy and last_session_proxy == proxy:
+                gain_hist.append(delta)
+
+            # 出口轮换：连续多轮不计播放 / 跑满额度，都换 IP
             if vault is not None:
+                if proxy and len(gain_hist) >= PROXY_NO_GAIN_LIMIT and max(gain_hist) <= 0:
+                    # click 回了 0 但 views 不动（机房 IP 被静默丢弃），别继续白耗
+                    vault.mark_dead(proxy)
+                    log(f'[CAR] {bv} 出口 {proxy} 连续 {PROXY_NO_GAIN_LIMIT} 轮未计播放'
+                        f'（views={views if views is not None else "?"}），判死换 IP')
+                    proxy, proxy_hits = None, 0
                 if proxy and proxy_hits >= PROXY_PER_IP_LIMIT:
                     vault.mark_dead(proxy)
                     log(f'[CAR] {bv} 出口 {proxy} 已贡献 {proxy_hits} 次，轮换下个 IP')
                     proxy, proxy_hits = None, 0
                 if not proxy:
                     proxy, proxy_hits = vault.get(), 0
+                    gain_hist.clear()
 
             r = run_session(info, play_s, stop_event, proxy=proxy)
             if not r['done']:
@@ -486,11 +504,13 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
                 log(f'[CAR] {bv} 出口 {proxy} 未计（click={r["click"][0]}/{r["click"][1]}），'
                     f'换出口重试')
                 proxy, proxy_hits = vault.get(), 0
+                gain_hist.clear()
                 r = run_session(info, play_s, stop_event, proxy=proxy)
                 if not r['done']:
                     break
             if proxy:
                 proxy_hits += 1
+            last_session_proxy = proxy
 
             click = f"{r['click'][0]}/{r['click'][1]}"
             hb = '/'.join(str(x) for x in r['hb'])
