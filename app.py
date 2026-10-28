@@ -1326,7 +1326,7 @@ _car_task = {
     "play_s": car_channel.DEFAULT_PLAY_S,
     "interval": car_channel.DEFAULT_INTERVAL,
     "target_gain": 0,
-    "target_mode": "total",  # total=多稿件合计 / per_bv=每稿各自上限
+    "target_mode": "total",  # total=多稿合计净增 / per_bv=每稿净增 / per_bv_abs=每稿绝对播放量
     "stop_reason": None,     # target（达标）/ dead_whole（整稿判死）/ None
     "stop_event": None,
     "thread": None,
@@ -1433,8 +1433,9 @@ def booster_car_start():
     if not 0 <= target_gain <= 1000000:
         return jsonify({"error": "目标播放上限需在 0~1000000 之间（0 表示不限）"}), 400
     target_mode = data.get("target_mode") or "total"
-    if target_mode not in ("total", "per_bv"):
-        return jsonify({"error": "目标模式只能是 total（多稿合计）或 per_bv（每稿）"}), 400
+    if target_mode not in ("total", "per_bv", "per_bv_abs"):
+        return jsonify({"error": "目标模式只能是 total（多稿合计）/ per_bv（每稿净增）/ "
+                                 "per_bv_abs（每稿播放量）"}), 400
     interval = max(car_channel.MIN_INTERVAL, interval)
 
     with _car_lock:

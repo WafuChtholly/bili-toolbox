@@ -474,6 +474,14 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
                 views = fetch_views(bv)   # 取数保持直连，不占用代理
             except Exception:
                 pass
+            # 绝对目标（每稿跑到指定播放量）：本轮取数已达标就直接收线，不再发会话
+            if (ctx is not None and ctx['mode'] == 'per_bv_abs' and ctx['target']
+                    and views is not None and views >= ctx['target']):
+                log(f'[CAR] {bv} 当前播放 {views} 已达目标 {ctx["target"]}，停止本稿')
+                with ctx['lock']:
+                    ctx['target_bvs'].add(bv)
+                break
+
             delta = None
             if views is not None:
                 if last_views is not None:
@@ -502,7 +510,7 @@ def _bv_loop(bv, info, play_s, interval, stop_event, on_cycle, log, max_rounds=N
                             with ctx['lock']:
                                 ctx['target_bvs'].add(bv)
                             break
-                    else:
+                    elif ctx['mode'] == 'total':
                         reached = False
                         with ctx['lock']:
                             if not ctx['stopped']:
@@ -591,8 +599,9 @@ def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=No
         on_cycle=None, log=None, max_rounds=None, target_gain=None, target_mode='total'):
     """阻塞运行，直到 stop_event 置位、各稿件跑满 max_rounds、达到目标增长或整稿判死。
 
-    target_gain：目标净增播放量；target_mode='total' 为本次任务多稿件合计，
-    'per_bv' 为每稿各自上限。None/0 表示不限。
+    target_gain：目标值；target_mode='total' 为本次任务多稿件合计净增，
+    'per_bv' 为每稿净增上限，'per_bv_abs' 为每稿的绝对播放量目标（跑到 X 播放即停）。
+    None/0 表示不限。
     返回 {'stop_reason', 'gain', 'dead_bvs'}，stop_reason 为 'target' / 'dead_whole' / None。
     """
     stop_event = stop_event or threading.Event()
@@ -604,8 +613,9 @@ def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=No
         vault = _acquire_vault(log)
         log('[CAR] 免费代理池（实验性）已启用：后台探活 HTTPS CONNECT 出口，取不到时自动直连')
 
+    mode = target_mode if target_mode in ('per_bv', 'per_bv_abs') else 'total'
     ctx = {'target': max(0, int(target_gain or 0)),
-           'mode': 'per_bv' if target_mode == 'per_bv' else 'total',
+           'mode': mode,
            'gain': 0, 'stopped': False, 'reason': None,
            'dead_bvs': set(), 'target_bvs': set(), 'lock': threading.Lock()}
 
@@ -625,7 +635,10 @@ def run(bv_list, play_s=DEFAULT_PLAY_S, interval=DEFAULT_INTERVAL, stop_event=No
 
         target_txt = ''
         if ctx['target']:
-            target_txt = f'，目标增长 +{ctx["target"]}' + ('/稿' if ctx['mode'] == 'per_bv' else '/合计')
+            if ctx['mode'] == 'per_bv_abs':
+                target_txt = f'，目标播放量 {ctx["target"]}/稿（绝对值）'
+            else:
+                target_txt = f'，目标增长 +{ctx["target"]}' + ('/稿' if ctx['mode'] == 'per_bv' else '/合计')
         log(f'[CAR] 长线启动：{len(infos)} 个稿件，每稿 {interval}s 一轮（play_s={play_s}'
             f'{f"，轮数上限 {max_rounds}" if max_rounds else ""}{target_txt}）')
         threads = []
